@@ -1047,8 +1047,8 @@ NL5_WAVENLENGTH_MAP = {
 LASER_AF_CHARACTERIZATION_MODE = False
 
 # Focus Lock Configuration
-FOCUS_LOCK_GAIN = 0.5
-FOCUS_LOCK_GAIN_MAX = 0.7
+FOCUS_LOCK_GAIN = 0.35
+FOCUS_LOCK_GAIN_MAX = 0.5
 FOCUS_LOCK_BUFFER_LENGTH = 5
 FOCUS_LOCK_OFFSET_THRESHOLD_UM = 0.5
 FOCUS_LOCK_MIN_SPOT_SNR = 5.0
@@ -1064,13 +1064,24 @@ FOCUS_LOCK_MAX_NAN_HOLDOVER_CYCLES = 3
 FOCUS_LOCK_NAN_HOLDOVER_DECAY = 0.5
 
 # Focus Lock Recovery Parameters
-FOCUS_LOCK_RECOVERY_ATTEMPTS = 3  # Number of retry cycles before declaring lost
-FOCUS_LOCK_RECOVERY_DELAY_S = 0.2  # Delay between retry attempts
+FOCUS_LOCK_RECOVERY_ATTEMPTS = 5  # Number of retry cycles before declaring lost
+FOCUS_LOCK_RECOVERY_DELAY_S = 0.4  # Delay between retry attempts
 FOCUS_LOCK_RECOVERY_WINDOW_READINGS = 3  # Good readings needed to recover
 
 # Focus Lock Hysteresis Thresholds
 FOCUS_LOCK_ACQUIRE_THRESHOLD_UM = 0.3  # Tighter threshold to acquire lock
 FOCUS_LOCK_MAINTAIN_THRESHOLD_UM = 0.8  # Looser threshold to maintain lock
+
+# Focus Lock "Unrecoverable" Guard (true lock break)
+# Lock only breaks when the observed error exceeds this magnitude for a
+# sustained number of consecutive cycles. Normal disturbances (manual stage
+# jogs of a few microns) must not trigger this — the PI loop corrects them.
+FOCUS_LOCK_LOCK_BREAK_ERROR_UM = 15.0
+FOCUS_LOCK_LOCK_BREAK_PERSIST_CYCLES = 30  # ~1.0 s @ 30 Hz
+# Piezo settle guard: after a correction larger than this, briefly wait before
+# the next measurement to avoid sampling mid-settle (which causes ringing).
+FOCUS_LOCK_SETTLE_CORRECTION_THRESHOLD_UM = 1.0
+FOCUS_LOCK_SETTLE_DELAY_S = 0.005
 
 # Focus Lock Auto-Search Parameters
 FOCUS_LOCK_AUTO_SEARCH_ENABLED = False  # Enable auto-search on lock loss

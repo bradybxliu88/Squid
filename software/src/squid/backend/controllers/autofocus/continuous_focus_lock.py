@@ -83,6 +83,9 @@ class ContinuousFocusLockController(BaseController):
 
         self._lock_buffer_fill = 0
         self._error_history: Deque[float] = deque(maxlen=max(10, self._config.buffer_length * 3))
+        # Short-window error buffer used for the quality metric so that a
+        # one-off large excursion does not linger in the RMS for seconds.
+        self._recent_error_window: Deque[float] = deque(maxlen=8)
         self._drift_history: Deque[tuple[float, float]] = deque(maxlen=30)
         self._smoothed_quality = 1.0  # Exponential moving average of lock quality (0-1)
 
@@ -97,6 +100,19 @@ class ContinuousFocusLockController(BaseController):
         self._recovery_attempts_remaining = 0
         self._recovery_start_time: Optional[float] = None
         self._recovery_good_count = 0
+        # Consecutive-bad counter for recovery exhaustion. Any good frame
+        # resets it; any bad frame increments it. Used instead of wall-clock
+        # so flicker near the threshold doesn't silently burn the budget.
+        self._consecutive_bad_count = 0
+        # Persistent-large-error counter for the "unrecoverable" guard.
+        # Incremented whenever |error| > lock_break_error_um; reset whenever
+        # |error| dips below. Only drives locked->recovering when it exceeds
+        # lock_break_persist_cycles.
+        self._persistent_large_error_count = 0
+        # Persistent-untrustworthy counter (sustained NaN / low SNR after
+        # the short NaN-holdover has expired). Mirrors the above for the
+        # "spot disappeared" failure mode.
+        self._persistent_untrustworthy_count = 0
 
         # Auto-search state (runtime toggle, can differ from config default)
         self._auto_search_enabled = self._config.auto_search_enabled
@@ -129,6 +145,12 @@ class ContinuousFocusLockController(BaseController):
         self._last_measurement_signature: Optional[tuple[float, float, float, float]] = None
         self._stale_measurement_count: int = 0
         self._last_published_status: Optional[str] = None
+
+        # Per-FOV focus lock memory (for FOCUS_LOCK_PER_FOV mode). Attached here
+        # because the controller outlives MultiPointWorker and is the natural
+        # shared-state owner for cross-round data. Lazily initialized.
+        from squid.backend.controllers.multipoint.fov_focus_memory import FOVFocusMemory  # local import to avoid cycle
+        self.fov_focus_memory: FOVFocusMemory = FOVFocusMemory()
 
     @property
     def mode(self) -> FocusLockMode:
@@ -186,6 +208,9 @@ class ContinuousFocusLockController(BaseController):
                 daemon=True,
             )
             self._turn_on_laser()
+            # Ensure focus camera is streaming for measure_displacement_continuous()
+            if not self._laser_af._camera_service.get_is_streaming():
+                self._laser_af._camera_service.start_streaming()
             self._thread.start()
         self._event_bus.publish(FocusLockModeChanged(mode="on"))
         self._set_status("ready")
@@ -517,6 +542,13 @@ class ContinuousFocusLockController(BaseController):
         metrics_period = 1.0 / self._config.metrics_rate_hz
         last_metrics_time = 0.0
 
+        # One-shot cycle-time probe over the first N iterations. Helps decide
+        # whether raising FOCUS_LOCK_LOOP_RATE_HZ is safe without dedicating
+        # a runtime flag. Median is robust to startup transients.
+        probe_samples: list[float] = []
+        probe_target = 100
+        probe_logged = False
+
         try:
             while not self._stop_event.is_set():
                 start = time.monotonic()
@@ -560,6 +592,7 @@ class ContinuousFocusLockController(BaseController):
                     self._update_lock_state(is_good, error_um)
 
                     # Apply correction when locked or recovering
+                    applied_correction_um = 0.0
                     if self._status in ("locked", "recovering"):
                         if not math.isnan(error_um):
                             # Good reading — update holdover state and apply correction
@@ -569,6 +602,7 @@ class ContinuousFocusLockController(BaseController):
                             current_pos = self._piezo_service.get_position()
                             new_pos = self._clamp_to_range(current_pos + correction)
                             self._piezo_service.move_to_fast(new_pos)
+                            applied_correction_um = new_pos - current_pos
                         elif self._consecutive_nan_count < self._config.max_nan_holdover_cycles:
                             # NaN holdover: use last-known-good with decaying gain
                             self._consecutive_nan_count += 1
@@ -580,9 +614,22 @@ class ContinuousFocusLockController(BaseController):
                             current_pos = self._piezo_service.get_position()
                             new_pos = self._clamp_to_range(current_pos + correction)
                             self._piezo_service.move_to_fast(new_pos)
+                            applied_correction_um = new_pos - current_pos
                         else:
                             # Holdover expired — stop correcting, let recovery handle it
                             pass
+
+                    # Piezo-settle guard: move_to_fast is non-blocking, so on
+                    # a large correction the next measurement can sample the
+                    # piezo mid-settle and drive ringing. Brief sleep after
+                    # large moves only; small tracking corrections skip this
+                    # so the loop stays fast when near the setpoint.
+                    if (
+                        abs(applied_correction_um)
+                        > self._config.settle_correction_threshold_um
+                        and self._config.settle_delay_s > 0.0
+                    ):
+                        time.sleep(self._config.settle_delay_s)
 
                     now = time.monotonic()
                     if now - last_metrics_time >= metrics_period:
@@ -592,6 +639,26 @@ class ContinuousFocusLockController(BaseController):
                     self._check_warnings(result, error_um)
 
                 elapsed = time.monotonic() - start
+
+                # Record cycle time for the one-shot probe (excluding the
+                # pacing sleep so the measurement reflects real work per cycle).
+                if not probe_logged:
+                    probe_samples.append(elapsed)
+                    if len(probe_samples) >= probe_target:
+                        samples_sorted = sorted(probe_samples)
+                        median_s = samples_sorted[len(samples_sorted) // 2]
+                        p95_s = samples_sorted[int(0.95 * len(samples_sorted))]
+                        self._log.info(
+                            "Focus lock cycle-time probe over %d iterations: "
+                            "median=%.1f ms p95=%.1f ms (target period=%.1f ms @ %.0f Hz)",
+                            probe_target,
+                            median_s * 1000.0,
+                            p95_s * 1000.0,
+                            period * 1000.0,
+                            self._config.loop_rate_hz,
+                        )
+                        probe_logged = True
+
                 time.sleep(max(0.0, period - elapsed))
         except Exception:
             self._log.exception("Control loop crashed — failing safe to disabled")
@@ -610,13 +677,19 @@ class ContinuousFocusLockController(BaseController):
     def _is_good_reading(self, result: LaserAFResult, error_um: float) -> bool:
         if math.isnan(result.displacement_um):
             return False
-        # Use hysteresis: looser criteria to maintain lock, tighter to acquire it.
+        # During locked/recovering, "good" means the measurement is trustworthy
+        # (displacement is a real number). Error magnitude itself is NOT a
+        # gate — a large error is exactly what the PI loop is for, and gating
+        # lock status on |error| breaks the lock on every legitimate manual
+        # Z move before the piezo has a chance to correct. SNR/correlation
+        # are intentionally NOT enforced in the per-frame check either: a
+        # momentarily noisy spot is still more informative than none, and
+        # sustained low-SNR runs are handled by the persistent-untrustworthy
+        # guard in _update_lock_state (plus the warning system). The separate
+        # persistent-large-error guard demotes only when |error| exceeds
+        # lock_break_error_um for lock_break_persist_cycles.
         if self._status in ("locked", "recovering"):
-            # During maintenance/recovery, prioritize displacement consistency.
-            # SNR/correlation are still published as warnings but should not by
-            # themselves force an immediate lock break when error is stable.
-            threshold_um = self._config.maintain_threshold_um
-            return not math.isnan(error_um) and abs(error_um) <= threshold_um
+            return not math.isnan(error_um)
 
         # Acquisition path (ready/lost/search setup): require stronger quality.
         if math.isnan(result.spot_snr) or result.spot_snr < self._config.min_spot_snr:
@@ -636,53 +709,98 @@ class ContinuousFocusLockController(BaseController):
         """Update lock state machine with recovery and search support."""
         if not self._lock_reference_active:
             self._lock_buffer_fill = 0
+            self._consecutive_bad_count = 0
+            self._persistent_large_error_count = 0
+            self._persistent_untrustworthy_count = 0
             if self._status in ("locked", "recovering", "lost"):
                 self._set_status("ready")
             return
 
         new_status: Optional[str] = None
 
+        # Track persistent unrecoverable conditions independently of is_good,
+        # so that the PI loop keeps correcting normal disturbances while only
+        # genuinely-unrecoverable situations break the lock.
+        trustworthy = not math.isnan(error_um)
+        if trustworthy:
+            self._persistent_untrustworthy_count = 0
+            if abs(error_um) > self._config.lock_break_error_um:
+                self._persistent_large_error_count += 1
+            else:
+                self._persistent_large_error_count = 0
+        else:
+            self._persistent_large_error_count = 0
+            self._persistent_untrustworthy_count += 1
+
+        untrustworthy_grace = (
+            self._config.max_nan_holdover_cycles + self._config.lock_break_persist_cycles
+        )
+
         if self._status == "locked":
             if is_good:
-                # Good reading - maintain lock
+                # Trustworthy reading — the PI loop handles the correction
+                # regardless of error magnitude. Stay locked.
+                self._consecutive_bad_count = 0
                 self._lock_buffer_fill = min(
                     self._lock_buffer_fill + 1, self._config.buffer_length
                 )
+                # Only demote if we've observed a persistent unrecoverable
+                # error (piezo saturated / spot at extreme) for a full guard
+                # window. A brief 10 µm manual move will not trigger this.
+                if (
+                    self._persistent_large_error_count
+                    >= self._config.lock_break_persist_cycles
+                ):
+                    new_status = "recovering"
+                    self._recovery_attempts_remaining = self._config.recovery_attempts
+                    self._recovery_start_time = time.monotonic()
+                    self._recovery_good_count = 0
+                    self._consecutive_bad_count = 0
+                    # NOTE: integral is deliberately NOT reset here. It has an
+                    # anti-windup clamp and carries useful low-frequency drift
+                    # information across the flicker into recovering.
             else:
-                # Bad reading - enter recovery mode instead of immediate loss
-                new_status = "recovering"
-                self._recovery_attempts_remaining = self._config.recovery_attempts
-                self._recovery_start_time = time.monotonic()
-                self._recovery_good_count = 0
-                self._integral_accumulator = 0.0  # Reset integral (error direction may flip)
+                # Untrustworthy reading. Stay locked through short NaN/SNR
+                # glitches (handled by the NaN-holdover correction path) and
+                # only demote once the untrustworthy count crosses the guard.
+                self._consecutive_bad_count += 1
+                if self._persistent_untrustworthy_count >= untrustworthy_grace:
+                    new_status = "recovering"
+                    self._recovery_attempts_remaining = self._config.recovery_attempts
+                    self._recovery_start_time = time.monotonic()
+                    self._recovery_good_count = 0
+                    self._consecutive_bad_count = 0
 
         elif self._status == "recovering":
             if is_good:
                 # Good reading during recovery - count towards recovery
                 self._recovery_good_count += 1
+                self._consecutive_bad_count = 0
                 if self._recovery_good_count >= self._config.recovery_window_readings:
                     # Successfully recovered!
                     new_status = "locked"
                     self._lock_buffer_fill = self._config.recovery_window_readings
             else:
-                # Bad reading during recovery - reset good count
+                # Bad reading during recovery.
                 self._recovery_good_count = 0
-                assert self._recovery_start_time is not None  # Set on entering recovery
-                elapsed = time.monotonic() - self._recovery_start_time
-                if elapsed >= self._config.recovery_delay_s:
-                    # Recovery delay elapsed, try next attempt
-                    self._recovery_attempts_remaining -= 1
-                    if self._recovery_attempts_remaining <= 0:
-                        # All recovery attempts exhausted
-                        if self._auto_search_enabled:
-                            self._start_search()
-                            new_status = "searching"
-                        else:
-                            new_status = "lost"
-                            self._lock_buffer_fill = 0
+                self._consecutive_bad_count += 1
+                # Exhaust on consecutive bad frames, not wall-clock. A single
+                # good frame fully extends the recovery budget (reset above).
+                exhaustion_budget = max(
+                    1,
+                    self._config.recovery_attempts
+                    * max(1, self._config.recovery_window_readings),
+                )
+                if self._consecutive_bad_count >= exhaustion_budget:
+                    # Truly can't recover — transition to lost/searching.
+                    self._recovery_attempts_remaining = 0
+                    self._integral_accumulator = 0.0  # only reset on actual loss
+                    if self._auto_search_enabled:
+                        self._start_search()
+                        new_status = "searching"
                     else:
-                        # Reset timer for next attempt
-                        self._recovery_start_time = time.monotonic()
+                        new_status = "lost"
+                        self._lock_buffer_fill = 0
 
         elif self._status == "ready":
             # Building up to lock
@@ -903,12 +1021,23 @@ class ContinuousFocusLockController(BaseController):
     def _publish_metrics(self, result: LaserAFResult, error_um: float, is_good: bool) -> None:
         if not math.isnan(error_um):
             self._error_history.append(error_um)
+            self._recent_error_window.append(error_um)
             self._drift_history.append((time.monotonic(), error_um))
 
+        # Full-history RMS is retained as an event payload for logging. The
+        # quality score below uses a *recent* window so it responds within a
+        # fraction of a second after a disturbance clears.
         z_error_rms = float("nan")
         if self._error_history:
             z_error_rms = math.sqrt(
                 sum(err * err for err in self._error_history) / len(self._error_history)
+            )
+
+        recent_rms = float("nan")
+        if self._recent_error_window:
+            recent_rms = math.sqrt(
+                sum(err * err for err in self._recent_error_window)
+                / len(self._recent_error_window)
             )
 
         drift_rate = 0.0
@@ -918,29 +1047,28 @@ class ContinuousFocusLockController(BaseController):
             if t1 > t0:
                 drift_rate = (e1 - e0) / (t1 - t0)
 
-        # Calculate RMS-based quality (0-1, higher is better)
+        # Recent-window RMS-based quality (0-1, higher is better).
         quality_threshold = self._config.offset_threshold_um
-        if not math.isnan(z_error_rms):
-            current_quality = max(0.0, 1.0 - z_error_rms / quality_threshold)
+        if not math.isnan(recent_rms):
+            current_quality = max(0.0, 1.0 - recent_rms / quality_threshold)
         else:
             current_quality = 1.0
 
-        # Keep quality aligned with lock state so UI doesn't report "excellent"
-        # quality while lock is clearly not established.
+        # Only force quality to zero when lock is truly lost. During
+        # "recovering" we trust the measurement-derived quality — the status
+        # field already tells the UI we are recovering, so the numeric score
+        # should reflect actual recent performance (which is what the user
+        # wants to see climbing back within a few frames).
         status = self.status
         if status in ("lost", "searching"):
             current_quality = 0.0
-        elif status == "recovering":
-            current_quality = min(current_quality, 0.4)
-        elif not is_good:
-            current_quality = min(current_quality, 0.2)
 
         # Update smoothed quality with exponential moving average, but force
         # immediate drop when lock is explicitly lost/searching.
         if status in ("lost", "searching"):
             self._smoothed_quality = 0.0
         else:
-            alpha = 0.1  # Smoothing factor (lower = smoother)
+            alpha = 0.35  # Responsive smoothing — ~3-frame time constant.
             self._smoothed_quality = alpha * current_quality + (1 - alpha) * self._smoothed_quality
 
         z_position = self._piezo_service.get_position()
@@ -1067,6 +1195,7 @@ class ContinuousFocusLockController(BaseController):
         self._lock_reference_active = False
         self._lock_buffer_fill = 0
         self._error_history.clear()
+        self._recent_error_window.clear()
         self._drift_history.clear()
         self._smoothed_quality = 1.0
         self._warning_last_time.clear()
@@ -1074,6 +1203,9 @@ class ContinuousFocusLockController(BaseController):
         self._recovery_attempts_remaining = 0
         self._recovery_start_time = None
         self._recovery_good_count = 0
+        self._consecutive_bad_count = 0
+        self._persistent_large_error_count = 0
+        self._persistent_untrustworthy_count = 0
         # Reset search state
         self._search_phase = ""
         self._search_position = 0.0
@@ -1121,4 +1253,9 @@ class ContinuousFocusLockController(BaseController):
             self._laser_on = False
 
     def _cleanup(self) -> None:
+        try:
+            if self._laser_af._camera_service.get_is_streaming():
+                self._laser_af._camera_service.stop_streaming()
+        except Exception:
+            self._log.exception("Failed to stop focus camera streaming during cleanup")
         self._turn_off_laser()

@@ -12,8 +12,8 @@ class TestFocusLockConfig:
     def test_defaults_from_def(self):
         """Config should use defaults from _def.py."""
         config = FocusLockConfig()
-        assert config.gain == 0.5
-        assert config.gain_max == 0.7
+        assert config.gain == 0.35
+        assert config.gain_max == 0.5
         assert config.buffer_length == 5
         assert config.offset_threshold_um == 0.5
         assert config.min_spot_snr == 5.0
@@ -21,6 +21,10 @@ class TestFocusLockConfig:
         assert config.metrics_rate_hz == 10
         assert config.piezo_warning_margin_um == 20.0
         assert config.default_mode == "off"
+        assert config.lock_break_error_um == 15.0
+        assert config.lock_break_persist_cycles == 30
+        assert config.settle_correction_threshold_um == 1.0
+        assert config.settle_delay_s == 0.005
 
     def test_custom_values(self):
         """Config should accept custom values."""

@@ -46,6 +46,18 @@ class FocusLockConfig(BaseModel):
         acquire_threshold_um: Tighter threshold to acquire lock.
         maintain_threshold_um: Looser threshold to maintain lock.
 
+        Unrecoverable-error guard:
+        lock_break_error_um: Error magnitude beyond which the measurement
+            is considered unrecoverable for lock maintenance. Only fires
+            after ``lock_break_persist_cycles`` consecutive cycles so the
+            PI controller has time to correct normal disturbances.
+        lock_break_persist_cycles: Consecutive cycles of |error| >
+            lock_break_error_um required before demoting from locked.
+        settle_correction_threshold_um: Correction magnitude above which
+            the control loop inserts a brief piezo settle before the next
+            measurement. Reduces deadtime-driven ringing on large steps.
+        settle_delay_s: Settle duration after a large correction.
+
         Auto-search parameters:
         auto_search_enabled: Enable auto-search on lock loss.
         search_range_um: Search range ±um around last known position.
@@ -86,6 +98,14 @@ class FocusLockConfig(BaseModel):
     # Hysteresis thresholds
     acquire_threshold_um: float = _def.FOCUS_LOCK_ACQUIRE_THRESHOLD_UM
     maintain_threshold_um: float = _def.FOCUS_LOCK_MAINTAIN_THRESHOLD_UM
+
+    # Unrecoverable-error guard (true lock break)
+    lock_break_error_um: float = _def.FOCUS_LOCK_LOCK_BREAK_ERROR_UM
+    lock_break_persist_cycles: int = _def.FOCUS_LOCK_LOCK_BREAK_PERSIST_CYCLES
+
+    # Piezo settle after large corrections
+    settle_correction_threshold_um: float = _def.FOCUS_LOCK_SETTLE_CORRECTION_THRESHOLD_UM
+    settle_delay_s: float = _def.FOCUS_LOCK_SETTLE_DELAY_S
 
     # Auto-search parameters
     auto_search_enabled: bool = _def.FOCUS_LOCK_AUTO_SEARCH_ENABLED
@@ -199,4 +219,19 @@ class FocusLockConfig(BaseModel):
             )
         if self.search_timeout_s <= 0:
             raise ValueError(f"search_timeout_s must be positive, got {self.search_timeout_s}")
+        if self.lock_break_error_um <= self.maintain_threshold_um:
+            raise ValueError(
+                f"lock_break_error_um ({self.lock_break_error_um}) must be > "
+                f"maintain_threshold_um ({self.maintain_threshold_um})"
+            )
+        if self.lock_break_persist_cycles < 1:
+            raise ValueError(
+                f"lock_break_persist_cycles must be >= 1, got {self.lock_break_persist_cycles}"
+            )
+        if self.settle_correction_threshold_um < 0:
+            raise ValueError(
+                f"settle_correction_threshold_um must be >= 0, got {self.settle_correction_threshold_um}"
+            )
+        if self.settle_delay_s < 0:
+            raise ValueError(f"settle_delay_s must be >= 0, got {self.settle_delay_s}")
         return self

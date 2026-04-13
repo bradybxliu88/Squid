@@ -28,6 +28,20 @@ class _DummyLaserAFProps:
     x_reference = 100.0
 
 
+class _DummyCameraService:
+    def __init__(self) -> None:
+        self._streaming = True
+
+    def get_is_streaming(self) -> bool:
+        return self._streaming
+
+    def start_streaming(self) -> None:
+        self._streaming = True
+
+    def stop_streaming(self) -> None:
+        self._streaming = False
+
+
 class _DummyLaserAF:
     def __init__(self) -> None:
         self.laser_af_properties = _DummyLaserAFProps()
@@ -35,6 +49,7 @@ class _DummyLaserAF:
         self.off_calls = 0
         self.is_initialized = True
         self._displacement_um = 0.5
+        self._camera_service = _DummyCameraService()
 
     def turn_on_laser(self, bypass_mode_gate: bool = False) -> None:  # noqa: ARG002
         self.on_calls += 1
@@ -225,7 +240,12 @@ def test_release_reference_stays_released():
 
 
 def test_lock_state_transitions():
-    """Test that lock state machine transitions correctly with recovery support."""
+    """Test state machine can walk ready->locked->recovering->lost.
+
+    Uses sustained NaN (untrustworthy) readings, which is the only path that
+    should demote from locked. A merely large error is NOT sufficient — the
+    PI loop is expected to correct it.
+    """
     bus = EventBus()
     controller = ContinuousFocusLockController(
         laser_af=_DummyLaserAF(),
@@ -233,26 +253,33 @@ def test_lock_state_transitions():
         event_bus=bus,
         config=FocusLockConfig(
             buffer_length=3,
-            recovery_attempts=1,  # Single recovery attempt for simple test
-            recovery_delay_s=0.0,  # Immediate recovery attempt
+            recovery_attempts=1,
+            recovery_window_readings=1,
+            recovery_delay_s=0.0,
+            # Very small guards so the test runs in a handful of cycles.
+            max_nan_holdover_cycles=1,
+            lock_break_persist_cycles=1,
         ),
     )
 
     events: list[FocusLockStatusChanged] = []
     bus.subscribe(FocusLockStatusChanged, events.append)
 
-    # Start in ready state, build up buffer
     controller._lock_reference_active = True
     controller._set_status("ready")
-    controller._update_lock_state(True, 0.0)  # buffer_fill = 1
-    controller._update_lock_state(True, 0.0)  # buffer_fill = 2
-    controller._update_lock_state(True, 0.0)  # buffer_fill = 3 -> locked
+    controller._update_lock_state(True, 0.0)
+    controller._update_lock_state(True, 0.0)
+    controller._update_lock_state(True, 0.0)  # -> locked
 
-    # Bad reading triggers recovery (not immediate lost)
-    controller._update_lock_state(False, 1.0)  # -> recovering
-
-    # Another bad reading after recovery delay exhausts attempts -> lost
-    controller._update_lock_state(False, 1.0)  # -> lost
+    # Sustained untrustworthy readings demote past the grace window.
+    grace = (
+        controller._config.max_nan_holdover_cycles
+        + controller._config.lock_break_persist_cycles
+    )
+    for _ in range(grace + 1):
+        controller._update_lock_state(False, float("nan"))  # -> recovering
+    # One more bad frame while recovering exhausts the tiny budget -> lost.
+    controller._update_lock_state(False, float("nan"))
 
     bus.drain()
 
@@ -828,7 +855,11 @@ def test_paused_loop_still_emits_focus_lock_warnings():
 
 
 def test_recovery_with_delayed_good_readings():
-    """Recovery succeeds at exactly recovery_window_readings good readings."""
+    """Recovery succeeds at exactly recovery_window_readings good readings.
+
+    Entry into 'recovering' is forced by sustained NaN readings past the
+    untrustworthy guard; good readings then re-establish lock.
+    """
     bus = EventBus()
     controller = ContinuousFocusLockController(
         laser_af=_DummyLaserAF(),
@@ -839,6 +870,8 @@ def test_recovery_with_delayed_good_readings():
             recovery_attempts=5,
             recovery_delay_s=0.0,
             recovery_window_readings=3,
+            max_nan_holdover_cycles=1,
+            lock_break_persist_cycles=1,
         ),
     )
 
@@ -850,9 +883,16 @@ def test_recovery_with_delayed_good_readings():
     controller._set_status("ready")
     for _ in range(3):
         controller._update_lock_state(True, 0.0)
+    assert controller.status == "locked"
 
-    # Enter recovery
-    controller._update_lock_state(False, 1.0)  # -> recovering
+    # Sustained untrustworthy input forces transition to recovering.
+    grace = (
+        controller._config.max_nan_holdover_cycles
+        + controller._config.lock_break_persist_cycles
+    )
+    for _ in range(grace + 1):
+        controller._update_lock_state(False, float("nan"))
+    assert controller.status == "recovering"
 
     # One good reading short of recovery
     controller._update_lock_state(True, 0.0)  # count=1
@@ -1058,28 +1098,76 @@ def test_integral_anti_windup_clamp():
     assert controller._integral_accumulator >= -0.5
 
 
-def test_integral_resets_on_recovery():
-    """Enter recovery, verify accumulator = 0."""
+def test_integral_preserved_through_recovering():
+    """Integral is preserved across locked->recovering->locked.
+
+    Previous behavior zeroed the accumulator whenever the state machine
+    flicked into recovering. With the new semantics the flick happens only
+    when sustained untrustworthy readings exceed the grace window, and the
+    integral carries useful low-frequency drift information across that
+    short transition. Only true loss (->lost / ->searching) resets it.
+    """
     bus = EventBus()
     controller = ContinuousFocusLockController(
         laser_af=_DummyLaserAF(),
         piezo_service=_DummyPiezoService(),
         event_bus=bus,
-        config=FocusLockConfig(buffer_length=3, recovery_attempts=3, recovery_delay_s=0.0),
+        config=FocusLockConfig(
+            buffer_length=3,
+            recovery_attempts=3,
+            recovery_window_readings=1,
+            recovery_delay_s=0.0,
+            max_nan_holdover_cycles=1,
+            lock_break_persist_cycles=1,
+        ),
     )
 
-    # Build up some integral state
     controller._integral_accumulator = 1.0
-
-    # Get to locked state
     controller._lock_reference_active = True
     controller._set_status("locked")
     controller._lock_buffer_fill = 3
 
-    # Bad reading triggers recovery -> integral should reset
-    controller._update_lock_state(False, 1.0)
-
+    grace = (
+        controller._config.max_nan_holdover_cycles
+        + controller._config.lock_break_persist_cycles
+    )
+    for _ in range(grace + 1):
+        controller._update_lock_state(False, float("nan"))
     assert controller.status == "recovering"
+    assert controller._integral_accumulator == 1.0  # preserved, not zeroed
+
+
+def test_integral_resets_on_true_loss():
+    """Integral IS zeroed when lock truly fails (exhaust recovery -> lost)."""
+    bus = EventBus()
+    controller = ContinuousFocusLockController(
+        laser_af=_DummyLaserAF(),
+        piezo_service=_DummyPiezoService(),
+        event_bus=bus,
+        config=FocusLockConfig(
+            buffer_length=3,
+            recovery_attempts=1,
+            recovery_window_readings=1,
+            recovery_delay_s=0.0,
+            max_nan_holdover_cycles=1,
+            lock_break_persist_cycles=1,
+        ),
+    )
+
+    controller._integral_accumulator = 0.75
+    controller._lock_reference_active = True
+    controller._set_status("locked")
+    controller._lock_buffer_fill = 3
+
+    grace = (
+        controller._config.max_nan_holdover_cycles
+        + controller._config.lock_break_persist_cycles
+    )
+    # Push through recovering and then exhaust the consecutive-bad budget.
+    for _ in range(grace + 1 + 5):
+        controller._update_lock_state(False, float("nan"))
+
+    assert controller.status == "lost"
     assert controller._integral_accumulator == 0.0
 
 
@@ -1286,6 +1374,170 @@ def test_nan_holdover_does_not_update_integral():
     controller._integral_accumulator = saved  # Restore as the control loop does
 
     assert controller._integral_accumulator == 0.5
+
+
+# ============================================================================
+# Robustness Tests (Focus Lock Stay-Locked Semantics)
+# ============================================================================
+
+
+def test_is_good_reading_accepts_large_error_when_locked():
+    """A trustworthy reading with a large error is 'good' during locked.
+
+    The PI controller is the thing that drives error to zero — the lock
+    state machine must not reject the reading just because the error is
+    large.
+    """
+    controller = ContinuousFocusLockController(
+        laser_af=_DummyLaserAF(),
+        piezo_service=_DummyPiezoService(),
+        event_bus=EventBus(),
+        config=FocusLockConfig(acquire_threshold_um=0.3, maintain_threshold_um=0.8),
+    )
+    controller._target_um = 0.0
+    controller._set_status("locked")
+
+    result = _make_result(
+        displacement_um=10.0, spot_snr=12.0, correlation=0.98, timestamp=100.0
+    )
+    error_um = controller._compute_error(result)
+    assert controller._is_good_reading(result, error_um) is True
+
+
+def test_locked_persists_through_simulated_large_step():
+    """Simulating a 10 um manual stage step, the controller remains locked.
+
+    This is the primary user-visible bug we are fixing: before this change
+    a single large-error frame dropped the state to 'recovering' and the
+    lock bar grayed. Here we use a coupled simulator so the PI loop can
+    actually null the disturbance, and assert that 'recovering' never
+    appears in the status-event log.
+    """
+    bus = EventBus()
+    piezo = _DummyPiezoService()
+    laser_af = _CoupledLaserAF(piezo, disturbance_um=0.0)
+    controller = ContinuousFocusLockController(
+        laser_af=laser_af,
+        piezo_service=piezo,
+        event_bus=bus,
+        config=FocusLockConfig(
+            loop_rate_hz=80,
+            metrics_rate_hz=20,
+            buffer_length=3,
+            acquire_threshold_um=0.2,
+            maintain_threshold_um=0.5,
+        ),
+    )
+
+    events: list[FocusLockStatusChanged] = []
+    bus.subscribe(FocusLockStatusChanged, events.append)
+
+    controller.start(target_um=0.0)
+    try:
+        controller.set_lock_reference()
+        assert controller.wait_for_lock(timeout_s=1.0)
+
+        # Inject a 10 um manual step.
+        laser_af.disturbance_um = 10.0
+        time.sleep(0.6)
+
+        # Controller should still be locked; state must never have gone
+        # through 'recovering' or 'lost' during this transient.
+        bus.drain()
+        statuses = [event.status for event in events]
+        assert controller.status == "locked"
+        assert "recovering" not in statuses
+        assert "lost" not in statuses
+    finally:
+        controller.stop()
+
+
+def test_lock_breaks_on_persistent_unrecoverable_error():
+    """Lock eventually demotes when |error| stays above lock_break_error_um."""
+    bus = EventBus()
+    controller = ContinuousFocusLockController(
+        laser_af=_DummyLaserAF(),
+        piezo_service=_DummyPiezoService(),
+        event_bus=bus,
+        config=FocusLockConfig(
+            buffer_length=3,
+            lock_break_error_um=15.0,
+            lock_break_persist_cycles=5,
+        ),
+    )
+
+    controller._lock_reference_active = True
+    controller._set_status("locked")
+    controller._lock_buffer_fill = 3
+
+    # Below-threshold errors must never demote, no matter how many.
+    for _ in range(50):
+        controller._update_lock_state(True, 14.0)
+    assert controller.status == "locked"
+
+    # Above-threshold errors must demote after exactly persist_cycles frames.
+    for _ in range(controller._config.lock_break_persist_cycles):
+        controller._update_lock_state(True, 20.0)
+    assert controller.status == "recovering"
+
+
+def test_lock_break_counter_resets_on_dip_below_threshold():
+    """A single frame back within range must reset the persistence counter."""
+    controller = ContinuousFocusLockController(
+        laser_af=_DummyLaserAF(),
+        piezo_service=_DummyPiezoService(),
+        event_bus=EventBus(),
+        config=FocusLockConfig(
+            buffer_length=3,
+            lock_break_error_um=15.0,
+            lock_break_persist_cycles=10,
+        ),
+    )
+    controller._lock_reference_active = True
+    controller._set_status("locked")
+    controller._lock_buffer_fill = 3
+
+    # Run up to just before the persistence budget.
+    for _ in range(9):
+        controller._update_lock_state(True, 20.0)
+    # Single dip below threshold resets the counter.
+    controller._update_lock_state(True, 1.0)
+    assert controller._persistent_large_error_count == 0
+
+    # Now another 9 large-error frames must not trigger demotion.
+    for _ in range(9):
+        controller._update_lock_state(True, 20.0)
+    assert controller.status == "locked"
+
+
+def test_quality_recovers_quickly_after_excursion():
+    """Smoothed quality climbs above 0.8 within ~15 publish cycles.
+
+    This guards against the previous slow-EMA / history-RMS combination that
+    left the quality bar gray for "several seconds" after the piezo had
+    physically converged.
+    """
+    bus = EventBus()
+    controller = ContinuousFocusLockController(
+        laser_af=_DummyLaserAF(),
+        piezo_service=_DummyPiezoService(),
+        event_bus=bus,
+    )
+    controller._set_status("locked")
+    controller._lock_reference_active = True
+    # Simulate the state after a big excursion: smoothed quality was pushed
+    # low, recent error history is empty / clean (piezo has caught up).
+    controller._smoothed_quality = 0.0
+
+    # Feed 15 publish cycles with zero error and watch smoothed quality rise.
+    for _ in range(15):
+        controller._publish_metrics(
+            _make_result(displacement_um=0.0, spot_snr=12.0, correlation=0.98),
+            error_um=0.0,
+            is_good=True,
+        )
+
+    assert controller._smoothed_quality > 0.8
 
 
 # ============================================================================
