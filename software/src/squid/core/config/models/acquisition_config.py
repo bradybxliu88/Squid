@@ -219,13 +219,22 @@ class AcquisitionChannel(BaseModel):
         if not confocal_mode or not self.confocal_override:
             return self
 
-        merged_illumination = self.illumination_settings
+        # Merge illumination: take only intensity from the override, preserving
+        # illumination_channel from the base. The override stores intensity per
+        # confocal config, but illumination_channel is only set on the base
+        # channel (objective files don't store it). Replacing the whole
+        # illumination_settings would clear illumination_channel and break
+        # turn_on_illumination(). Ports upstream 07ac6e55.
         if self.confocal_override.illumination_settings:
-            merged_illumination = self.confocal_override.illumination_settings
+            merged_illumination = self.illumination_settings.model_copy(
+                update={"intensity": self.confocal_override.illumination_settings.intensity}
+            )
+        else:
+            merged_illumination = self.illumination_settings.model_copy()
 
-        merged_camera = self.camera_settings
+        merged_camera = self.camera_settings.model_copy()
         if self.confocal_override.camera_settings:
-            merged_camera = self.confocal_override.camera_settings
+            merged_camera = self.confocal_override.camera_settings.model_copy()
 
         return AcquisitionChannel(
             name=self.name,

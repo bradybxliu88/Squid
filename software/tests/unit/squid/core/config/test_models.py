@@ -102,6 +102,26 @@ class TestAcquisitionChannel:
         assert effective.exposure_time == 50.0
         assert effective.illumination_intensity == 80.0
 
+    def test_effective_settings_preserves_illumination_channel(self):
+        """Confocal override must not clobber illumination_channel from base.
+
+        Regression test for upstream 07ac6e55: confocal mode replaced the entire
+        illumination_settings with the override's, which has illumination_channel=None
+        (objective files don't store it). turn_on_illumination() then couldn't find
+        the laser/LED to activate.
+        """
+        override = AcquisitionChannelOverride(
+            illumination_settings=IlluminationSettings(
+                illumination_channel=None, intensity=80.0
+            ),
+        )
+        ch = self._make_channel(confocal_override=override)
+
+        effective = ch.get_effective_settings(confocal_mode=True)
+        # Intensity comes from override, illumination_channel preserved from base.
+        assert effective.illumination_intensity == 80.0
+        assert effective.primary_illumination_channel == "405nm"
+
     def test_extra_fields_forbidden(self):
         with pytest.raises(Exception):
             AcquisitionChannel(
