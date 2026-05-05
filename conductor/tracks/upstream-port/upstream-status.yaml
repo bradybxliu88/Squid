@@ -854,7 +854,10 @@ commits:
     analysis_file: commits/27-ec83f777-misc-fixes.md
   07ac6e55:
     title: 'fix: preserve illumination_channel when applying confocal override (#511)'
-    status: in-progress
+    status: ported
+    ported_in: b5d93313
+    ported_date: '2026-05-05'
+    analysis_file: commits/31-b5d93313-illumination-channel-preserve.md
   b7a8826b:
     title: 'fix: sync iris sliders from acquisition config on startup (#510)'
     status: skipped
