@@ -1,5 +1,8 @@
-from typing import Optional, TypeVar
+import time
+from pathlib import Path
+from typing import List, Optional, TypeVar
 
+import imageio
 import numpy as np
 
 import _def
@@ -411,16 +414,33 @@ class Microscope:
     def set_objective(self, objective: str) -> None:
         self.objective_store.set_current_objective(objective)
 
+    def _get_channel_or_raise(self, objective: str, channel_name: str):
+        """Look up a channel config; raise ValueError with available names if missing.
+
+        Ports upstream 44c4f518: replace silent no-op with explicit error.
+        """
+        channel_config = self.channel_configuration_manager.get_channel_configuration_by_name(
+            objective, channel_name
+        )
+        if channel_config is None:
+            try:
+                available = [
+                    ch.name
+                    for ch in self.channel_configuration_manager.get_channel_configurations_for_objective(objective)
+                ]
+            except Exception:
+                available = []
+            raise ValueError(
+                f"Channel '{channel_name}' not found for objective '{objective}'. Available: {available}"
+            )
+        return channel_config
+
     def set_illumination_intensity(
         self, channel: str, intensity: float, objective: Optional[str] = None
     ) -> None:
         if objective is None:
             objective = self.objective_store.current_objective
-        channel_config = (
-            self.channel_configuration_manager.get_channel_configuration_by_name(
-                objective, channel
-            )
-        )
+        channel_config = self._get_channel_or_raise(objective, channel)
         channel_config.illumination_intensity = intensity
         self.live_controller.set_microscope_mode(channel_config)
 
@@ -429,10 +449,103 @@ class Microscope:
     ) -> None:
         if objective is None:
             objective = self.objective_store.current_objective
-        channel_config = (
-            self.channel_configuration_manager.get_channel_configuration_by_name(
-                objective, channel
-            )
-        )
+        channel_config = self._get_channel_or_raise(objective, channel)
         channel_config.exposure_time = exposure_time
         self.live_controller.set_microscope_mode(channel_config)
+
+    def save_image(self, image: np.ndarray, path: str) -> str:
+        """Save an image to the given path.
+
+        Extension is determined by dtype: tiff for uint16, otherwise
+        ``Acquisition.IMAGE_FORMAT``. Any existing extension in path is replaced.
+
+        Ports upstream 44c4f518.
+
+        Args:
+            image: Image array to save.
+            path: Output file path (extension is overridden).
+
+        Returns:
+            The actual path the image was saved to.
+        """
+        extension = "tiff" if image.dtype == np.uint16 else _def.Acquisition.IMAGE_FORMAT
+        p = Path(path).with_suffix(f".{extension}")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        imageio.imwrite(str(p), image)
+        self._log.info(f"Image saved to {p}")
+        return str(p)
+
+    def acquire_single_fov(
+        self,
+        channel_names: List[str],
+        save_path: str,
+        NZ: int = 1,
+        deltaZ_mm: float = 0.0,
+        z_stacking_config: str = "FROM BOTTOM",
+    ) -> List[str]:
+        """Acquire a C+Z stack at the current position.
+
+        Iterates over z-planes and channels, saving each image to ``save_path``.
+        File naming follows the acquisition pipeline convention:
+        ``0_0_{z}_{channel_name}.{ext}``
+
+        Ports upstream 44c4f518.
+
+        Args:
+            channel_names: List of illumination channel names to acquire.
+            save_path: Directory to save images into (created if needed).
+            NZ: Number of z-planes.
+            deltaZ_mm: Z step size in mm (positive = upward).
+            z_stacking_config: "FROM BOTTOM", "FROM CENTER", or "FROM TOP".
+
+        Returns:
+            List of saved file paths.
+        """
+        objective = self.objective_store.current_objective
+        configs = [self._get_channel_or_raise(objective, name) for name in channel_names]
+
+        VALID_Z_STACKING_CONFIGS = {"FROM BOTTOM", "FROM CENTER", "FROM TOP"}
+        if z_stacking_config not in VALID_Z_STACKING_CONFIGS:
+            raise ValueError(
+                f"Invalid z_stacking_config '{z_stacking_config}'. Must be one of: {VALID_Z_STACKING_CONFIGS}"
+            )
+
+        Path(save_path).mkdir(parents=True, exist_ok=True)
+
+        deltaZ = deltaZ_mm
+        if z_stacking_config == "FROM TOP":
+            deltaZ = -abs(deltaZ_mm)
+
+        z_start = self.stage.get_pos().z_mm
+
+        # Move to start of z-stack
+        if NZ > 1 and z_stacking_config == "FROM CENTER":
+            self.stage.move_z(-deltaZ * round((NZ - 1) / 2.0))
+            time.sleep(_def.SCAN_STABILIZATION_TIME_MS_Z / 1000)
+
+        saved_paths = []
+        try:
+            for z_level in range(NZ):
+                for config in configs:
+                    self.live_controller.set_microscope_mode(config)
+                    self.waitForMicrocontroller()
+
+                    image = self.acquire_image()
+
+                    channel_name_safe = config.name.replace(" ", "_")
+                    file_id = f"0_0_{z_level}_{channel_name_safe}"
+                    saved = self.save_image(image, str(Path(save_path) / file_id))
+                    saved_paths.append(saved)
+
+                if z_level < NZ - 1:
+                    self.stage.move_z(deltaZ)
+                    time.sleep(_def.SCAN_STABILIZATION_TIME_MS_Z / 1000)
+        finally:
+            # Always return Z to starting position
+            try:
+                self.stage.move_z_to(z_start)
+            except Exception as e:
+                self._log.error(f"Failed to return Z to start position {z_start} mm: {e}")
+
+        self._log.info(f"Acquired {len(saved_paths)} images ({len(configs)} channels x {NZ} z-planes)")
+        return saved_paths

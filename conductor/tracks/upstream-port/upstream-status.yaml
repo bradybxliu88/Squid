@@ -779,7 +779,11 @@ commits:
     status: pending
   44c4f518:
     title: 'feat: headless microscope API — hardware init, single-FOV acquisition, laser AF, profiles (#524)'
-    status: pending
+    status: in-progress
+    notes: 'Partial port. Channel validation, save_image, acquire_single_fov ported.
+      Hardware init consolidation, lazy laser AF, profile management not ported —
+      arch_v2 has these in ApplicationContext / service layer; direct Microscope
+      access bypasses the service architecture.'
   30d95ea1:
     title: 'fix: suppress Pydantic serializer int/float warning in LaserAFConfig (#523)'
     status: ported
