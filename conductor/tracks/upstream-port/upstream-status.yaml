@@ -776,7 +776,12 @@ commits:
     analysis_file: commits/29-d9cee6e3-tools-tests.md
   8bfca85a:
     title: 'fix: upgrade pip and drop napari[all] to unblock CI (#529)'
-    status: in-progress
+    status: ported
+    ported_in: d4da8f06
+    ported_date: '2026-05-05'
+    ported_with:
+    - dda4c983
+    notes: 'Applied to software/setup_scripts/setup_22.04.sh (arch_v2 path differs from upstream).'
   44c4f518:
     title: 'feat: headless microscope API — hardware init, single-FOV acquisition, laser AF, profiles (#524)'
     status: ported
@@ -800,7 +805,12 @@ commits:
     analysis_file: commits/27-ec83f777-misc-fixes.md
   dda4c983:
     title: 'feat: disable kernel updates in setup script (#519)'
-    status: in-progress
+    status: ported
+    ported_in: d4da8f06
+    ported_date: '2026-05-05'
+    ported_with:
+    - 8bfca85a
+    notes: 'Applied to software/setup_scripts/setup_22.04.sh (arch_v2 path differs from upstream).'
   cc677e2c:
     title: 'fix: handle illumination sources without a hardware source code (#518)'
     status: ported
