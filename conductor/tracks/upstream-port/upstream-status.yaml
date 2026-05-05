@@ -776,7 +776,7 @@ commits:
     analysis_file: commits/29-d9cee6e3-tools-tests.md
   8bfca85a:
     title: 'fix: upgrade pip and drop napari[all] to unblock CI (#529)'
-    status: pending
+    status: in-progress
   44c4f518:
     title: 'feat: headless microscope API — hardware init, single-FOV acquisition, laser AF, profiles (#524)'
     status: ported
@@ -800,7 +800,7 @@ commits:
     analysis_file: commits/27-ec83f777-misc-fixes.md
   dda4c983:
     title: 'feat: disable kernel updates in setup script (#519)'
-    status: pending
+    status: in-progress
   cc677e2c:
     title: 'fix: handle illumination sources without a hardware source code (#518)'
     status: ported

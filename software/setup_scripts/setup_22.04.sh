@@ -53,10 +53,16 @@ fi
 cd "$SQUID_SOFTWARE_ROOT"
 mkdir -p "$SQUID_SOFTWARE_ROOT/cache"
 
-# install libraries 
-pip3 install qtpy pyserial pandas imageio crc==1.3.0 lxml numpy tifffile scipy napari pyreadline3
+# Ubuntu 22.04 ships pip 22.0.2, whose resolver can't handle the
+# napari dependency graph on current PyPI (hits ResolutionTooDeep
+# after hours of backtracking). Upgrade pip before installing libraries.
+# (ports upstream 8bfca85a)
+python3 -m pip install --upgrade pip
+
+# install libraries
+pip3 install qtpy pyserial pandas imageio crc==1.3.0 lxml numpy tifffile scipy pyreadline3
 pip3 install opencv-python-headless opencv-contrib-python-headless
-pip3 install napari[all] scikit-image dask_image ome_zarr aicsimageio basicpy pytest pytest-qt pytest-xvfb gitpython matplotlib pydantic_xml pyvisa hidapi filelock lxml_html_clean psutil ndv
+pip3 install napari scikit-image dask_image ome_zarr aicsimageio basicpy pytest pytest-qt pytest-xvfb gitpython matplotlib pydantic_xml pyvisa hidapi filelock lxml_html_clean psutil ndv
 
 # install camera drivers
 cd "$DAHENG_CAMERA_DRIVER_ROOT"
@@ -71,6 +77,17 @@ sudo cp "$TOUPCAM_UDEV_RULE_PATH" /etc/udev/rules.d
 sudo usermod -aG dialout $USER
 
 sudo apt autoremove -y
+
+# Hold kernel packages to prevent automatic kernel updates that can break
+# driver/module compatibility (ports upstream dda4c983).
+echo "Holding kernel packages to prevent automatic updates..."
+if sudo apt-mark hold \
+  linux-image-generic linux-headers-generic linux-generic \
+  "linux-image-$(uname -r)" "linux-headers-$(uname -r)"; then
+  echo "Kernel packages held. Run 'sudo apt-mark unhold linux-image-generic linux-headers-generic linux-generic linux-image-$(uname -r) linux-headers-$(uname -r)' to re-enable."
+else
+  echo "Warning: Failed to hold kernel packages; automatic kernel updates remain enabled." >&2
+fi
 
 # create desktop shortcut
 mkdir -p "$HOME/Desktop"
