@@ -890,6 +890,12 @@ class TucsenCamera(AbstractCamera):
                     self._set_genicam_parameter(
                         "TriggerMode", 1, TUELEM_TYPE.TU_ElemEnumeration.value
                     )
+                    # TriggerExposureType=1 (Width) so Aries follows the trigger pulse
+                    # width instead of the programmed ExposureTime — required for
+                    # level-trigger acquisition.
+                    self._set_genicam_parameter(
+                        "TriggerExposureType", 1, TUELEM_TYPE.TU_ElemEnumeration.value
+                    )
                 else:
                     self._trigger_attr.nTgrMode = (
                         TUCAM_CAPTURE_MODES.TUCCM_TRIGGER_STANDARD.value

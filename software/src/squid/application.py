@@ -237,6 +237,7 @@ class ApplicationContext:
                     from squid.core.abc import CameraAcquisitionMode
                     from _def import TriggerMode
 
+                    live_controller = self._microscope.live_controller if self._microscope else None
                     if getattr(_config, "DEFAULT_TRIGGER_MODE") == TriggerMode.HARDWARE:
                         camera_service.set_acquisition_mode(CameraAcquisitionMode.HARDWARE_TRIGGER)
                         # Set microcontroller trigger mode to match (ports upstream 2408902a)
@@ -245,8 +246,16 @@ class ApplicationContext:
                             from _def import HARDWARE_TRIGGER_MODE
 
                             mc.set_trigger_mode(HARDWARE_TRIGGER_MODE)
+                        # Align LiveController so MultiPointWorker branches correctly
+                        # (ports upstream 31b454c3). Direct attribute set; calling
+                        # set_trigger_mode() here would touch currentConfiguration which
+                        # may still be None this early.
+                        if live_controller is not None:
+                            live_controller.trigger_mode = TriggerMode.HARDWARE
                     else:
                         camera_service.set_acquisition_mode(CameraAcquisitionMode.SOFTWARE_TRIGGER)
+                        if live_controller is not None:
+                            live_controller.trigger_mode = TriggerMode.SOFTWARE
                 self._camera_frame_callback_id = camera_service.add_frame_callback(
                     self._controllers.stream_handler.on_new_frame
                 )
@@ -298,6 +307,7 @@ class ApplicationContext:
                     from squid.core.abc import CameraAcquisitionMode
                     from _def import TriggerMode
 
+                    live_controller = self._microscope.live_controller if self._microscope else None
                     if getattr(_config, "DEFAULT_TRIGGER_MODE") == TriggerMode.HARDWARE:
                         camera_service.set_acquisition_mode(CameraAcquisitionMode.HARDWARE_TRIGGER)
                         # Set microcontroller trigger mode to match (ports upstream 2408902a)
@@ -306,8 +316,14 @@ class ApplicationContext:
                             from _def import HARDWARE_TRIGGER_MODE
 
                             mc.set_trigger_mode(HARDWARE_TRIGGER_MODE)
+                        # Align LiveController so MultiPointWorker branches correctly
+                        # (ports upstream 31b454c3).
+                        if live_controller is not None:
+                            live_controller.trigger_mode = TriggerMode.HARDWARE
                     else:
                         camera_service.set_acquisition_mode(CameraAcquisitionMode.SOFTWARE_TRIGGER)
+                        if live_controller is not None:
+                            live_controller.trigger_mode = TriggerMode.SOFTWARE
                 self._camera_frame_callback_id = camera_service.add_frame_callback(
                     self._controllers.stream_handler.on_new_frame
                 )

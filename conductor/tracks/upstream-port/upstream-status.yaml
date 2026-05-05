@@ -746,7 +746,7 @@ commits:
     status: pending
   31b454c3:
     title: 'fix: align liveController.trigger_mode with hardware setup for Tucsen level trigger (#533)'
-    status: pending
+    status: in-progress
   3b24b637:
     title: 'fix: align zarr writer test helper with current acquisition schema (#531)'
     status: pending
