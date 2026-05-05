@@ -1022,7 +1022,7 @@ class Microcontroller:
 
         if self.last_command_aborted_error is not None:
             self.log.warning(
-                "Last command aborted and not cleared before new command sent!",
+                "Last command aborted and not cleared before new command sent! %s",
                 self.last_command_aborted_error,
             )
         self.last_command_aborted_error = None

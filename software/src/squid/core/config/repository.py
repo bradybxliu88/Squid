@@ -128,7 +128,7 @@ class ConfigRepository:
         """Save a Pydantic model to a YAML file."""
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            data = model.model_dump(exclude_none=True, mode="json")
+            data = model.model_dump(exclude_none=True, mode="json", warnings=False)
 
             with open(path, "w") as f:
                 yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)

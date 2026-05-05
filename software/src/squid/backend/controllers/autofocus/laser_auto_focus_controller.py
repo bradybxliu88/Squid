@@ -279,7 +279,7 @@ class LaserAutofocusController(BaseController):
         ):
             self.laserAFSettingManager.update_laser_af_settings(
                 self.objectiveStore.current_objective,
-                self.laser_af_properties.model_dump(),
+                self.laser_af_properties.model_dump(warnings=False),
             )
 
     def load_cached_configuration(self) -> None:
@@ -473,7 +473,7 @@ class LaserAutofocusController(BaseController):
         if self.objectiveStore and self.laserAFSettingManager:
             self.laserAFSettingManager.update_laser_af_settings(
                 self.objectiveStore.current_objective,
-                self.laser_af_properties.model_dump(),
+                self.laser_af_properties.model_dump(warnings=False),
             )
 
         return True

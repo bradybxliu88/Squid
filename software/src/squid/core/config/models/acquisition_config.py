@@ -187,14 +187,21 @@ class AcquisitionChannel(BaseModel):
         return None
 
     def get_illumination_source_code(self, illumination_config: "IlluminationChannelConfig") -> int:
-        """Get the illumination source code for the primary illumination channel."""
+        """Get the illumination source code for the primary illumination channel.
+
+        Returns:
+            Source code (int) for the primary illumination channel, or -1 if a channel
+            exists but has no hardware source code (e.g. software-only illumination).
+            Returns the injected `_illumination_source` (default 0) when no channel
+            name is set.
+        """
         ill_channel_name = self.primary_illumination_channel
         if not ill_channel_name:
             # Fall back to illumination_source if injected
             return getattr(self, "_illumination_source", 0)
         ill_channel = illumination_config.get_channel_by_name(ill_channel_name)
         if not ill_channel:
-            return 0
+            return -1
         return illumination_config.get_source_code(ill_channel)
 
     def get_illumination_wavelength(self, illumination_config: "IlluminationChannelConfig") -> Optional[int]:

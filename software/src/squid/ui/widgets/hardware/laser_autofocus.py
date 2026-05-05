@@ -402,8 +402,10 @@ class LaserAutofocusSettingWidget(QWidget):
         spot_mode_layout = QHBoxLayout()
         spot_mode_layout.addWidget(QLabel("Spot Detection Mode:"))
         self.spot_mode_combo = QComboBox()
+        _HIDDEN_SPOT_MODES = {SpotDetectionMode.MULTI_SECOND_RIGHT}
         for mode in SpotDetectionMode:
-            self.spot_mode_combo.addItem(mode.value, mode)
+            if mode not in _HIDDEN_SPOT_MODES:
+                self.spot_mode_combo.addItem(mode.value, mode)
         spot_mode = self._laser_af_properties.get("spot_detection_mode", SpotDetectionMode.SINGLE)
         # Accept string or enum and normalize to enum
         if isinstance(spot_mode, str):
