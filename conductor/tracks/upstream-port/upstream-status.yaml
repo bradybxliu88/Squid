@@ -3,7 +3,7 @@ meta:
   target_branch: multipoint-refactor
   cutoff_date: '2025-12-12'
   created: '2026-01-12'
-  last_verified: '2026-03-04T14:30:43'
+  last_verified: '2026-05-05T13:23:34'
 commits:
   295afbb3:
     title: 'fix: Disable memory profiling in CI to fix test hangs (#451)'
@@ -709,7 +709,8 @@ commits:
     title: 'fix: Move z_offset_um to AcquisitionChannel level in add channel dialog (#502)'
     status: skipped
     skip_reason: already-fixed
-    skip_justification: arch_v2 schema already has z_offset_um on AcquisitionChannel with explicit comment referencing this upstream bug.
+    skip_justification: arch_v2 schema already has z_offset_um on AcquisitionChannel with explicit comment referencing this
+      upstream bug.
     skip_date: '2026-03-05'
   5e5fb921:
     title: 'fix: Pin numpy<2 to fix CI test failures (#501)'
@@ -737,5 +738,80 @@ commits:
     title: 'feat: Add Anthropic API key management for Claude Code (#495)'
     status: skipped
     skip_reason: not-applicable
-    skip_justification: GUI convenience feature for upstream main_hcs.py Claude Code integration. Not relevant to arch_v2 architecture.
+    skip_justification: GUI convenience feature for upstream main_hcs.py Claude Code integration. Not relevant to arch_v2
+      architecture.
     skip_date: '2026-03-05'
+  d556a42c:
+    title: 'feat: enforce single Squid GUI instance via QLockFile (#534)'
+    status: pending
+  31b454c3:
+    title: 'fix: align liveController.trigger_mode with hardware setup for Tucsen level trigger (#533)'
+    status: pending
+  3b24b637:
+    title: 'fix: align zarr writer test helper with current acquisition schema (#531)'
+    status: pending
+  e4fcfe68:
+    title: 'feat: add MCU triggering stress test and timeout counter tools (#525)'
+    status: pending
+  8bfca85a:
+    title: 'fix: upgrade pip and drop napari[all] to unblock CI (#529)'
+    status: pending
+  44c4f518:
+    title: 'feat: headless microscope API — hardware init, single-FOV acquisition, laser AF, profiles (#524)'
+    status: pending
+  30d95ea1:
+    title: 'fix: suppress Pydantic serializer int/float warning in LaserAFConfig (#523)'
+    status: pending
+  dda4c983:
+    title: 'feat: disable kernel updates in setup script (#519)'
+    status: pending
+  cc677e2c:
+    title: 'fix: handle illumination sources without a hardware source code (#518)'
+    status: pending
+  e7aaef8b:
+    title: 'fix: apply missing mm-to-µm conversion factor for PhysicalSizeZ (#516)'
+    status: skipped
+    skip_reason: already-fixed
+    skip_justification: arch_v2 MultiPointWorker.deltaZ is already in micrometers (see multi_point_utils.py:44 and multi_point_controller.py:1193
+      which passes delta_z_um). The line self._physical_size_z_um = self.deltaZ in multi_point_worker.py:272 is correct in
+      arch_v2.
+    skip_date: '2026-05-05'
+    analysis_file: plans/2026-05-05-may-skips.md
+  36dc1444:
+    title: 'fix: LaserAFConfig defaults from _def.py & status bar height stability (#517)'
+    status: pending
+  7f76cb78:
+    title: 'docs: move development docs to AI-docs repo (#513)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: arch_v2 has its own docs structure. The development docs upstream removed (development/, illumination-control.md,
+      pending/) do not exist in arch_v2. The upstream-specific reorg to AI-docs/Squid/ is not relevant to arch_v2.
+    skip_date: '2026-05-05'
+    analysis_file: plans/2026-05-05-may-skips.md
+  6e3f731a:
+    title: 'fix: fix logging format error and noisy backpressure warning (#512)'
+    status: pending
+  07ac6e55:
+    title: 'fix: preserve illumination_channel when applying confocal override (#511)'
+    status: pending
+  b7a8826b:
+    title: 'fix: sync iris sliders from acquisition config on startup (#510)'
+    status: pending
+  35321c92:
+    title: 'fix: speed up XLight iris commands and avoid response mismatch (#509)'
+    status: pending
+  8d49273c:
+    title: 'feat: Confocal model registry and per-channel iris persistence (#508)'
+    status: pending
+  30a2aaa2:
+    title: 'fix: Always retract Z and move Xeryon to zero on restart (#507)'
+    status: skipped
+    skip_reason: already-fixed
+    skip_justification: arch_v2 ApplicationContext._shutdown already retracts Z (application.py:1252) and moves Xeryon to
+      zero (application.py:1281, guarded by USE_XERYON). Null safety on objective_changer is already present via services.get("objective_changer")
+      + None check. Restart goes through normal shutdown via os.execv after QApplication.quit().
+    skip_date: '2026-05-05'
+    analysis_file: plans/2026-05-05-may-skips.md
+  d30b2fd9:
+    title: 'feat: Replace illumination timeout with serial watchdog (#506)'
+    status: pending
