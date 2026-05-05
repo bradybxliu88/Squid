@@ -746,7 +746,10 @@ commits:
     status: pending
   31b454c3:
     title: 'fix: align liveController.trigger_mode with hardware setup for Tucsen level trigger (#533)'
-    status: in-progress
+    status: ported
+    ported_in: 80f01f98
+    ported_date: '2026-05-05'
+    analysis_file: commits/28-80f01f98-trigger-alignment.md
   3b24b637:
     title: 'fix: align zarr writer test helper with current acquisition schema (#531)'
     status: pending
