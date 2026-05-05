@@ -743,7 +743,7 @@ commits:
     skip_date: '2026-03-05'
   d556a42c:
     title: 'feat: enforce single Squid GUI instance via QLockFile (#534)'
-    status: pending
+    status: in-progress
   31b454c3:
     title: 'fix: align liveController.trigger_mode with hardware setup for Tucsen level trigger (#533)'
     status: ported
@@ -752,10 +752,17 @@ commits:
     analysis_file: commits/28-80f01f98-trigger-alignment.md
   3b24b637:
     title: 'fix: align zarr writer test helper with current acquisition schema (#531)'
-    status: pending
+    status: skipped
+    skip_reason: already-fixed
+    skip_justification: 'arch_v2 tests/unit/test_zarr_writer.py:make_test_capture_info
+      already uses the current schema (illumination_channel="LED", intensity as float,
+      camera_settings as single CameraSettings). The schema mismatch upstream fixed
+      did not exist in arch_v2.'
+    skip_date: '2026-05-05'
+    analysis_file: plans/2026-05-05-tools-tests.md
   e4fcfe68:
     title: 'feat: add MCU triggering stress test and timeout counter tools (#525)'
-    status: pending
+    status: in-progress
   8bfca85a:
     title: 'fix: upgrade pip and drop napari[all] to unblock CI (#529)'
     status: pending

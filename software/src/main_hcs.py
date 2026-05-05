@@ -29,6 +29,7 @@ from _def import SQUID_ICON_PATH
 from _def import SIMULATED_DISK_IO_ENABLED
 from _def import SIMULATION_FORCE_SAVE_IMAGES
 import squid.core.utils.hardware_utils
+from squid.core.utils.single_instance import acquire_single_instance_lock
 from squid.application import ApplicationContext
 
 
@@ -71,6 +72,41 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Construct QApplication first so the single-instance check can show a
+    # QMessageBox before any other startup side effects (logging, migration).
+    app = QApplication(["Squid"])
+    app.setStyle("Fusion")
+    app.setWindowIcon(QIcon(str(SQUID_ICON_PATH)))
+
+    # Single-instance check before file logging so a losing second instance
+    # does not interleave log output. Skipped when --skip-init is set, since
+    # that path is used by the legitimate restart-after-settings-change flow
+    # which intentionally launches a new process while the lock holder exits.
+    if not args.skip_init:
+        lock_result = acquire_single_instance_lock()
+        if lock_result.lock is None:
+            if lock_result.busy:
+                QMessageBox.critical(
+                    None,
+                    "Squid Already Running",
+                    "Another instance of Squid is already running on this computer.\n\n"
+                    "Please close the existing Squid window before starting a new one.\n\n"
+                    f"If you believe this is an error, you can delete the lock file at:\n{lock_result.path}",
+                )
+            else:
+                QMessageBox.critical(
+                    None,
+                    "Could Not Start Squid",
+                    f"Failed to create the lock file at:\n{lock_result.path}\n\n"
+                    "Check that the temp directory is writable.",
+                )
+            sys.exit(1)
+        instance_lock = lock_result.lock
+        # main_hcs.py exits via os._exit(), which skips destructors. aboutToQuit
+        # fires before app.exec_() returns, so unlock() runs and the lock file
+        # is removed on a normal exit.
+        app.aboutToQuit.connect(instance_lock.unlock)
+
     log = squid.core.logging.get_logger("main_hcs")
 
     if args.verbose:
@@ -87,9 +123,6 @@ if __name__ == "__main__":
         f"Squid Repository State: {squid.core.utils.hardware_utils.get_squid_repo_state_description()}"
     )
 
-    app = QApplication(["Squid"])
-    app.setStyle("Fusion")
-    app.setWindowIcon(QIcon(str(SQUID_ICON_PATH)))
     # This allows shutdown via ctrl+C even after the gui has popped up.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
