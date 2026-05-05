@@ -761,15 +761,29 @@ commits:
     status: pending
   30d95ea1:
     title: 'fix: suppress Pydantic serializer int/float warning in LaserAFConfig (#523)'
-    status: in-progress
+    status: ported
+    ported_in: ec83f777
+    ported_date: '2026-05-05'
+    ported_with:
+    - cc677e2c
+    - 36dc1444
+    - 6e3f731a
+    analysis_file: commits/27-ec83f777-misc-fixes.md
   dda4c983:
     title: 'feat: disable kernel updates in setup script (#519)'
     status: pending
   cc677e2c:
     title: 'fix: handle illumination sources without a hardware source code (#518)'
-    status: in-progress
+    status: ported
+    ported_in: ec83f777
+    ported_date: '2026-05-05'
+    ported_with:
+    - 36dc1444
+    - 30d95ea1
+    - 6e3f731a
     notes: 'Model API change applied to acquisition_config.py. live_controller _is_led_matrix
       not applicable — arch_v2 dispatches via ChannelType.LED_MATRIX enum.'
+    analysis_file: commits/27-ec83f777-misc-fixes.md
   e7aaef8b:
     title: 'fix: apply missing mm-to-µm conversion factor for PhysicalSizeZ (#516)'
     status: skipped
@@ -781,7 +795,14 @@ commits:
     analysis_file: plans/2026-05-05-may-skips.md
   36dc1444:
     title: 'fix: LaserAFConfig defaults from _def.py & status bar height stability (#517)'
-    status: in-progress
+    status: ported
+    ported_in: ec83f777
+    ported_date: '2026-05-05'
+    ported_with:
+    - cc677e2c
+    - 30d95ea1
+    - 6e3f731a
+    analysis_file: commits/27-ec83f777-misc-fixes.md
   7f76cb78:
     title: 'docs: move development docs to AI-docs repo (#513)'
     status: skipped
@@ -792,9 +813,16 @@ commits:
     analysis_file: plans/2026-05-05-may-skips.md
   6e3f731a:
     title: 'fix: fix logging format error and noisy backpressure warning (#512)'
-    status: in-progress
+    status: ported
+    ported_in: ec83f777
+    ported_date: '2026-05-05'
+    ported_with:
+    - cc677e2c
+    - 36dc1444
+    - 30d95ea1
     notes: 'Microcontroller log format fix applied. BackpressureMonitorWidget portion not
       applicable — arch_v2 widget is push-based via update_stats() with no get_lock() race.'
+    analysis_file: commits/27-ec83f777-misc-fixes.md
   07ac6e55:
     title: 'fix: preserve illumination_channel when applying confocal override (#511)'
     status: pending
