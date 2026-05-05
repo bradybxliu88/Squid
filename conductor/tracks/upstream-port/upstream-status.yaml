@@ -743,7 +743,13 @@ commits:
     skip_date: '2026-03-05'
   d556a42c:
     title: 'feat: enforce single Squid GUI instance via QLockFile (#534)'
-    status: in-progress
+    status: ported
+    ported_in: d9cee6e3
+    ported_date: '2026-05-05'
+    ported_with:
+    - e4fcfe68
+    notes: 'Lock check skipped when --skip-init is set (restart-after-settings-change flow).'
+    analysis_file: commits/29-d9cee6e3-tools-tests.md
   31b454c3:
     title: 'fix: align liveController.trigger_mode with hardware setup for Tucsen level trigger (#533)'
     status: ported
@@ -762,7 +768,12 @@ commits:
     analysis_file: plans/2026-05-05-tools-tests.md
   e4fcfe68:
     title: 'feat: add MCU triggering stress test and timeout counter tools (#525)'
-    status: in-progress
+    status: ported
+    ported_in: d9cee6e3
+    ported_date: '2026-05-05'
+    ported_with:
+    - d556a42c
+    analysis_file: commits/29-d9cee6e3-tools-tests.md
   8bfca85a:
     title: 'fix: upgrade pip and drop napari[all] to unblock CI (#529)'
     status: pending
