@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, List, Dict, Optional, Union, TYPE_CHECKING
@@ -33,6 +34,21 @@ class ConfigType(Enum):
     CHANNEL = "channel"
     CONFOCAL = "confocal"
     WIDEFIELD = "widefield"
+
+
+@dataclass
+class ChannelDisplayInfo:
+    """Per-channel display metadata for the UI.
+
+    Attributes:
+        name: Channel name.
+        color: Display color as a '#'-prefixed hex string (e.g. '#FF0000').
+        ex_wavelength: Excitation wavelength in nm, or None for non-fluorescence channels.
+    """
+
+    name: str
+    color: str
+    ex_wavelength: Optional[int]
 
 
 class ChannelConfigurationManager(BaseManager):
@@ -528,6 +544,41 @@ class ChannelConfigurationManager(BaseManager):
     def get_channel_definitions(self) -> Optional[ChannelDefinitionsConfig]:
         """Get the global channel definitions."""
         return self.channel_definitions
+
+    def get_channel_display_info(self, objective: str) -> List[ChannelDisplayInfo]:
+        """Per enabled channel: (name, display_color, excitation wavelength).
+
+        Reconciles the enabled ChannelModes for the given objective with the global
+        channel definitions to surface display color (hex) and excitation wavelength
+        for the UI. Channels without a matching definition fall back to a normalized
+        hex color and a None wavelength.
+        """
+        defs = self.get_channel_definitions()
+        mapping = defs.numeric_channel_mapping if defs else {}
+        by_name = {c.name: c for c in (defs.channels if defs else [])}
+        out: List[ChannelDisplayInfo] = []
+        for mode in self.get_configurations(objective, enabled_only=True):
+            cdef = by_name.get(mode.name)
+            if cdef is not None:
+                color = cdef.display_color
+                try:
+                    wl = cdef.get_ex_wavelength(mapping)
+                except Exception:
+                    wl = None
+            else:
+                color = self._normalize_color(getattr(mode, "color", None))
+                wl = None
+            out.append(ChannelDisplayInfo(name=mode.name, color=color, ex_wavelength=wl))
+        return out
+
+    @staticmethod
+    def _normalize_color(color: Any) -> str:
+        """Normalize a ChannelMode color (int or str) to a '#'-prefixed hex string."""
+        if isinstance(color, int):
+            return f"#{color:06X}"
+        if isinstance(color, str) and color.startswith("#"):
+            return color
+        return "#FFFFFF"
 
     def update_channel_definition(self, channel_name: str, **kwargs) -> None:
         """Update a channel definition."""
