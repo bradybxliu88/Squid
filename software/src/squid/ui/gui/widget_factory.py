@@ -225,7 +225,9 @@ def create_hardware_widgets(gui: "HighContentScreeningGui") -> None:
 
     # Recording widget
     gui.recordingControlWidget = widgets.RecordingWidget(
-        gui.streamHandler, gui.imageSaver
+        gui.streamHandler,
+        gui.imageSaver,
+        channel_provider=lambda: gui.liveController.currentConfiguration,
     )
 
 

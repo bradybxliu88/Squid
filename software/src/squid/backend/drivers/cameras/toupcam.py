@@ -123,28 +123,37 @@ class ToupcamCamera(AbstractCamera):
         line_length = int(line_length / (bandwidth / 100.0))
         row_time = line_length / 72
 
+        # MAX_PRECISE_FRAMERATE can be rejected by the camera in certain
+        # transient states (notably right after a TRIGGER option flip), and
+        # is not relevant for trigger modes anyway — PRECISE_FRAMERATE only
+        # paces continuous/video mode. Fall back to a high value so vheight
+        # floors at roi_height + 56 (the sensor minimum) when the read fails,
+        # instead of propagating out and breaking the mode switch.
         try:
             max_framerate_tenths_fps = camera.get_Option(
                 toupcam.TOUPCAM_OPTION_MAX_PRECISE_FRAMERATE
             )
         except toupcam.HRESULTException as ex:
-            log.error(
-                f"get max_framerate fail --> {squid.backend.drivers.cameras.toupcam_exceptions.explain(ex)}"
+            log.warning(
+                f"get max_framerate fail (using fallback) --> {squid.backend.drivers.cameras.toupcam_exceptions.explain(ex)}"
             )
-            raise
+            max_framerate_tenths_fps = None
 
-        # need reset value, because the default value is only 90% of setting value
-        try:
-            camera.put_Option(
-                toupcam.TOUPCAM_OPTION_PRECISE_FRAMERATE, max_framerate_tenths_fps
-            )
-        except toupcam.HRESULTException as ex:
-            log.exception(
-                f"put max_framerate fail --> {squid.backend.drivers.cameras.toupcam_exceptions.explain(ex)}"
-            )
-            raise
-
-        max_framerate_fps = max_framerate_tenths_fps / 10.0
+        if max_framerate_tenths_fps is not None:
+            # need reset value, because the default value is only 90% of setting value
+            try:
+                camera.put_Option(
+                    toupcam.TOUPCAM_OPTION_PRECISE_FRAMERATE, max_framerate_tenths_fps
+                )
+            except toupcam.HRESULTException as ex:
+                log.warning(
+                    f"put max_framerate fail (skipping) --> {squid.backend.drivers.cameras.toupcam_exceptions.explain(ex)}"
+                )
+            max_framerate_fps = max_framerate_tenths_fps / 10.0
+        else:
+            # Sensor-floor fallback: high enough that vheight clamps to
+            # roi_height + 56 in the check below.
+            max_framerate_fps = 600.0
 
         vheight = 72000000 / (max_framerate_fps * line_length)
         if vheight < roi_height + 56:
@@ -418,6 +427,21 @@ class ToupcamCamera(AbstractCamera):
         """
         Run our initial configuration to get the camera into a know and safe starting state.
         """
+        # Disable auto-exposure BEFORE StartPullModeWithCallback runs. The Toupcam
+        # SDK's OPTION_DDR_DEPTH "auto" default caches only one frame in video
+        # mode when auto-exposure is enabled (per the SDK doc), which forces the
+        # host PullImage path to serialize with sensor readout — observed as
+        # ~2 fps continuous mode when the stream was started fresh in continuous
+        # mode versus ~10 fps when started in trigger mode and flipped. Squid
+        # sets exposure explicitly per channel, so disabling auto-exposure has
+        # no user-visible effect besides unlocking full DDR buffering.
+        try:
+            self._camera.put_AutoExpoEnable(False)
+        except toupcam.HRESULTException as ex:
+            self._log.warning(
+                f"Could not disable auto-exposure: {squid.backend.drivers.cameras.toupcam_exceptions.explain(ex)}"
+            )
+
         if self._capabilities.has_low_noise_mode:
             self._camera.put_Option(toupcam.TOUPCAM_OPTION_LOW_NOISE, 0)
 

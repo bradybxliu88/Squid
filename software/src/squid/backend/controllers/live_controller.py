@@ -337,6 +337,12 @@ class LiveController(StateMachine[LiveControllerState]):
                     and self.use_internal_timer_for_hardware_trigger
                 ):
                     self._start_triggerred_acquisition()
+                elif self.trigger_mode == TriggerMode.CONTINUOUS:
+                    # Continuous mode has no triggered-acquisition loop to turn on the
+                    # illumination, so do it here. stop_live() already turns it off
+                    # symmetrically.
+                    if self.control_illumination and not self.illumination_on:
+                        self.turn_on_illumination()
 
                 if self.for_displacement_measurement:
                     if self._peripheral_service:
