@@ -187,6 +187,12 @@ def create_hardware_widgets(gui: "HighContentScreeningGui") -> None:
     if gui.piezo:
         gui.piezoWidget = widgets.PiezoWidget(gui.piezo, event_bus=gui._ui_event_bus)
 
+    # Laser engine widget (status tab) — only when the engine addon is present.
+    if getattr(gui.microscope.addons, "squid_laser_engine", None) is not None:
+        from squid.ui.widgets.hardware.laser_engine import LaserEngineWidget
+
+        gui.laserEngineWidget = LaserEngineWidget(event_bus=gui._ui_event_bus)
+
     # Objectives widget
     if _FEATURE_FLAGS.is_enabled("USE_XERYON"):
         gui.objectivesWidget = widgets.ObjectivesWidget(

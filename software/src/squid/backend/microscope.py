@@ -13,6 +13,7 @@ from squid.core.config.repository import ConfigRepository
 from squid.backend.managers import ContrastManager
 from squid.backend.controllers.autofocus import LaserAFSettingManager
 from squid.backend.controllers.live_controller import LiveController
+from squid.backend.services.laser_engine_service import LaserEngineService
 from squid.backend.managers import ObjectiveStore
 from squid.backend.io.stream_handler import (
     StreamHandler,
@@ -87,6 +88,7 @@ class MicroscopeAddons:
         fluidics: Optional[Fluidics] = None,
         piezo_stage: Optional[PiezoStage] = None,
         sci_microscopy_led_array: Optional[SciMicroscopyLEDArray] = None,
+        squid_laser_engine: Optional["LaserEngineService"] = None,
     ):
         self.xlight: Optional[serial_peripherals.XLight] = xlight
         self.dragonfly: Optional[serial_peripherals.Dragonfly] = dragonfly
@@ -98,6 +100,10 @@ class MicroscopeAddons:
         self.fluidics = fluidics
         self.piezo_stage = piezo_stage
         self.sci_microscopy_led_array = sci_microscopy_led_array
+        # LaserEngineService (wraps the driver + bridges to EventBus); None unless
+        # USE_SQUID_LASER_ENGINE. Exposes the readiness API used by LiveController
+        # and MultiPointWorker.
+        self.squid_laser_engine: Optional["LaserEngineService"] = squid_laser_engine
 
     def prepare_for_use(self) -> None:
         """
@@ -109,6 +115,11 @@ class MicroscopeAddons:
             self.emission_filter_wheel.home()
         if self.piezo_stage:
             self.piezo_stage.home()
+        if self.squid_laser_engine:
+            # start() may raise if the USB device is missing — intentional hard fail
+            # when USE_SQUID_LASER_ENGINE=True so we don't silently disable it.
+            self.squid_laser_engine.start()
+            self.squid_laser_engine.wake_up_all()  # fire-and-forget
 
 
 class LowLevelDrivers:
@@ -404,6 +415,11 @@ class Microscope:
             self.addons.emission_filter_wheel.close()
         if self.addons.camera_focus:
             self.addons.camera_focus.close()
+        if self.addons.squid_laser_engine:
+            try:
+                self.addons.squid_laser_engine.close()
+            except Exception as e:
+                self._log.warning(f"Error closing squid laser engine: {e}")
         self.camera.close()
 
     def move_to_position(self, x: float, y: float, z: float) -> None:

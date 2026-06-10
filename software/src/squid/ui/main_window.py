@@ -282,6 +282,7 @@ class HighContentScreeningGui(QMainWindow):
         self.dacControlWidget: Optional[widgets.DACControWidget] = None
         self.autofocusWidget: Optional[widgets.AutoFocusWidget] = None
         self.piezoWidget: Optional[widgets.PiezoWidget] = None
+        self.laserEngineWidget: Optional[Any] = None
         self.objectivesWidget: Optional[widgets.ObjectivesWidget] = None
         self.filterControllerWidget: Optional[widgets.FilterControllerWidget] = None
         self.squidFilterWidget: Optional[widgets.SquidFilterWidget] = None
@@ -867,6 +868,8 @@ class HighContentScreeningGui(QMainWindow):
             self.cameraTabWidget.addTab(self.navigationWidget, "Stages")
         if self.piezoWidget:
             self.cameraTabWidget.addTab(self.piezoWidget, "Piezo")
+        if self.laserEngineWidget:
+            self.cameraTabWidget.addTab(self.laserEngineWidget, "Laser Engine")
         if ENABLE_NL5:
             self.cameraTabWidget.addTab(self.nl5Wdiget, "NL5")
         if self._feature_flags.is_enabled("ENABLE_SPINNING_DISK_CONFOCAL"):

@@ -2801,3 +2801,58 @@ class SetFocusLockParamsCommand(Event):
     min_spot_snr: Optional[float] = None  # Minimum spot signal-to-noise ratio
     acquire_threshold_um: Optional[float] = None  # Max displacement to count as "good"
     maintain_threshold_um: Optional[float] = None  # Looser threshold once locked
+
+
+# ============================================================================
+# Squid Laser Engine events (Cephla Teensy laser controller)
+# ============================================================================
+
+
+@dataclass
+class LaserEngineStatusUpdated(Event):
+    """State event: a fresh laser-engine status snapshot is available.
+
+    `status` is a SquidLaserEngineStatus (carried as Any to avoid a backend
+    import from core). The Laser Engine widget renders per-channel state.
+    """
+
+    status: Any  # SquidLaserEngineStatus
+
+
+@dataclass
+class LaserEngineConnectionLost(Event):
+    """State event: the laser-engine serial connection dropped."""
+
+    message: str
+
+
+@dataclass
+class WakeAllLasersCommand(Event):
+    """Command from UI: wake all laser channels."""
+
+    pass
+
+
+@dataclass
+class SleepAllLasersCommand(Event):
+    """Command from UI: put all laser channels to sleep."""
+
+    pass
+
+
+@dataclass
+class LaserEngineWaitingForReady(Event):
+    """State event: an acquisition is blocked waiting on laser channels to warm up.
+
+    The UI shows a cancelable modal while this is outstanding; cleared by
+    LaserEngineReady.
+    """
+
+    channel_keys: list  # list[str], e.g. ["470", "55x"]
+
+
+@dataclass
+class LaserEngineReady(Event):
+    """State event: the acquisition's laser-readiness wait has finished."""
+
+    pass

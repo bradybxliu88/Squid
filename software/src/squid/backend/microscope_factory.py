@@ -169,6 +169,19 @@ def build_microscope_addons(
         if piezo_stage is not None and hasattr(camera_focus, "set_piezo"):
             camera_focus.set_piezo(piezo_stage)
 
+    laser_engine_service = None
+    if _def.USE_SQUID_LASER_ENGINE:
+        from squid.backend.drivers.lighting import squid_laser_engine as _sle
+        from squid.backend.services.laser_engine_service import LaserEngineService
+        from squid.core.events import event_bus
+
+        engine = (
+            _sle.SquidLaserEngine_Simulation()
+            if _should_simulate(simulated, False)
+            else _sle.SquidLaserEngine(sn=_def.SQUID_LASER_ENGINE_SN)
+        )
+        laser_engine_service = LaserEngineService(engine, event_bus)
+
     return MicroscopeAddons(
         xlight,
         dragonfly,
@@ -180,6 +193,7 @@ def build_microscope_addons(
         None,  # fluidics - now handled by FluidicsService
         piezo_stage,
         sci_microscopy_led_array,
+        squid_laser_engine=laser_engine_service,
     )
 
 
