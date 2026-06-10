@@ -97,8 +97,11 @@ class LiteHistogram(QWidget):
             p.setBrush(QBrush(grad))
             p.drawPolygon(poly)
 
-        xl = self._x_for_value(self._low)
-        xh = self._x_for_value(self._high)
+        # Clamp handle positions so they're always fully visible, even when a
+        # level sits at (or beyond) the current frame's min/max.
+        edge = 2.0
+        xl = min(max(self._x_for_value(self._low), edge), w - edge)
+        xh = min(max(self._x_for_value(self._high), edge), w - edge)
         # selected window
         p.fillRect(QRectF(xl, 0, max(0.0, xh - xl), h), QColor(255, 255, 255, 14))
         # handles
