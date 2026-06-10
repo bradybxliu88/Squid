@@ -1,5 +1,6 @@
 # Backpressure Lifecycle Enforcement Port
 
+**Status:** COMPLETED (ported in `9daf295b`; reconciled 2026-06-10)
 **Upstream commit:** `be019383`
 **Branch:** `multipoint-refactor` (arch_v2)
 **Date:** 2026-02-07

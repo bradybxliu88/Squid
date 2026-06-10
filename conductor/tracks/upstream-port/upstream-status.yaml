@@ -679,7 +679,13 @@ commits:
     skip_date: '2026-02-02'
   be019383:
     title: 'refactor: Backpressure system lifecycle enforcement and test coverage (#488)'
-    status: in-progress
+    status: ported
+    ported_date: '2026-02-07'
+    ported_in: 9daf295b
+    notes: Lifecycle tracking, TOCTOU capture-reference pattern, is_closed/_warn_if_closed,
+      monotonic clock, atomic get_stats, and test coverage. Pre-warming intentionally not ported
+      (arch_v2 worker creates runners internally). Plan 2026-02-07-backpressure-lifecycle.md.
+      Reconciled 2026-06-10 (in-progress -> ported; impl commit lacks Ports-Upstream trailer).
   2cbf3fa8:
     title: 'fix: minor UI and path fixes (#494)'
     status: ported
@@ -688,7 +694,13 @@ commits:
       skipped (different structure).
   833ae523:
     title: 'feat: Workflow Runner - Edit button and multiple Acquisition sequences with config paths (#493)'
-    status: in-progress
+    status: ported
+    ported_date: '2026-02-07'
+    ported_in: ad6c2d64
+    notes: Edit button, multiple acquisition sequences, config_path on SequenceItem, and
+      WorkflowLoadConfigRequest/Response EventBus round-trip (replaces upstream Qt signals).
+      Plan 2026-02-07-workflow-runner-enhancements.md.
+      Reconciled 2026-06-10 (in-progress -> ported; impl commit lacks Ports-Upstream trailer).
   a3962c55:
     title: 'fix: organize files and fix install script (#491)'
     status: ported
@@ -696,10 +708,22 @@ commits:
     notes: Added ndv, filelock, lxml_html_clean, psutil to setup script. benchmark_plate_view move skipped (file not in arch_v2).
   644ac383:
     title: 'feat: Open Chamber fluidics support and FluidicsWidget enhancements (#489)'
-    status: in-progress
+    status: ported
+    ported_date: '2026-02-07'
+    ported_in: 7fe26bfb
+    notes: Open Chamber sequence validation, FluidicsWidget Save Log button, control-disable during
+      protocol, and stop-fluidics-on-abort (abort path in 9daf295b). arch_v2 uses YAML protocols +
+      EventBus rather than upstream CSV/Qt-signals. Plan 2026-02-07-open-chamber-fluidics.md.
+      Reconciled 2026-06-10 (in-progress -> ported; impl commit lacks Ports-Upstream trailer).
   88c0065c:
     title: 'feat: Wellplate calibration improvements - center point method and parameter editing (#490)'
-    status: in-progress
+    status: ported
+    ported_date: '2026-02-07'
+    ported_in: 34ff57bc
+    notes: Center-point calibration method, update-parameters-without-recalibration, parameter editing.
+      arch_v2 uses EventBusDialog + SaveWellplateCalibrationCommand and cached StagePositionChanged.
+      Plan 2026-02-07-wellplate-calibration.md.
+      Reconciled 2026-06-10 (in-progress -> ported; impl commit lacks Ports-Upstream trailer).
   2408902a:
     title: 'fix: prevent level trigger from never ending when retriggered too fast (#500)'
     status: ported

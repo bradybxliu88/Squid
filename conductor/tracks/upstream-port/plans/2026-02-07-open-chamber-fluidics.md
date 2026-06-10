@@ -1,5 +1,6 @@
 # Open Chamber Fluidics Support - Upstream Port Plan
 
+**Status:** COMPLETED (ported in `7fe26bfb` + abort path in `9daf295b`; reconciled 2026-06-10)
 **Source commit:** `644ac383` (feat: Open Chamber fluidics support and FluidicsWidget enhancements)
 **Target branch:** `multipoint-refactor` (arch_v2)
 **Date:** 2026-02-07
