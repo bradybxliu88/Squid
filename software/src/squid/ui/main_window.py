@@ -21,6 +21,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QTabWidget,
 )
 from qtpy.QtGui import QCloseEvent
@@ -68,6 +69,8 @@ from squid.core.events import (
     event_bus,
     AcquisitionCoordinates,
     AcquisitionStarted,
+    LaserEngineReady,
+    LaserEngineWaitingForReady,
     MoveStageToCommand,
     StopLiveCommand,
     ImageCoordinateClickedCommand,
@@ -1351,6 +1354,29 @@ class HighContentScreeningGui(QMainWindow):
         if getattr(self, "zPlotWidget", None) is None:
             return
         self.zPlotWidget.plot()
+
+    @handles(LaserEngineWaitingForReady)
+    def _on_laser_engine_waiting(self, event: LaserEngineWaitingForReady) -> None:
+        # The acquisition worker is blocked on laser warm-up; show a modeless,
+        # non-cancelable progress dialog. The normal Abort button still cancels
+        # the wait (the gate uses the abort flag as its cancel_fn).
+        channels = ", ".join(event.channel_keys)
+        dialog = getattr(self, "_laser_engine_wait_dialog", None)
+        if dialog is None:
+            dialog = QProgressDialog(self)
+            dialog.setWindowTitle("Laser engine")
+            dialog.setCancelButton(None)  # cancel via the acquisition Abort button
+            dialog.setRange(0, 0)  # indeterminate
+            dialog.setMinimumDuration(0)
+            self._laser_engine_wait_dialog = dialog
+        dialog.setLabelText(f"Waiting for laser channel(s) to warm up: {channels}")
+        dialog.show()
+
+    @handles(LaserEngineReady)
+    def _on_laser_engine_ready(self, _event: LaserEngineReady) -> None:
+        dialog = getattr(self, "_laser_engine_wait_dialog", None)
+        if dialog is not None:
+            dialog.hide()
 
     @handles(PlateViewInit)
     def _on_plate_view_init(self, event: PlateViewInit) -> None:
