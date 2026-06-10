@@ -916,7 +916,10 @@ commits:
     analysis_file: commits/32-a8039815-config-and-small-fixes.md
   cf4bba2a:
     title: 'feat(tucsen): callback-based frame delivery (TUCAM_Buf_DataCallBack) (#552)'
-    status: pending
+    status: ported
+    ported_in: 47ef3027
+    ported_date: '2026-06-09'
+    analysis_file: commits/33-47ef3027-tucsen-callback.md
   a894eda5:
     title: 'fix: legacy RecordingWidget + Toupcam continuous-mode FPS + Live illumination (#535)'
     status: pending
