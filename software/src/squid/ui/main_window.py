@@ -84,6 +84,9 @@ from squid.core.events import (
     ActiveAcquisitionTabChanged,
     AutoLevelCommand,
     LiveStateChanged,
+    ManualShapeDrawingEnabledChanged,
+    ManualShapesChanged,
+    ClearManualShapesCommand,
     PlateViewInit,
     PlateViewUpdate,
 )
@@ -569,6 +572,7 @@ class HighContentScreeningGui(QMainWindow):
             # fed in-GUI. Replaces the separate Mosaic/Plate tabs when enabled.
             self.unifiedMosaicWidget = None
             self._plate_well_origins_mm: dict = {}
+            self._click_to_move_enabled: bool = True
             if USE_UNIFIED_MOSAIC_VIEW:
                 self.unifiedMosaicWidget = widgets.UnifiedMosaicWidget(
                     self.objectiveStore,
@@ -628,6 +632,15 @@ class HighContentScreeningGui(QMainWindow):
             if self.unifiedMosaicWidget is not None and self.ndviewerTab is not None:
                 self.unifiedMosaicWidget.signal_well_fov_clicked.connect(
                     self._on_plate_view_fov_clicked
+                )
+            if self.unifiedMosaicWidget is not None:
+                # Double-click in Full View -> move stage (gated by click-to-move state);
+                # manual ROI shapes -> scan-region command. Mirrors NapariMosaicDisplayWidget.
+                self.unifiedMosaicWidget.signal_coordinates_clicked.connect(
+                    self._on_unified_coordinates_clicked
+                )
+                self.unifiedMosaicWidget.signal_shape_drawn.connect(
+                    self._on_unified_shape_drawn
                 )
 
             # z plot
@@ -1486,6 +1499,36 @@ class HighContentScreeningGui(QMainWindow):
             event.plate_image,
         )
 
+    # --- Unified mosaic widget: manual ROI + click-to-move (Qt signals -> EventBus) ---
+    # The unified widget uses Qt signals (no event_bus), so main_window translates to/from
+    # the EventBus. These are no-ops when the unified widget is off (napari mosaic self-handles).
+
+    def _on_unified_coordinates_clicked(self, x_mm: float, y_mm: float) -> None:
+        """Double-click in Full View moves the stage when click-to-move is enabled."""
+        if self._click_to_move_enabled:
+            self._ui_event_bus.publish(MoveStageToCommand(x_mm=x_mm, y_mm=y_mm))
+
+    def _on_unified_shape_drawn(self, shapes_mm: list) -> None:
+        """Manual ROI shapes (mm) drawn in the unified widget -> scan-region command."""
+        shapes_tuple = None
+        if shapes_mm:
+            shapes_tuple = tuple(
+                tuple((float(pt[0]), float(pt[1])) for pt in shape) for shape in shapes_mm
+            )
+        self._ui_event_bus.publish(ManualShapesChanged(shapes_mm=shapes_tuple))
+
+    @handles(ManualShapeDrawingEnabledChanged)
+    def _on_manual_shape_drawing_enabled_unified(self, event: ManualShapeDrawingEnabledChanged) -> None:
+        if getattr(self, "unifiedMosaicWidget", None) is not None:
+            self.unifiedMosaicWidget.enable_shape_drawing(event.enabled)
+
+    @handles(ClearManualShapesCommand)
+    def _on_clear_manual_shapes_unified(self, _event: ClearManualShapesCommand) -> None:
+        if getattr(self, "unifiedMosaicWidget", None) is not None:
+            # Single clear operation; the widget re-emits signal_shape_drawn([]) which
+            # _on_unified_shape_drawn turns into ManualShapesChanged(None).
+            self.unifiedMosaicWidget._clear_shape()
+
     @handles(AcquisitionStarted)
     def _on_acquisition_started(self, event: AcquisitionStarted) -> None:
         """Handle acquisition start without forcing file-mode dataset loading.
@@ -1536,6 +1579,7 @@ class HighContentScreeningGui(QMainWindow):
         # Click to move off during acquisition
         # Update both the widget and publish event for ImageClickController
         self.navigationWidget.set_click_to_move(not acquisition_started)
+        self._click_to_move_enabled = not acquisition_started
         self._ui_event_bus.publish(ClickToMoveEnabledChanged(enabled=not acquisition_started))
 
         # disable other acquisition tabs during acquisition
