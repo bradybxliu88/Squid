@@ -960,10 +960,18 @@ commits:
     analysis_file: plans/2026-06-09-firmware-correctness-deferred.md
   9c8556db:
     title: 'docs: document how to restore machine configs after PR #546 pull (#550)'
-    status: pending
+    status: ported
+    ported_in: 29c4edbe
+    ported_date: '2026-06-10'
+    analysis_file: commits/38-061db6ea-config-hygiene.md
+    notes: 'README "Updating an existing install" section; arch_v2 file list is the two machine_configs yaml (no Xeryon); restore source 061db6ea^.'
   '74752073':
     title: 'fix(ci): provide illumination_channel_config example for tests (#548)'
-    status: pending
+    status: ported
+    ported_in: 29c4edbe
+    ported_date: '2026-06-10'
+    analysis_file: commits/38-061db6ea-config-hygiene.md
+    notes: 'CI copies illumination_channel_config.yaml.example -> .yaml before pytest; filter_wheels intentionally not copied (loads gracefully; verified suite passes absent).'
   6713d854:
     title: 'log: enable per-acquisition log by default (#547)'
     status: ported
@@ -972,7 +980,11 @@ commits:
     analysis_file: commits/32-a8039815-config-and-small-fixes.md
   af71d2ef:
     title: 'chore: ignore machine-specific configs and Xeryon settings (#546)'
-    status: pending
+    status: ported
+    ported_in: 061db6ea
+    ported_date: '2026-06-10'
+    analysis_file: commits/38-061db6ea-config-hygiene.md
+    notes: 'gitignore software/machine_configs/*.yaml + untrack the two yaml + add both .example templates. Xeryon_settings.txt N/A (no software/control/ in arch_v2).'
   24bb38b1:
     title: 'fix: clear line-profiler preview when toggled off mid-drawing (#544)'
     status: ported
