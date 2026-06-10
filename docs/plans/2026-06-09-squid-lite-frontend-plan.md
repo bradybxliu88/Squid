@@ -9,7 +9,18 @@
 **Tech Stack:** Python 3, PyQt5/qtpy, pyqtgraph (live image + histograms), numpy (compositing), tifffile (read-back), existing Squid backend (EventBus, services, `SnapController`).
 
 **Design spec:** `docs/plans/2026-06-09-squid-lite-frontend-design.md`
-**Prerequisite:** the backend plan (`docs/plans/2026-06-09-squid-lite-backend-plan.md`) is merged to `master` — `SnapController`, the capture events, the single-capture OME writer, and `get_channel_display_info` must exist.
+**Prerequisite:** the backend plan (`docs/plans/2026-06-09-squid-lite-backend-plan.md`) is merged to `master` — `SnapController`, the capture events, the single-capture OME writer, and `get_channel_display_info` must exist. ✅ Done.
+
+---
+
+## REVISION — Build alongside (2026-06-09)
+
+The old HCS frontend is being actively improved by upstream porting, so Squid Lite is now **purely additive** — it does NOT replace or delete the existing UI:
+
+- **Task F0:** do NOT modify `create_gui()` (it keeps building the HCS GUI). Instead add a new `ApplicationContext.create_lite_gui()` that builds `SquidLiteWindow`, and have `main_lite.py` call `create_lite_gui()`. The HCS UI and `main_hcs.py` stay untouched and runnable.
+- **Task F9 (remove old UI): DROPPED.** Both frontends coexist; choose via entry point (`main_hcs.py` vs `main_lite.py`).
+- Everything else (F1–F8, F10) is unchanged. The frontend footprint is almost entirely new files under `ui/lite/` plus one additive method in `application.py`.
+- GUI verification is headless via `QT_QPA_PLATFORM=offscreen` (confirmed working with pyqtgraph 0.14.0); full visual verification is a manual step for the user.
 
 ---
 
