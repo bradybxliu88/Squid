@@ -893,7 +893,7 @@ RESUME_LIVE_AFTER_ACQUISITION = True
 
 # When enabled, each multipoint acquisition will write a second log file scoped to that acquisition at:
 #   <base_path>/<experiment_ID>/acquisition.log
-ENABLE_PER_ACQUISITION_LOG = False
+ENABLE_PER_ACQUISITION_LOG = True
 
 # Simulated disk I/O for development (RAM/speed optimization testing)
 # When enabled, images are encoded to memory buffers but NOT saved to disk

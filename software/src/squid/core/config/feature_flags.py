@@ -122,7 +122,7 @@ class FeatureFlags:
 
         # Debug flags
         self._register("PRINT_CAMERA_FPS", self.DEBUG, True, "Print camera FPS to console")
-        self._register("ENABLE_PER_ACQUISITION_LOG", self.DEBUG, False, "Enable per-acquisition logging")
+        self._register("ENABLE_PER_ACQUISITION_LOG", self.DEBUG, True, "Enable per-acquisition logging")
         self._register("LASER_AF_CHARACTERIZATION_MODE", self.DEBUG, False, "Enable laser AF characterization mode")
         self._register("CLASSIFICATION_TEST_MODE", self.DEBUG, False, "Enable classification test mode")
         self._register("AUTOLEVEL_DEFAULT_SETTING", self.DEBUG, False, "Default autolevel setting")

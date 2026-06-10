@@ -287,7 +287,8 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
 
         self.entry_overlap = QDoubleSpinBox()
         self.entry_overlap.setKeyboardTracking(False)
-        self.entry_overlap.setRange(0, 99)
+        self.entry_overlap.setRange(-1000, 99)
+        self.entry_overlap.setToolTip("Overlap between adjacent FOVs (%). Negative values add spacing between tiles.")
         self.entry_overlap.setDecimals(1)
         self.entry_overlap.setSuffix(" %")
         self.entry_overlap.setValue(10)

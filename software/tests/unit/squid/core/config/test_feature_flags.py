@@ -216,3 +216,22 @@ class TestFeatureFlagsIntegration:
 
         for name, value in flags.list_flags().items():
             assert isinstance(value, bool), f"Flag {name} has non-boolean value: {value}"
+
+    def test_per_acquisition_log_enabled_by_default(self):
+        """ENABLE_PER_ACQUISITION_LOG defaults to True (ports upstream #547).
+
+        Each multipoint acquisition writes a scoped acquisition.log next to the
+        experiment data by default.
+        """
+        import types
+
+        # The registration default should be True...
+        flags = FeatureFlags()
+        assert flags._flags["ENABLE_PER_ACQUISITION_LOG"].default is True
+
+        # ...and a _def with the shipped default resolves to True.
+        mock_def = types.SimpleNamespace()
+        mock_def.ENABLE_PER_ACQUISITION_LOG = True
+        with patch.dict(sys.modules, {"_def": mock_def}):
+            reset_feature_flags()
+            assert FeatureFlags().is_enabled("ENABLE_PER_ACQUISITION_LOG") is True

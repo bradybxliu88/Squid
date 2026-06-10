@@ -57,6 +57,14 @@ class SquidFilterWheel(AbstractFilterWheelController):
 
         self._pos_index[wheel_index] = self._config.min_index
 
+        # Config sanity diagnostic: if a move targets the wrong usteps the config
+        # math is suspect; if usteps are right but the slot is wrong it's
+        # hardware/firmware. Logging the bounds + offset makes this separable.
+        _log.info(
+            f"Filter wheel {wheel_index}: range=[{self._config.min_index},{self._config.max_index}], "
+            f"offset={self._config.offset}mm (assumed at min_index={self._config.min_index} until homed)"
+        )
+
         if HAS_ENCODER_W:
             self.microcontroller.set_pid_arguments(
                 axis, PID_P_W, PID_I_W, PID_D_W
@@ -98,6 +106,7 @@ class SquidFilterWheel(AbstractFilterWheelController):
             return
 
         delta = (target_pos - current_pos) * SCREW_PITCH_W_MM / num_slots
+        _log.info(f"Filter wheel {wheel_index}: {current_pos} -> {target_pos} (delta={delta:.4f}mm)")
         try:
             self._move_wheel(wheel_index, delta)
             self.microcontroller.wait_till_operation_is_completed()
@@ -115,6 +124,10 @@ class SquidFilterWheel(AbstractFilterWheelController):
             self._pos_index[wheel_index] = target_pos
 
     def initialize(self, filter_wheel_indices: List[int]):
+        fw = self.microcontroller.firmware_version
+        _log.info(
+            f"SquidFilterWheel.initialize: firmware v{fw[0]}.{fw[1]}, wheels={list(filter_wheel_indices)}"
+        )
         for idx in filter_wheel_indices:
             if idx not in _WHEEL_AXIS:
                 raise ValueError(f"Unsupported filter wheel index: {idx}. Must be 1 or 2.")
@@ -142,6 +155,8 @@ class SquidFilterWheel(AbstractFilterWheelController):
         for idx in indices:
             if idx not in _WHEEL_AXIS:
                 raise ValueError(f"Filter wheel index {idx} not found")
+            _log.info(f"Homing filter wheel {idx} (prev tracked={self._pos_index.get(idx)})")
+            home_start = time.monotonic()
             if idx == 2:
                 self.microcontroller.home_w2()
             else:
@@ -150,6 +165,7 @@ class SquidFilterWheel(AbstractFilterWheelController):
             self._move_wheel(idx, self._config.offset)
             self.microcontroller.wait_till_operation_is_completed()
             self._pos_index[idx] = self._config.min_index
+            _log.info(f"Filter wheel {idx} homed in {time.monotonic() - home_start:.2f}s")
 
     def next_position(self, wheel_index: int = 1):
         """Advance filter wheel by one slot.
