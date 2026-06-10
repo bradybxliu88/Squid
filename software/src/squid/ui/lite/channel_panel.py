@@ -28,7 +28,7 @@ class ChannelRow(QWidget):
         self.setCursor(Qt.PointingHandCursor)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(11, 7, 12, 7)
+        lay.setContentsMargins(10, 4, 11, 4)
         lay.setSpacing(10)
 
         self._check = QCheckBox()
@@ -70,7 +70,7 @@ class ChannelPanel(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
+        lay.setSpacing(4)
         for ch in channels:
             row = ChannelRow(ch["name"], ch["color"])
             row.activated.connect(self._on_activate)

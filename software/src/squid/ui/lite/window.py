@@ -1,21 +1,22 @@
 """Top-level window for the Squid Lite frontend."""
 from __future__ import annotations
 
+import datetime
 import os
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QKeySequence, QColor
 from qtpy.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QStackedWidget,
     QPushButton, QButtonGroup, QMessageBox, QLabel, QFrame, QScrollArea, QComboBox,
-    QLineEdit, QFileDialog, QApplication, QGraphicsDropShadowEffect,
+    QLineEdit, QFileDialog, QApplication, QGraphicsDropShadowEffect, QCheckBox,
 )
 
 import squid.core.logging
 from squid.core.events import (
     SetMicroscopeModeCommand, StartLiveCommand, StopLiveCommand, SetBinningCommand,
-    CaptureMultichannelCommand, CaptureCompleted, CaptureFailed,
+    SetAnalogGainCommand, CaptureMultichannelCommand, CaptureCompleted, CaptureFailed,
 )
 from squid.ui.qt_stream_handler import QtStreamHandler
 from squid.ui.lite.live_image import LiveImageWidget
@@ -74,14 +75,28 @@ class SquidLiteWindow(QMainWindow):
         shadow.setColor(QColor(0, 0, 0, 150))
         shadow.setOffset(0, 3)
         self._capture_btn.setGraphicsEffect(shadow)
-        self._binning_combo = self._build_binning_combo()
 
+        # global hardware controls
+        self._binning_combo = self._build_binning_combo()
+        self._gain_combo = self._build_gain_combo()
+        self._global_gain = None
+        if self._gain_combo is not None:
+            data = self._gain_combo.currentData()
+            self._global_gain = float(data) if data is not None else None
+
+        # save controls
         self._save_btn = QPushButton()
         self._save_btn.setObjectName("saveFolderBtn")
         self._save_btn.setCursor(Qt.PointingHandCursor)
         self._save_btn.clicked.connect(self._choose_dir)
         self._update_save_btn()
         self._prefix_edit = QLineEdit("capture")
+        self._prefix_edit.textChanged.connect(self._update_preview)
+        self._date_check = QCheckBox("date")
+        self._date_check.setObjectName("dateCheck")
+        self._date_check.toggled.connect(self._update_preview)
+        self._preview_lbl = QLabel("")
+        self._preview_lbl.setObjectName("filePreview")
 
         # frame routing
         self._qt_stream = QtStreamHandler(handler=controllers.stream_handler)
@@ -99,6 +114,7 @@ class SquidLiteWindow(QMainWindow):
 
         self._build_menu()
         self._build_layout()
+        self._update_preview()
 
     # ===================================================================
     # construction
@@ -114,7 +130,6 @@ class SquidLiteWindow(QMainWindow):
 
     def _build_binning_combo(self) -> QComboBox:
         combo = QComboBox()
-        combo.setObjectName("binningCombo")
         combo.setCursor(Qt.PointingHandCursor)
         cam = self._services.get("camera")
         try:
@@ -137,6 +152,41 @@ class SquidLiteWindow(QMainWindow):
         combo.currentIndexChanged.connect(self._on_binning_changed)
         return combo
 
+    def _build_gain_combo(self) -> Optional[QComboBox]:
+        """Discrete gain dropdown, or None if the camera has no analog gain."""
+        cam = self._services.get("camera")
+        if cam is None:
+            return None
+        try:
+            gr = cam.get_gain_range()
+        except Exception:
+            return None
+        if gr is None:
+            return None
+        lo, hi = float(gr.min_gain), float(gr.max_gain)
+        if hi <= lo:
+            return None
+        step = float(getattr(gr, "gain_step", 0) or 0)
+        if step <= 0:
+            step = (hi - lo) / 8.0
+        n = int(round((hi - lo) / step)) + 1
+        if n > 16:  # continuous-ish range → present ~9 evenly spaced values
+            step = (hi - lo) / 8.0
+            n = 9
+        values = [round(lo + i * step, 3) for i in range(n)]
+        combo = QComboBox()
+        combo.setCursor(Qt.PointingHandCursor)
+        for g in values:
+            combo.addItem(f"{g:g}", float(g))
+        try:
+            cur = float(cam.get_analog_gain())
+            idx = min(range(len(values)), key=lambda i: abs(values[i] - cur))
+            combo.setCurrentIndex(idx)
+        except Exception:
+            pass
+        combo.currentIndexChanged.connect(self._on_gain_changed)
+        return combo
+
     def _section(self, text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setObjectName("sectionLabel")
@@ -148,13 +198,18 @@ class SquidLiteWindow(QMainWindow):
         f.setFrameShape(QFrame.HLine)
         return f
 
+    def _field_label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setObjectName("fieldLabel")
+        return lbl
+
     def _build_top_bar(self) -> QWidget:
         bar = QWidget()
         bar.setObjectName("topBar")
-        bar.setFixedHeight(54)
+        bar.setFixedHeight(52)
         h = QHBoxLayout(bar)
         h.setContentsMargins(18, 0, 14, 0)
-        h.setSpacing(11)
+        h.setSpacing(10)
 
         dot = QLabel("◆")
         dot.setObjectName("wordmarkDot")
@@ -192,24 +247,27 @@ class SquidLiteWindow(QMainWindow):
         h.addWidget(seg)
         h.addStretch(1)
 
-        blabel = QLabel("Binning")
-        blabel.setObjectName("fieldLabel")
-        h.addWidget(blabel)
+        # global hardware controls: binning (+ gain if supported)
+        h.addWidget(self._field_label("Binning"))
         h.addWidget(self._binning_combo)
+        if self._gain_combo is not None:
+            h.addSpacing(6)
+            h.addWidget(self._field_label("Gain"))
+            h.addWidget(self._gain_combo)
         quit_btn = QPushButton("⏻")
         quit_btn.setObjectName("iconBtn")
         quit_btn.setCursor(Qt.PointingHandCursor)
         quit_btn.setToolTip("Quit  ⌘Q")
         quit_btn.clicked.connect(self._quit)
-        h.addSpacing(4)
+        h.addSpacing(6)
         h.addWidget(quit_btn)
         return bar
 
     def _build_rail(self) -> QScrollArea:
         inner = QWidget()
         v = QVBoxLayout(inner)
-        v.setContentsMargins(18, 16, 18, 18)
-        v.setSpacing(13)
+        v.setContentsMargins(14, 12, 14, 14)
+        v.setSpacing(9)
         v.addWidget(self._live_toggle)
         v.addWidget(self._divider())
         v.addWidget(self._section("CHANNELS"))
@@ -222,11 +280,11 @@ class SquidLiteWindow(QMainWindow):
         v.addWidget(self._save_btn)
         prow = QHBoxLayout()
         prow.setSpacing(8)
-        plabel = QLabel("Prefix")
-        plabel.setObjectName("fieldLabel")
-        prow.addWidget(plabel)
+        prow.addWidget(self._field_label("Prefix"))
         prow.addWidget(self._prefix_edit, 1)
+        prow.addWidget(self._date_check)
         v.addLayout(prow)
+        v.addWidget(self._preview_lbl)
         v.addSpacing(2)
         v.addWidget(self._capture_btn)
         v.addStretch(1)
@@ -236,14 +294,14 @@ class SquidLiteWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFixedWidth(350)
+        scroll.setFixedWidth(338)
         scroll.setWidget(inner)
         return scroll
 
     def _build_layout(self) -> None:
         image_wrap = QWidget()
         iw = QVBoxLayout(image_wrap)
-        iw.setContentsMargins(14, 14, 8, 14)
+        iw.setContentsMargins(10, 10, 6, 10)
         frame = QWidget()
         frame.setObjectName("imageFrame")
         fl = QVBoxLayout(frame)
@@ -302,10 +360,69 @@ class SquidLiteWindow(QMainWindow):
             self._channel_controls.set_channel(self._objective, cfg)
         self._live_image.set_readout(self._readout_text(name))
         self._bus.publish(StartLiveCommand(configuration=name))
+        # keep gain global: re-assert it after the mode switch applied the channel's gain
+        if self._global_gain is not None:
+            self._bus.publish(SetAnalogGainCommand(gain=self._global_gain))
         self._set_streaming(True)
 
+    def _on_capture_set_changed(self, channels) -> None:
+        n = len(channels)
+        self._capture_btn.setText(f"Capture  ·  {n}" if n else "Capture")
+        self._capture_btn.setEnabled(n > 0)
+
+    def _effective_prefix(self) -> str:
+        p = (self._prefix_edit.text().strip() or "capture")
+        if self._date_check.isChecked():
+            p = f"{p}_{datetime.datetime.now().strftime('%Y%m%d')}"
+        return p
+
+    def _update_preview(self) -> None:
+        try:
+            from squid.backend.io.writers.single_capture_ome_writer import next_capture_path
+            name = os.path.basename(next_capture_path(self._save_dir, self._effective_prefix()))
+            self._preview_lbl.setText("next  →  " + name)
+        except Exception:
+            self._preview_lbl.setText("")
+
+    def _on_capture_clicked(self) -> None:
+        names = sorted(self._channel_panel.capture_set)
+        if not names:
+            return
+        os.makedirs(self._save_dir, exist_ok=True)
+        self._bus.publish(CaptureMultichannelCommand(
+            channel_names=names, objective=self._objective,
+            save_directory=self._save_dir, file_prefix=self._effective_prefix()))
+
+    def _on_capture_completed(self, evt) -> None:
+        import tifffile
+        stack = tifffile.imread(evt.save_path)
+        if stack.ndim == 2:
+            stack = stack[None, ...]
+        captured = []
+        for idx, name in enumerate(evt.channel_names):
+            data = stack[idx]
+            lo, hi = C.auto_contrast_bounds(data)
+            captured.append(CapturedChannel(name, data, self._color_by_name.get(name, "#FFFFFF"), lo, hi))
+        self._result_view.set_capture(captured)
+        self._result_tab.setChecked(True)
+        self._stack.setCurrentIndex(1)
+        self._update_preview()
+
+    def _on_capture_failed(self, evt) -> None:
+        QMessageBox.warning(self, "Capture failed", evt.reason)
+
+    def _on_binning_changed(self, _idx: int) -> None:
+        data = self._binning_combo.currentData()
+        if data is not None:
+            self._bus.publish(SetBinningCommand(binning_x=int(data[0]), binning_y=int(data[1])))
+
+    def _on_gain_changed(self, _idx: int) -> None:
+        data = self._gain_combo.currentData()
+        if data is not None:
+            self._global_gain = float(data)
+            self._bus.publish(SetAnalogGainCommand(gain=self._global_gain))
+
     def _compute_pixel_size(self):
-        # Effective sample-plane pixel size = sensor pixel (binned) × magnification factor.
         try:
             cam = self._services.get("camera")
             factor = self._microscope.objective_store.get_pixel_size_factor()
@@ -322,47 +439,12 @@ class SquidLiteWindow(QMainWindow):
             parts.append(f"{self._pixel_size_um:.2f} µm/px")
         return "    ".join(parts)
 
-    def _on_capture_set_changed(self, channels) -> None:
-        n = len(channels)
-        self._capture_btn.setText(f"Capture  ·  {n}" if n else "Capture")
-        self._capture_btn.setEnabled(n > 0)
-
-    def _on_capture_clicked(self) -> None:
-        names = sorted(self._channel_panel.capture_set)
-        if not names:
-            return
-        os.makedirs(self._save_dir, exist_ok=True)
-        self._bus.publish(CaptureMultichannelCommand(
-            channel_names=names, objective=self._objective,
-            save_directory=self._save_dir, file_prefix=self._prefix_edit.text()))
-
-    def _on_capture_completed(self, evt) -> None:
-        import tifffile
-        stack = tifffile.imread(evt.save_path)
-        if stack.ndim == 2:
-            stack = stack[None, ...]
-        captured = []
-        for idx, name in enumerate(evt.channel_names):
-            data = stack[idx]
-            lo, hi = C.auto_contrast_bounds(data)
-            captured.append(CapturedChannel(name, data, self._color_by_name.get(name, "#FFFFFF"), lo, hi))
-        self._result_view.set_capture(captured)
-        self._result_tab.setChecked(True)
-        self._stack.setCurrentIndex(1)
-
-    def _on_capture_failed(self, evt) -> None:
-        QMessageBox.warning(self, "Capture failed", evt.reason)
-
-    def _on_binning_changed(self, _idx: int) -> None:
-        data = self._binning_combo.currentData()
-        if data is not None:
-            self._bus.publish(SetBinningCommand(binning_x=int(data[0]), binning_y=int(data[1])))
-
     def _choose_dir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Choose save folder", self._save_dir)
         if chosen:
             self._save_dir = chosen
             self._update_save_btn()
+            self._update_preview()
 
     def _update_save_btn(self) -> None:
         home = os.path.expanduser("~")

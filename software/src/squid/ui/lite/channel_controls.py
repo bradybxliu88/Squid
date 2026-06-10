@@ -1,4 +1,4 @@
-"""Active-channel controls: histogram + exposure/gain/intensity, with persistence."""
+"""Active-channel controls: histogram + exposure + intensity (per-channel)."""
 from __future__ import annotations
 
 from typing import Optional
@@ -6,12 +6,11 @@ from typing import Optional
 import numpy as np
 from qtpy.QtCore import Qt, Signal
 from qtpy.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QPushButton, QSlider,
 )
 
 from squid.core.events import (
-    UpdateChannelConfigurationCommand, SetExposureTimeCommand,
-    SetAnalogGainCommand, SetIlluminationCommand,
+    UpdateChannelConfigurationCommand, SetExposureTimeCommand, SetIlluminationCommand,
 )
 from squid.ui.lite.histogram import LiteHistogram
 
@@ -23,7 +22,7 @@ def build_persist_command(objective, config_name, exposure_ms, gain, intensity):
 
 
 class ChannelControls(QWidget):
-    """Edits the active channel; publishes live commands + persists to config."""
+    """Edits the active channel (exposure, intensity, contrast); persists to config."""
 
     contrast_changed = Signal(float, float)
 
@@ -38,7 +37,7 @@ class ChannelControls(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(11)
+        lay.setSpacing(8)
 
         header = QHBoxLayout()
         header.setSpacing(8)
@@ -56,39 +55,43 @@ class ChannelControls(QWidget):
         self._hist.levels_changed.connect(self._on_levels)
         lay.addWidget(self._hist)
 
-        self._exposure = self._spin(0.01, 5000.0)
-        self._gain = self._spin(0.0, 100.0)
-        self._intensity = self._spin(0.0, 100.0)
-        lay.addLayout(self._field_row("Exposure", "ms", self._exposure))
-        lay.addLayout(self._field_row("Gain", "×", self._gain))
-        lay.addLayout(self._field_row("Intensity", "%", self._intensity))
+        self._exposure = QDoubleSpinBox()
+        self._exposure.setRange(0.01, 5000.0)
+        self._exposure.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        self._exposure.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._exposure.setFixedWidth(96)
         self._exposure.valueChanged.connect(self._on_exposure)
-        self._gain.valueChanged.connect(self._on_gain)
+        erow = QHBoxLayout()
+        erow.setSpacing(8)
+        elbl = QLabel("Exposure <span style='color:#5a6477'>(ms)</span>")
+        elbl.setObjectName("fieldLabel")
+        elbl.setTextFormat(Qt.RichText)
+        erow.addWidget(elbl, 1)
+        erow.addWidget(self._exposure)
+        lay.addLayout(erow)
+
+        self._intensity = QSlider(Qt.Horizontal)
+        self._intensity.setRange(0, 100)
+        self._intensity.setCursor(Qt.PointingHandCursor)
         self._intensity.valueChanged.connect(self._on_intensity)
+        self._intensity_val = QLabel("0%")
+        self._intensity_val.setObjectName("sliderVal")
+        self._intensity_val.setFixedWidth(40)
+        self._intensity_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        irow = QHBoxLayout()
+        irow.setSpacing(8)
+        ilbl = QLabel("Intensity")
+        ilbl.setObjectName("fieldLabel")
+        irow.addWidget(ilbl)
+        irow.addWidget(self._intensity, 1)
+        irow.addWidget(self._intensity_val)
+        lay.addLayout(irow)
+
         self._set_controls_enabled(False)
 
     def _set_controls_enabled(self, on: bool) -> None:
-        for wdg in (self._exposure, self._gain, self._intensity, self._auto):
+        for wdg in (self._exposure, self._intensity, self._auto, self._intensity_val):
             wdg.setEnabled(on)
-
-    # ---- builders -------------------------------------------------------
-    def _spin(self, lo: float, hi: float) -> QDoubleSpinBox:
-        s = QDoubleSpinBox()
-        s.setRange(lo, hi)
-        s.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        s.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        s.setFixedWidth(112)
-        return s
-
-    def _field_row(self, label: str, unit: str, spin: QDoubleSpinBox) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        lbl = QLabel(f"{label} <span style='color:#5a6477'>({unit})</span>")
-        lbl.setObjectName("fieldLabel")
-        lbl.setTextFormat(Qt.RichText)
-        row.addWidget(lbl, 1)
-        row.addWidget(spin)
-        return row
 
     # ---- frame / histogram ---------------------------------------------
     def update_histogram(self, frame: np.ndarray) -> None:
@@ -104,29 +107,28 @@ class ChannelControls(QWidget):
         self._illum_source = channel_config.illumination_source
         self._title.setText(channel_config.name)
         self._set_controls_enabled(True)
-        for spin, val in ((self._exposure, channel_config.exposure_time),
-                          (self._gain, channel_config.analog_gain),
-                          (self._intensity, channel_config.illumination_intensity)):
-            spin.blockSignals(True)
-            spin.setValue(val)
-            spin.blockSignals(False)
+        self._exposure.blockSignals(True)
+        self._exposure.setValue(channel_config.exposure_time)
+        self._exposure.blockSignals(False)
+        self._intensity.blockSignals(True)
+        self._intensity.setValue(int(round(channel_config.illumination_intensity)))
+        self._intensity.blockSignals(False)
+        self._intensity_val.setText(f"{int(round(channel_config.illumination_intensity))}%")
 
     # ---- emit -----------------------------------------------------------
     def _on_exposure(self, v):
         self._publish(SetExposureTimeCommand(exposure_time_ms=v)); self._persist()
 
-    def _on_gain(self, v):
-        self._publish(SetAnalogGainCommand(gain=v)); self._persist()
-
     def _on_intensity(self, v):
+        self._intensity_val.setText(f"{int(v)}%")
         if self._illum_source is not None:
-            self._publish(SetIlluminationCommand(channel=self._illum_source, intensity=v, on=True))
+            self._publish(SetIlluminationCommand(channel=self._illum_source, intensity=float(v), on=True))
         self._persist()
 
     def _persist(self):
         if self._objective and self._channel:
-            self._publish(build_persist_command(self._objective, self._channel,
-                self._exposure.value(), self._gain.value(), self._intensity.value()))
+            self._publish(build_persist_command(
+                self._objective, self._channel, self._exposure.value(), None, float(self._intensity.value())))
 
     def _on_levels(self, lo, hi):
         self.contrast_changed.emit(float(lo), float(hi))

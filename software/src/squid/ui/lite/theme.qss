@@ -170,12 +170,34 @@ QPushButton#captureBtn:disabled {
     background: #141b27; color: #44506a; border: 1px solid #1f2735;
 }
 
+/* ---------- intensity slider ---------- */
+QSlider::groove:horizontal { height: 4px; background: #1b2333; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #2dd4bf; border-radius: 2px; }
+QSlider::add-page:horizontal { background: #1b2333; border-radius: 2px; }
+QSlider::handle:horizontal {
+    background: #2dd4bf; width: 13px; height: 13px; margin: -5px 0; border-radius: 7px;
+}
+QSlider::handle:horizontal:hover { background: #45ecd7; }
+QSlider::sub-page:horizontal:disabled { background: #283450; }
+QSlider::handle:horizontal:disabled { background: #283450; }
+QLabel#sliderVal {
+    color: #2dd4bf; font-family: "SF Mono", "Menlo", monospace; font-size: 11px; font-weight: 600;
+}
+QLabel#sliderVal:disabled { color: #3a4456; }
+
+/* ---------- save preview + date ---------- */
+QLabel#filePreview {
+    color: #5a6680; font-family: "SF Mono", "Menlo", monospace; font-size: 10px; letter-spacing: 0.3px;
+}
+QCheckBox#dateCheck { color: #8893a8; font-size: 11px; spacing: 5px; }
+
 /* ---------- result overlay rows ---------- */
 QWidget#overlayRow {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #131a27, stop:1 #10151f);
     border: 1px solid #1f2735; border-radius: 4px;
 }
 QLabel#overlayName { font-size: 12px; font-weight: 500; color: #d4dcea; }
+QComboBox#cmapCombo { min-height: 14px; padding: 3px 6px; font-size: 11px; }
 
 /* ---------- scrollbars ---------- */
 QScrollBar:vertical { background: transparent; width: 9px; margin: 2px; }

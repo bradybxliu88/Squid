@@ -1,19 +1,21 @@
-"""Capture result: composite render + per-channel overlay toggles + PNG export."""
+"""Capture result: composite + per-channel colormap + per-channel histogram + PNG export."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import imageio
 import numpy as np
 import pyqtgraph as pg
 from qtpy.QtCore import Qt
+from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QCheckBox, QPushButton, QFileDialog,
-    QFrame,
+    QFrame, QComboBox, QScrollArea,
 )
 
 from squid.ui.lite import compositing as C
+from squid.ui.lite.histogram import LiteHistogram
 
 
 @dataclass
@@ -24,6 +26,14 @@ class CapturedChannel:
     low: float
     high: float
     visible: bool = True
+
+
+# Single-hue pseudocolor options for the overlay.
+_CMAPS = [
+    ("Red", "#FF3B30"), ("Orange", "#FF9F0A"), ("Yellow", "#FFD60A"),
+    ("Green", "#34C759"), ("Cyan", "#22D3EE"), ("Blue", "#3B82F6"),
+    ("Magenta", "#E040FB"), ("Gray", "#FFFFFF"),
+]
 
 
 def _color_dot(color_hex: str) -> QLabel:
@@ -38,7 +48,7 @@ class ResultView(QWidget):
         super().__init__(parent)
         self.setObjectName("root")
         self._channels: List[CapturedChannel] = []
-        self._rows: List[QWidget] = []
+        self._row_widgets: List[QWidget] = []
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -47,72 +57,113 @@ class ResultView(QWidget):
         # framed composite
         image_wrap = QWidget()
         iw = QVBoxLayout(image_wrap)
-        iw.setContentsMargins(14, 14, 8, 14)
+        iw.setContentsMargins(10, 10, 6, 10)
         frame = QWidget()
         frame.setObjectName("imageFrame")
         fl = QVBoxLayout(frame)
         fl.setContentsMargins(1, 1, 1, 1)
         self._view = pg.GraphicsLayoutWidget()
+        self._view.setBackground(QColor("#04060a"))
         vb = self._view.addViewBox()
         vb.setAspectLocked(True)
         vb.invertY(True)
+        vb.setMenuEnabled(False)
+        vb.setMouseEnabled(False, False)
         self._img = pg.ImageItem(axisOrder="row-major")
         vb.addItem(self._img)
         fl.addWidget(self._view)
         iw.addWidget(frame)
         root.addWidget(image_wrap, 1)
 
-        # rail
-        rail = QWidget()
-        rail.setObjectName("rail")
-        rail.setFixedWidth(310)
-        rv = QVBoxLayout(rail)
-        rv.setContentsMargins(18, 16, 18, 18)
-        rv.setSpacing(10)
+        # scrollable rail with per-channel rows
+        inner = QWidget()
+        box = QVBoxLayout(inner)
+        box.setContentsMargins(14, 14, 14, 14)
+        box.setSpacing(9)
         title = QLabel("OVERLAY CHANNELS")
         title.setObjectName("sectionLabel")
-        rv.addWidget(title)
-        self._rows_box = QVBoxLayout()
-        self._rows_box.setSpacing(6)
-        rv.addLayout(self._rows_box)
-        rv.addStretch(1)
-        div = QFrame()
-        div.setObjectName("divider")
-        div.setFrameShape(QFrame.HLine)
-        rv.addWidget(div)
+        box.addWidget(title)
+        self._rows_holder = QVBoxLayout()
+        self._rows_holder.setSpacing(8)
+        box.addLayout(self._rows_holder)
+        box.addStretch(1)
         self._export = QPushButton("⬇   Export overlay PNG")
         self._export.setObjectName("liveToggle")
         self._export.setCursor(Qt.PointingHandCursor)
         self._export.clicked.connect(self._export_png)
-        rv.addWidget(self._export)
-        root.addWidget(rail)
+        box.addWidget(self._export)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("rail")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFixedWidth(324)
+        scroll.setWidget(inner)
+        root.addWidget(scroll)
 
     def set_capture(self, channels: List[CapturedChannel]) -> None:
         self._channels = channels
-        for w in self._rows:
+        for w in self._row_widgets:
             w.setParent(None)
-        self._rows = []
+        self._row_widgets = []
         for ch in channels:
-            row = QWidget()
-            row.setObjectName("overlayRow")
-            h = QHBoxLayout(row)
-            h.setContentsMargins(11, 8, 12, 8)
-            h.setSpacing(10)
-            cb = QCheckBox()
-            cb.setChecked(ch.visible)
-            cb.setCursor(Qt.PointingHandCursor)
-            cb.toggled.connect(lambda on, c=ch: self._set_visible(c, on))
-            name = QLabel(ch.name)
-            name.setObjectName("overlayName")
-            h.addWidget(cb)
-            h.addWidget(_color_dot(ch.color))
-            h.addWidget(name, 1)
-            self._rows_box.addWidget(row)
-            self._rows.append(row)
+            row = self._build_row(ch)
+            self._rows_holder.addWidget(row)
+            self._row_widgets.append(row)
         self._render()
+
+    def _build_row(self, ch: CapturedChannel) -> QWidget:
+        row = QWidget()
+        row.setObjectName("overlayRow")
+        v = QVBoxLayout(row)
+        v.setContentsMargins(10, 8, 10, 9)
+        v.setSpacing(7)
+
+        head = QHBoxLayout()
+        head.setSpacing(9)
+        cb = QCheckBox()
+        cb.setChecked(ch.visible)
+        cb.setCursor(Qt.PointingHandCursor)
+        cb.toggled.connect(lambda on, c=ch: self._set_visible(c, on))
+        dot = _color_dot(ch.color)
+        name = QLabel(ch.name)
+        name.setObjectName("overlayName")
+        cmap = QComboBox()
+        cmap.setObjectName("cmapCombo")
+        cmap.setCursor(Qt.PointingHandCursor)
+        cmap.addItem("Auto", ch.color)
+        for nm, hx in _CMAPS:
+            cmap.addItem(nm, hx)
+        cmap.setCurrentIndex(0)
+        cmap.currentIndexChanged.connect(
+            lambda _i, c=ch, combo=cmap, d=dot: self._set_color(c, combo.currentData(), d))
+        head.addWidget(cb)
+        head.addWidget(dot)
+        head.addWidget(name, 1)
+        head.addWidget(cmap)
+        v.addLayout(head)
+
+        hist = LiteHistogram()
+        hist.set_data(ch.data)
+        hist.set_levels(ch.low, ch.high)
+        hist.levels_changed.connect(lambda lo, hi, c=ch: self._set_levels(c, lo, hi))
+        v.addWidget(hist)
+        return row
 
     def _set_visible(self, ch: CapturedChannel, on: bool) -> None:
         ch.visible = on
+        self._render()
+
+    def _set_color(self, ch: CapturedChannel, hx, dot) -> None:
+        if hx:
+            ch.color = hx
+            dot.setStyleSheet(f"background-color: {hx}; border-radius: 5px;")
+            self._render()
+
+    def _set_levels(self, ch: CapturedChannel, lo, hi) -> None:
+        ch.low = float(lo)
+        ch.high = float(hi)
         self._render()
 
     def _render(self) -> None:
