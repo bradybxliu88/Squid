@@ -5,11 +5,11 @@ import os
 from typing import TYPE_CHECKING
 
 from qtpy.QtCore import Qt
-from qtpy.QtGui import QKeySequence
+from qtpy.QtGui import QKeySequence, QColor
 from qtpy.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QStackedWidget,
     QPushButton, QButtonGroup, QMessageBox, QLabel, QFrame, QScrollArea, QComboBox,
-    QLineEdit, QFileDialog, QApplication,
+    QLineEdit, QFileDialog, QApplication, QGraphicsDropShadowEffect,
 )
 
 import squid.core.logging
@@ -56,6 +56,8 @@ class SquidLiteWindow(QMainWindow):
 
         # core widgets
         self._live_image = LiveImageWidget()
+        self._pixel_size_um = self._compute_pixel_size()
+        self._live_image.set_pixel_size(self._pixel_size_um)
         self._channel_panel = ChannelPanel(channels)
         self._channel_controls = ChannelControls(self._bus.publish)
         self._result_view = ResultView()
@@ -67,6 +69,11 @@ class SquidLiteWindow(QMainWindow):
         self._capture_btn.setObjectName("captureBtn")
         self._capture_btn.setCursor(Qt.PointingHandCursor)
         self._capture_btn.setEnabled(False)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(0, 3)
+        self._capture_btn.setGraphicsEffect(shadow)
         self._binning_combo = self._build_binning_combo()
 
         self._save_btn = QPushButton()
@@ -293,8 +300,27 @@ class SquidLiteWindow(QMainWindow):
         cfg = self._ccm.get_channel_configuration_by_name(self._objective, name)
         if cfg is not None:
             self._channel_controls.set_channel(self._objective, cfg)
+        self._live_image.set_readout(self._readout_text(name))
         self._bus.publish(StartLiveCommand(configuration=name))
         self._set_streaming(True)
+
+    def _compute_pixel_size(self):
+        # Effective sample-plane pixel size = sensor pixel (binned) × magnification factor.
+        try:
+            cam = self._services.get("camera")
+            factor = self._microscope.objective_store.get_pixel_size_factor()
+            sensor = cam.get_pixel_size_binned_um() if cam is not None else None
+            if sensor and factor:
+                return float(sensor) * float(factor)
+        except Exception:
+            pass
+        return None
+
+    def _readout_text(self, name: str) -> str:
+        parts = [name]
+        if self._pixel_size_um:
+            parts.append(f"{self._pixel_size_um:.2f} µm/px")
+        return "    ".join(parts)
 
     def _on_capture_set_changed(self, channels) -> None:
         n = len(channels)
