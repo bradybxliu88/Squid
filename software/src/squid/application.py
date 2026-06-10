@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from squid.backend.controllers.orchestrator import OrchestratorController
     from squid.backend.controllers.workflow_runner import WorkflowRunnerController
     from squid.core.abc import AbstractFluidicsController
+    from squid.backend.controllers.snap_controller import SnapController
 
 
 @dataclass
@@ -78,6 +79,7 @@ class Controllers:
     tracking: Optional["TrackingControllerCore"] = None
     orchestrator: Optional["OrchestratorController"] = None
     workflow_runner: Optional["WorkflowRunnerController"] = None
+    snap: Optional["SnapController"] = None
 
 
 class ApplicationContext:
@@ -488,6 +490,18 @@ class ApplicationContext:
         self._controllers.workflow_runner = self._build_workflow_runner_controller(
             multipoint=self._controllers.multipoint,
         )
+        # Snap controller for single-frame multichannel capture
+        from squid.backend.controllers.snap_controller import SnapController
+
+        snap_controller = SnapController(
+            camera_service=camera_service,
+            illumination_service=illumination_service,
+            mode_controller=microscope_mode_controller,
+            live_controller=live_controller,
+            channel_config_service=self._microscope.channel_configuration_manager,
+            event_bus=event_bus,
+        )
+        self._controllers.snap = snap_controller
 
         # Backend navigation state publisher (UI can subscribe via UIEventBus).
         try:
