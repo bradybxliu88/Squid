@@ -11,7 +11,7 @@ from qtpy.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QStackedWidget,
     QPushButton, QButtonGroup, QMessageBox, QLabel, QFrame, QScrollArea, QComboBox,
     QLineEdit, QFileDialog, QApplication, QGraphicsDropShadowEffect, QCheckBox,
-    QSizePolicy,
+    QSizePolicy, QListView,
 )
 
 import squid.core.logging
@@ -135,6 +135,7 @@ class SquidLiteWindow(QMainWindow):
 
     def _build_binning_combo(self) -> QComboBox:
         combo = QComboBox()
+        combo.setView(QListView())
         combo.setCursor(Qt.PointingHandCursor)
         cam = self._services.get("camera")
         try:
@@ -180,6 +181,7 @@ class SquidLiteWindow(QMainWindow):
             n = 9
         values = [round(lo + i * step, 3) for i in range(n)]
         combo = QComboBox()
+        combo.setView(QListView())
         combo.setCursor(Qt.PointingHandCursor)
         for g in values:
             combo.addItem(f"{g:g}", float(g))
@@ -221,6 +223,7 @@ class SquidLiteWindow(QMainWindow):
         wm = QLabel("SQUID LITE")
         wm.setObjectName("wordmark")
         self._obj_combo = QComboBox()
+        self._obj_combo.setView(QListView())
         self._obj_combo.setObjectName("objCombo")
         self._obj_combo.setCursor(Qt.PointingHandCursor)
         self._obj_combo.setToolTip("Objective")
@@ -287,9 +290,11 @@ class SquidLiteWindow(QMainWindow):
         return w
 
     def _build_rail(self) -> QScrollArea:
-        inner = QWidget()
-        v = QVBoxLayout(inner)
-        v.setContentsMargins(14, 12, 14, 14)
+        # All controls live in ONE fixed-height block; the only expandable item
+        # is the spacer below it, so sections can never spread apart (platform-proof).
+        content = QWidget()
+        v = QVBoxLayout(content)
+        v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(9)
         v.addWidget(self._live_toggle)
         v.addWidget(self._build_global_row())
@@ -311,7 +316,14 @@ class SquidLiteWindow(QMainWindow):
         v.addWidget(self._preview_lbl)
         v.addSpacing(2)
         v.addWidget(self._capture_btn)
-        v.addStretch(1)
+        content.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+        inner = QWidget()
+        outer = QVBoxLayout(inner)
+        outer.setContentsMargins(14, 12, 14, 14)
+        outer.setSpacing(0)
+        outer.addWidget(content)
+        outer.addStretch(1)
 
         scroll = QScrollArea()
         scroll.setObjectName("rail")

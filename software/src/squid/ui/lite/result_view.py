@@ -11,7 +11,7 @@ from qtpy.QtCore import Qt
 from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QCheckBox, QPushButton, QFileDialog,
-    QFrame, QComboBox, QScrollArea, QSizePolicy,
+    QFrame, QComboBox, QScrollArea, QSizePolicy, QListView,
 )
 
 from squid.ui.lite import compositing as C
@@ -131,6 +131,7 @@ class ResultView(QWidget):
         name = QLabel(ch.name)
         name.setObjectName("overlayName")
         cmap = QComboBox()
+        cmap.setView(QListView())
         cmap.setObjectName("cmapCombo")
         cmap.setCursor(Qt.PointingHandCursor)
         cmap.addItem("Auto", ch.color)
