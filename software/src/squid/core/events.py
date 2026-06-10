@@ -2841,6 +2841,17 @@ class SleepAllLasersCommand(Event):
 
 
 @dataclass
+class LaserEngineWarning(Event):
+    """Warning from the laser engine: a needed channel isn't ACTIVE yet.
+
+    Non-blocking (e.g. live started before the laser warmed up). The Laser Engine
+    widget surfaces the message; the channel is woken in the background.
+    """
+
+    message: str
+
+
+@dataclass
 class LaserEngineWaitingForReady(Event):
     """State event: an acquisition is blocked waiting on laser channels to warm up.
 

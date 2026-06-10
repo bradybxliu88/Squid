@@ -408,6 +408,8 @@ class ApplicationContext:
             mode_gate=self.mode_gate,
             control_illumination=illumination_service is not None,
             camera="main",
+            laser_engine_service=self._services.get("laser_engine"),
+            channel_config_service=self._microscope.channel_config_service,
         )
 
         # Create StreamHandler with backend hooks preserved across Qt wiring.

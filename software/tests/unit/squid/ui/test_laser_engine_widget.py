@@ -74,3 +74,16 @@ def test_widget_shows_disconnect_banner(qapp):
     w._on_status_updated(LaserEngineStatusUpdated(status=_status(LaserChannelState.ACTIVE)))
     assert w._banner.isHidden()
     w.close()
+
+
+def test_widget_shows_and_clears_warning(qapp):
+    from squid.core.events import LaserEngineWarning
+
+    w = LaserEngineWidget(event_bus=None)
+    w._on_warning(LaserEngineWarning(message="Laser warming up (channel 470)"))
+    assert not w._warning_label.isHidden()
+    assert "470" in w._warning_label.text()
+    # A fresh status clears the transient warning.
+    w._on_status_updated(LaserEngineStatusUpdated(status=_status(LaserChannelState.ACTIVE)))
+    assert w._warning_label.isHidden()
+    w.close()

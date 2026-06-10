@@ -15,6 +15,7 @@ from squid.backend.services.nl5_service import NL5Service
 from squid.backend.services.acquisition_service import AcquisitionService
 from squid.core.events import (
     EventBus,
+    LaserEngineWarning,
     StartLiveCommand,
     StopLiveCommand,
     SetTriggerModeCommand,
@@ -41,6 +42,8 @@ from squid.core.utils import utils_channel
 
 if TYPE_CHECKING:
     from squid.core.config.models import AcquisitionChannel
+    from squid.backend.services.laser_engine_service import LaserEngineService
+    from squid.backend.managers import ChannelConfigService
 
 
 class LiveControllerState(Enum):
@@ -79,6 +82,8 @@ class LiveController(StateMachine[LiveControllerState]):
         *,
         camera: str = "main",
         acquisition_service: Optional[AcquisitionService] = None,
+        laser_engine_service: Optional["LaserEngineService"] = None,
+        channel_config_service: Optional["ChannelConfigService"] = None,
     ) -> None:
         # Initialize state machine with transitions
         transitions = {
@@ -104,6 +109,8 @@ class LiveController(StateMachine[LiveControllerState]):
         self._nl5_service = nl5_service
         self._mode_gate = mode_gate
         self._acquisition_service = acquisition_service
+        self._laser_engine_service = laser_engine_service
+        self._channel_config_service = channel_config_service
         self.currentConfiguration: Optional["AcquisitionChannel"] = None
         self.trigger_mode: Optional[TriggerMode] = (
             TriggerMode.SOFTWARE
@@ -301,6 +308,38 @@ class LiveController(StateMachine[LiveControllerState]):
             except Exception:
                 self._log.exception("Failed to set emission filter position via service")
 
+    def _get_illumination_wavelength(self) -> Optional[int]:
+        """Wavelength of the current channel (None for LED matrix / unavailable)."""
+        if self.currentConfiguration is None or self._channel_config_service is None:
+            return None
+        ill_config = getattr(self._channel_config_service, "_illumination_config", None)
+        if not ill_config:
+            return None
+        try:
+            return self.currentConfiguration.get_illumination_wavelength(ill_config)
+        except Exception:
+            return None
+
+    def _check_laser_engine_warn_only(self) -> None:
+        """Wake (don't block) the laser channel at Live start if it isn't ACTIVE yet."""
+        if self._laser_engine_service is None:
+            return
+        wavelength = self._get_illumination_wavelength()
+        if wavelength is None:
+            return
+        needed = self._laser_engine_service.channel_keys_for_wavelengths([wavelength])
+        if not needed:
+            return
+        status = self._laser_engine_service.get_latest_status()
+        if status is not None and status.is_ready_for(needed):
+            return
+        for k in needed:
+            self._laser_engine_service.wake_up(k)
+        self._log.warning(f"Squid laser engine not ready for channel(s) {needed}; live started anyway")
+        self._event_bus.publish(
+            LaserEngineWarning(message=f"Laser warming up (channel {','.join(needed)}); image may be dim")
+        )
+
     def start_live(self, configuration: Optional[str] = None) -> None:
         """Start live imaging using the state machine/resource guard path."""
         self._start_live(configuration)
@@ -325,6 +364,10 @@ class LiveController(StateMachine[LiveControllerState]):
         except InvalidStateForOperation:
             self._log.warning("Invalid state for start_live")
             return
+
+        # Warn-only: if the laser engine isn't ready for this channel, wake it and
+        # surface a warning, but don't block live start.
+        self._check_laser_engine_warn_only()
 
         try:
             with self._lock:

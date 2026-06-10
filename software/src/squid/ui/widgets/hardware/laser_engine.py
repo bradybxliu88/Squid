@@ -15,6 +15,7 @@ from squid.backend.drivers.lighting.squid_laser_engine import (
 from squid.core.events import (
     LaserEngineConnectionLost,
     LaserEngineStatusUpdated,
+    LaserEngineWarning,
     SleepAllLasersCommand,
     WakeAllLasersCommand,
 )
@@ -76,6 +77,7 @@ class LaserEngineWidget(QWidget):
         if event_bus is not None:
             event_bus.subscribe(LaserEngineStatusUpdated, self._on_status_updated)
             event_bus.subscribe(LaserEngineConnectionLost, self._on_connection_lost)
+            event_bus.subscribe(LaserEngineWarning, self._on_warning)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -100,6 +102,13 @@ class LaserEngineWidget(QWidget):
         self._banner.setVisible(False)
         layout.addWidget(self._banner)
 
+        # Transient warn-only notice (e.g. live started before warm-up); cleared on
+        # the next status update.
+        self._warning_label = QLabel("")
+        self._warning_label.setStyleSheet("background-color: #daa520; color: black; padding: 4px;")
+        self._warning_label.setVisible(False)
+        layout.addWidget(self._warning_label)
+
         for key in LASER_CHANNEL_ORDER:
             line = QLabel("—")
             line.setStyleSheet("font-family: monospace;")
@@ -116,11 +125,17 @@ class LaserEngineWidget(QWidget):
         if self._event_bus is not None:
             self._event_bus.publish(SleepAllLasersCommand())
 
+    def _on_warning(self, event: LaserEngineWarning) -> None:
+        self._warning_label.setText(event.message)
+        self._warning_label.setVisible(True)
+
     def _on_status_updated(self, event: LaserEngineStatusUpdated) -> None:
         self._last_status = event.status
-        # A fresh status means the link is back; clear any stale disconnect banner.
+        # A fresh status means the link is back; clear any stale disconnect banner
+        # and the transient warm-up warning (the channel lines now reflect state).
         self._connection_lost = False
         self._banner.setVisible(False)
+        self._warning_label.setVisible(False)
         self._refresh_channel_lines()
         self._refresh_summary()
 
