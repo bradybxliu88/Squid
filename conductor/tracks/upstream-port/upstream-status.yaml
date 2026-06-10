@@ -999,7 +999,11 @@ commits:
     analysis_file: commits/32-a8039815-config-and-small-fixes.md
   cbdc84c5:
     title: 'feat: integrate motorized 4-position objective turret (#528)'
-    status: pending
+    status: ported
+    ported_in: 3950c1b7
+    ported_date: '2026-06-10'
+    analysis_file: commits/39-3950c1b7-objective-turret.md
+    notes: 'NiMotion Modbus-RTU turret driver + sim, unified move_to_objective on Xeryon, _def constants + mutual-exclusion guard, factory/widget/menu/shutdown wiring. 38 ported tests (sim, modbus frames/CRC, dispatcher, guard). Real-hardware paths untested in dev env. Plan 2026-06-10-objective-turret.md.'
   f2a2cef0:
     title: 'fix: firmware reports failed moves; filter wheel uses absolute moveto (#540)'
     status: skipped
