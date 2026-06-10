@@ -122,7 +122,8 @@ class ResultView(QWidget):
         v.setSpacing(7)
 
         head = QHBoxLayout()
-        head.setSpacing(9)
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(0)
         cb = QCheckBox()
         cb.setChecked(ch.visible)
         cb.setCursor(Qt.PointingHandCursor)
@@ -134,6 +135,8 @@ class ResultView(QWidget):
         cmap.setView(QListView())
         cmap.setObjectName("cmapCombo")
         cmap.setCursor(Qt.PointingHandCursor)
+        cmap.setMinimumWidth(88)
+        cmap.view().setMinimumWidth(120)
         cmap.addItem("Auto", ch.color)
         for nm, hx in _CMAPS:
             cmap.addItem(nm, hx)
@@ -141,8 +144,11 @@ class ResultView(QWidget):
         cmap.currentIndexChanged.connect(
             lambda _i, c=ch, combo=cmap, d=dot: self._set_color(c, combo.currentData(), d))
         head.addWidget(cb)
+        head.addSpacing(11)
         head.addWidget(dot)
+        head.addSpacing(11)
         head.addWidget(name, 1)
+        head.addSpacing(8)
         head.addWidget(cmap)
         v.addLayout(head)
 

@@ -40,19 +40,14 @@ QComboBox#objCombo {
 }
 QComboBox#objCombo:hover { border-color: #38465f; }
 
-/* ---------- segmented Live / Result ---------- */
-QWidget#segGroup {
-    background-color: #0c1019; border: 1px solid #20283a; border-radius: 6px;
+/* ---------- Live / Result nav tabs (no box, large) ---------- */
+QPushButton#navTab {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    color: #6b7689; font-size: 17px; font-weight: 600; letter-spacing: 0.3px;
+    padding: 3px 4px 4px 4px; min-height: 24px;
 }
-QPushButton#segTab {
-    background-color: transparent; color: #8893a8; border: none; border-radius: 4px;
-    padding: 4px 15px; font-weight: 600; font-size: 12px; min-height: 15px;
-}
-QPushButton#segTab:hover { color: #e6ecf5; }
-QPushButton#segTab:checked {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1b2433, stop:1 #151d2a);
-    color: #2dd4bf; border: 1px solid #2a3650;
-}
+QPushButton#navTab:hover { color: #cdd6e4; }
+QPushButton#navTab:checked { color: #2dd4bf; border-bottom: 2px solid #2dd4bf; }
 
 /* ---------- generic buttons (raised) ---------- */
 QPushButton {
@@ -125,11 +120,16 @@ QDoubleSpinBox:disabled { color: #3a4456; background: #0a0e16; border-color: #1a
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; }
 
 QComboBox { padding-right: 8px; font-family: "SF Mono", "Menlo", monospace; color: #cdd6e4; }
-QComboBox::drop-down { border: none; width: 18px; }
-QComboBox::down-arrow {
-    image: none; border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-top: 5px solid #8893a8; margin-right: 6px;
+QComboBox::drop-down {
+    subcontrol-origin: padding; subcontrol-position: center right;
+    border: none; background: transparent; width: 16px;
 }
+QComboBox::down-arrow {
+    image: none; width: 0; height: 0; margin-right: 7px;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid #8893a8;
+}
+QComboBox::down-arrow:hover { border-top-color: #2dd4bf; }
 QComboBox QAbstractItemView {
     background-color: #131a27; border: 1px solid #283146; border-radius: 4px;
     selection-background-color: #103029; selection-color: #2dd4bf; outline: none; padding: 3px;

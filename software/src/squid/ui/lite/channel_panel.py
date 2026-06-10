@@ -28,8 +28,8 @@ class ChannelRow(QWidget):
         self.setCursor(Qt.PointingHandCursor)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 4, 11, 4)
-        lay.setSpacing(10)
+        lay.setContentsMargins(11, 5, 12, 5)
+        lay.setSpacing(0)
 
         self._check = QCheckBox()
         self._check.setCursor(Qt.PointingHandCursor)
@@ -40,7 +40,9 @@ class ChannelRow(QWidget):
         self._live.setObjectName("liveFlag")
 
         lay.addWidget(self._check)
+        lay.addSpacing(11)
         lay.addWidget(_color_dot(color_hex))
+        lay.addSpacing(11)
         lay.addWidget(self._name_lbl, 1)
         lay.addWidget(self._live)
 
