@@ -3,7 +3,7 @@ meta:
   target_branch: multipoint-refactor
   cutoff_date: '2025-12-12'
   created: '2026-01-12'
-  last_verified: '2026-05-05T13:23:34'
+  last_verified: '2026-06-09T22:31:26'
 commits:
   295afbb3:
     title: 'fix: Disable memory profiling in CI to fix test hangs (#451)'
@@ -748,7 +748,7 @@ commits:
     ported_date: '2026-05-05'
     ported_with:
     - e4fcfe68
-    notes: 'Lock check skipped when --skip-init is set (restart-after-settings-change flow).'
+    notes: Lock check skipped when --skip-init is set (restart-after-settings-change flow).
     analysis_file: commits/29-d9cee6e3-tools-tests.md
   31b454c3:
     title: 'fix: align liveController.trigger_mode with hardware setup for Tucsen level trigger (#533)'
@@ -760,10 +760,8 @@ commits:
     title: 'fix: align zarr writer test helper with current acquisition schema (#531)'
     status: skipped
     skip_reason: already-fixed
-    skip_justification: 'arch_v2 tests/unit/test_zarr_writer.py:make_test_capture_info
-      already uses the current schema (illumination_channel="LED", intensity as float,
-      camera_settings as single CameraSettings). The schema mismatch upstream fixed
-      did not exist in arch_v2.'
+    skip_justification: arch_v2 tests/unit/test_zarr_writer.py:make_test_capture_info already uses the current schema (illumination_channel="LED",
+      intensity as float, camera_settings as single CameraSettings). The schema mismatch upstream fixed did not exist in arch_v2.
     skip_date: '2026-05-05'
     analysis_file: plans/2026-05-05-tools-tests.md
   e4fcfe68:
@@ -781,17 +779,15 @@ commits:
     ported_date: '2026-05-05'
     ported_with:
     - dda4c983
-    notes: 'Applied to software/setup_scripts/setup_22.04.sh (arch_v2 path differs from upstream).'
+    notes: Applied to software/setup_scripts/setup_22.04.sh (arch_v2 path differs from upstream).
   44c4f518:
     title: 'feat: headless microscope API — hardware init, single-FOV acquisition, laser AF, profiles (#524)'
     status: ported
     ported_in: 81d194c8
     ported_date: '2026-05-05'
-    notes: 'Partial port. Channel validation, save_image, acquire_single_fov ported.
-      Hardware init consolidation, lazy laser AF, profile management not ported —
-      arch_v2 has these in ApplicationContext / service layer; direct Microscope
-      access bypasses the service architecture. Headless callers should use
-      ApplicationContext.'
+    notes: Partial port. Channel validation, save_image, acquire_single_fov ported. Hardware init consolidation, lazy laser
+      AF, profile management not ported — arch_v2 has these in ApplicationContext / service layer; direct Microscope access
+      bypasses the service architecture. Headless callers should use ApplicationContext.
     analysis_file: commits/30-81d194c8-headless-api.md
   30d95ea1:
     title: 'fix: suppress Pydantic serializer int/float warning in LaserAFConfig (#523)'
@@ -810,7 +806,7 @@ commits:
     ported_date: '2026-05-05'
     ported_with:
     - 8bfca85a
-    notes: 'Applied to software/setup_scripts/setup_22.04.sh (arch_v2 path differs from upstream).'
+    notes: Applied to software/setup_scripts/setup_22.04.sh (arch_v2 path differs from upstream).
   cc677e2c:
     title: 'fix: handle illumination sources without a hardware source code (#518)'
     status: ported
@@ -820,8 +816,8 @@ commits:
     - 36dc1444
     - 30d95ea1
     - 6e3f731a
-    notes: 'Model API change applied to acquisition_config.py. live_controller _is_led_matrix
-      not applicable — arch_v2 dispatches via ChannelType.LED_MATRIX enum.'
+    notes: Model API change applied to acquisition_config.py. live_controller _is_led_matrix not applicable — arch_v2 dispatches
+      via ChannelType.LED_MATRIX enum.
     analysis_file: commits/27-ec83f777-misc-fixes.md
   e7aaef8b:
     title: 'fix: apply missing mm-to-µm conversion factor for PhysicalSizeZ (#516)'
@@ -859,8 +855,8 @@ commits:
     - cc677e2c
     - 36dc1444
     - 30d95ea1
-    notes: 'Microcontroller log format fix applied. BackpressureMonitorWidget portion not
-      applicable — arch_v2 widget is push-based via update_stats() with no get_lock() race.'
+    notes: Microcontroller log format fix applied. BackpressureMonitorWidget portion not applicable — arch_v2 widget is push-based
+      via update_stats() with no get_lock() race.
     analysis_file: commits/27-ec83f777-misc-fixes.md
   07ac6e55:
     title: 'fix: preserve illumination_channel when applying confocal override (#511)'
@@ -872,29 +868,26 @@ commits:
     title: 'fix: sync iris sliders from acquisition config on startup (#510)'
     status: skipped
     skip_reason: deferred
-    skip_justification: 'Depends on 8d49273c. The update_iris_from_config() method is
-      added by that commit.'
+    skip_justification: Depends on 8d49273c. The update_iris_from_config() method is added by that commit.
     skip_date: '2026-05-05'
     analysis_file: plans/2026-05-05-confocal-iris-deferred.md
   35321c92:
     title: 'fix: speed up XLight iris commands and avoid response mismatch (#509)'
     status: skipped
     skip_reason: deferred
-    skip_justification: 'Depends on 8d49273c (confocal model registry). The "remove
-      init-time iris defaults" piece relies on the acquisition config flow established
-      by 8d49273c. Serial speedups (write_and_read, reduced delay) are safe to port
-      standalone but provide limited value without the surrounding suite.'
+    skip_justification: Depends on 8d49273c (confocal model registry). The "remove init-time iris defaults" piece relies on
+      the acquisition config flow established by 8d49273c. Serial speedups (write_and_read, reduced delay) are safe to port
+      standalone but provide limited value without the surrounding suite.
     skip_date: '2026-05-05'
     analysis_file: plans/2026-05-05-confocal-iris-deferred.md
   8d49273c:
     title: 'feat: Confocal model registry and per-channel iris persistence (#508)'
     status: skipped
     skip_reason: deferred
-    skip_justification: 'Large architectural change (1207 lines) introducing ConfocalModelDef
-      registry + per-channel iris persistence. Touches 16 files including model schema,
-      config repo, live controller, GUI widgets, and migration tool. Best done as a
-      dedicated focused effort with confocal hardware available for testing. See
-      plans/2026-05-05-confocal-iris-deferred.md for details.'
+    skip_justification: Large architectural change (1207 lines) introducing ConfocalModelDef registry + per-channel iris persistence.
+      Touches 16 files including model schema, config repo, live controller, GUI widgets, and migration tool. Best done as
+      a dedicated focused effort with confocal hardware available for testing. See plans/2026-05-05-confocal-iris-deferred.md
+      for details.
     skip_date: '2026-05-05'
     analysis_file: plans/2026-05-05-confocal-iris-deferred.md
   30a2aaa2:
@@ -910,10 +903,88 @@ commits:
     title: 'feat: Replace illumination timeout with serial watchdog (#506)'
     status: skipped
     skip_reason: deferred
-    skip_justification: 'Requires firmware changes (new commands SET_WATCHDOG_TIMEOUT/
-      HEARTBEAT, watchdog logic), software heartbeat daemon, and hardware testing on
-      Teensy 4.1. arch_v2 firmware never had upstream PR #486 that this watchdog
-      replaces, so the revert portion does not apply cleanly. Best done as a focused
-      effort with hardware available. See plans/2026-05-05-watchdog-deferred.md.'
+    skip_justification: 'Requires firmware changes (new commands SET_WATCHDOG_TIMEOUT/ HEARTBEAT, watchdog logic), software
+      heartbeat daemon, and hardware testing on Teensy 4.1. arch_v2 firmware never had upstream PR #486 that this watchdog
+      replaces, so the revert portion does not apply cleanly. Best done as a focused effort with hardware available. See plans/2026-05-05-watchdog-deferred.md.'
     skip_date: '2026-05-05'
     analysis_file: plans/2026-05-05-watchdog-deferred.md
+  345f1249:
+    title: 'feat: allow negative FOV overlap to introduce spacing between tiles (#555)'
+    status: ported
+    ported_in: a8039815
+    ported_date: '2026-06-09'
+    analysis_file: commits/32-a8039815-config-and-small-fixes.md
+  cf4bba2a:
+    title: 'feat(tucsen): callback-based frame delivery (TUCAM_Buf_DataCallBack) (#552)'
+    status: pending
+  a894eda5:
+    title: 'fix: legacy RecordingWidget + Toupcam continuous-mode FPS + Live illumination (#535)'
+    status: pending
+  19b883eb:
+    title: 'fix(firmware): close strobe ISR race that leaves old channel HIGH on switch (#549)'
+    status: pending
+  9c8556db:
+    title: 'docs: document how to restore machine configs after PR #546 pull (#550)'
+    status: pending
+  '74752073':
+    title: 'fix(ci): provide illumination_channel_config example for tests (#548)'
+    status: pending
+  6713d854:
+    title: 'log: enable per-acquisition log by default (#547)'
+    status: ported
+    ported_in: a8039815
+    ported_date: '2026-06-09'
+    analysis_file: commits/32-a8039815-config-and-small-fixes.md
+  af71d2ef:
+    title: 'chore: ignore machine-specific configs and Xeryon settings (#546)'
+    status: pending
+  24bb38b1:
+    title: 'fix: clear line-profiler preview when toggled off mid-drawing (#544)'
+    status: ported
+    ported_in: a8039815
+    ported_date: '2026-06-09'
+    analysis_file: commits/32-a8039815-config-and-small-fixes.md
+  0771c850:
+    title: 'log: add filter wheel position diagnostics (#545)'
+    status: ported
+    ported_in: a8039815
+    ported_date: '2026-06-09'
+    analysis_file: commits/32-a8039815-config-and-small-fixes.md
+  cbdc84c5:
+    title: 'feat: integrate motorized 4-position objective turret (#528)'
+    status: pending
+  f2a2cef0:
+    title: 'fix: firmware reports failed moves; filter wheel uses absolute moveto (#540)'
+    status: pending
+  fae3aa0a:
+    title: 'config: migrate filter_controller_enable to USE_EMISSION_FILTER_WHEEL (#543)'
+    status: ported
+    ported_in: a8039815
+    ported_date: '2026-06-09'
+    analysis_file: commits/32-a8039815-config-and-small-fixes.md
+  9067b2ff:
+    title: Update crop dimensions in configuration file (#538)
+    status: skipped
+    skip_reason: superseded
+    skip_justification: arch_v2 configuration_HCS_v2.ini already uses crop 2048 (intentional machine-specific divergence from
+      upstream's 3000->2700). Crop dimensions are per-machine tuning, not a portable fix.
+    skip_date: '2026-06-09'
+    analysis_file: commits/32-a8039815-config-and-small-fixes.md
+  603c0ad3:
+    title: 'feat: Squid laser engine — status polling, GUI tab, acquisition gating (#536)'
+    status: pending
+  beaf48cc:
+    title: 'fix: fall back to per-iris defaults when channel has no confocal_hardware_settings (#537)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: arch_v2 confocal.py reads iris from xlight.{illumination,emission}_iris directly at init; the buggy
+      update_iris_from_config path that fell back to slider.minimum() on a None confocal_hardware_settings does not exist,
+      so the bug cannot occur.
+    skip_date: '2026-06-09'
+    analysis_file: commits/32-a8039815-config-and-small-fixes.md
+  9bee0201:
+    title: 'feat: live view click-to-move fix and Ctrl+Scroll Z navigation (#532)'
+    status: pending
+  3bcdca38:
+    title: 'feat: unify Mosaic + Plate View into single UnifiedMosaicWidget (#530)'
+    status: pending
