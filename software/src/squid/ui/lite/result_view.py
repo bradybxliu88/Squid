@@ -11,7 +11,7 @@ from qtpy.QtCore import Qt
 from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QCheckBox, QPushButton, QFileDialog,
-    QFrame, QComboBox, QScrollArea,
+    QFrame, QComboBox, QScrollArea, QSizePolicy,
 )
 
 from squid.ui.lite import compositing as C
@@ -116,6 +116,7 @@ class ResultView(QWidget):
     def _build_row(self, ch: CapturedChannel) -> QWidget:
         row = QWidget()
         row.setObjectName("overlayRow")
+        row.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         v = QVBoxLayout(row)
         v.setContentsMargins(10, 8, 10, 9)
         v.setSpacing(7)

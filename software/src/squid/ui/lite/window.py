@@ -11,6 +11,7 @@ from qtpy.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QStackedWidget,
     QPushButton, QButtonGroup, QMessageBox, QLabel, QFrame, QScrollArea, QComboBox,
     QLineEdit, QFileDialog, QApplication, QGraphicsDropShadowEffect, QCheckBox,
+    QSizePolicy,
 )
 
 import squid.core.logging
@@ -62,6 +63,10 @@ class SquidLiteWindow(QMainWindow):
         self._channel_panel = ChannelPanel(channels)
         self._channel_controls = ChannelControls(self._bus.publish)
         self._result_view = ResultView()
+        # Keep rail sections at their natural height so all slack collects in the
+        # single bottom spacer (prevents space being distributed between sections).
+        for w in (self._channel_panel, self._channel_controls):
+            w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self._live_toggle = QPushButton("▶  Start Live")
         self._live_toggle.setObjectName("liveToggle")
