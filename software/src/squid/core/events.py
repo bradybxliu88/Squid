@@ -23,7 +23,7 @@ Usage:
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from threading import Lock
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Type, TypeVar
@@ -2552,6 +2552,13 @@ class PlateViewInit(Event):
     well_slot_shape: Tuple[int, int]  # (height, width) in pixels
     fov_grid_shape: Tuple[int, int]  # (ny, nx) FOVs per well
     channel_names: List[str]
+    # Well coverage + per-well anchor for the unified mosaic widget's plate mode.
+    # well_ids lets the widget wipe stale tiles when a new scan covers different
+    # wells; well_origins_mm maps well_id -> (top-left x_mm, top-left y_mm) of the
+    # well's FOV bounding box so in-GUI tile placement uses non-negative offsets.
+    # Empty for the legacy IPC plate pipeline (which doesn't need them).
+    well_ids: List[str] = field(default_factory=list)
+    well_origins_mm: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
 
 @dataclass

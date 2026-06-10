@@ -27,6 +27,7 @@ from _def import (
     SEGMENTATION_CROP,
     SIMULATED_DISK_IO_ENABLED,
     TriggerMode,
+    USE_UNIFIED_MOSAIC_VIEW,
     ZARR_USE_6D_FOV_DIMENSION,
 )
 import squid.core.utils.hardware_utils as utils
@@ -1286,6 +1287,15 @@ class MultiPointWorker:
                 fov_grid_shape = (len(y_positions), len(x_positions))
                 break
 
+        # Per-well anchor (top-left of each well's FOV bounding box) + coverage, for the
+        # unified mosaic widget's in-GUI plate mode. Empty/ignored by the legacy IPC pipeline.
+        well_ids = list(self.scan_region_fov_coords_mm.keys())
+        well_origins_mm = {
+            region_id: (min(c[0] for c in coords), min(c[1] for c in coords))
+            for region_id, coords in self.scan_region_fov_coords_mm.items()
+            if coords
+        }
+
         # Emit plate view init event
         if self._event_bus:
             self._event_bus.publish(
@@ -1295,6 +1305,8 @@ class MultiPointWorker:
                     well_slot_shape=(well_slot_height, well_slot_width),
                     fov_grid_shape=fov_grid_shape,
                     channel_names=channel_names,
+                    well_ids=well_ids,
+                    well_origins_mm=well_origins_mm,
                 )
             )
 
@@ -2453,6 +2465,13 @@ class MultiPointWorker:
         if self._downsampled_view_manager is None:
             self._calculate_overlap_pixels(image)
             self._initialize_downsampled_view_manager(image)
+
+        # Unified mosaic widget fills plate mode in-GUI from the per-tile stream
+        # (PlateViewInit, emitted above, gives it the layout + per-well anchors), so
+        # the subprocess stitching pipeline is bypassed. The legacy IPC path runs only
+        # when USE_UNIFIED_MOSAIC_VIEW is off.
+        if USE_UNIFIED_MOSAIC_VIEW:
+            return None
 
         well_id = info.region_id
         try:

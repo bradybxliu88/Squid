@@ -1176,12 +1176,12 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 )
         self._log.info(f"build_params: plate dimensions = {plate_num_rows}x{plate_num_cols}")
 
-        generate_downsampled_views = (
-            not self.run_acquisition_current_fov
-            and (
-                self._feature_flags.is_enabled("SAVE_DOWNSAMPLED_WELL_IMAGES")
-                or self._feature_flags.is_enabled("DISPLAY_PLATE_VIEW")
-            )
+        generate_downsampled_views = not self.run_acquisition_current_fov and (
+            self._feature_flags.is_enabled("SAVE_DOWNSAMPLED_WELL_IMAGES")
+            or self._feature_flags.is_enabled("DISPLAY_PLATE_VIEW")
+            # The unified mosaic widget fills plate mode in-GUI but still needs the
+            # PlateViewInit layout (emitted on the downsampled-view init path).
+            or _def.USE_UNIFIED_MOSAIC_VIEW
         )
 
         return AcquisitionParameters(

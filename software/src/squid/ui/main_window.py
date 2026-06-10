@@ -45,6 +45,7 @@ from _def import (
     USE_OBJECTIVE_TURRET,
     USE_PRIOR_STAGE,
     USE_TEMPLATE_MULTIPOINT,
+    USE_UNIFIED_MOSAIC_VIEW,
     WELLPLATE_FORMAT,
 )
 from squid.core.config.feature_flags import get_feature_flags
@@ -564,23 +565,41 @@ class HighContentScreeningGui(QMainWindow):
                     self.imageArrayDisplayWindow.widget, "Multichannel Acquisition"
                 )
 
-            if self._feature_flags.is_enabled("USE_NAPARI_FOR_MOSAIC_DISPLAY"):
-                self.napariMosaicDisplayWidget = widgets.NapariMosaicDisplayWidget(
-                    contrastManager=self.contrastManager,
-                    event_bus=self._ui_event_bus,
+            # Unified mosaic/plate widget (one tab, Full View <-> Plate View toggle),
+            # fed in-GUI. Replaces the separate Mosaic/Plate tabs when enabled.
+            self.unifiedMosaicWidget = None
+            self._plate_well_origins_mm: dict = {}
+            if USE_UNIFIED_MOSAIC_VIEW:
+                self.unifiedMosaicWidget = widgets.UnifiedMosaicWidget(
+                    self.objectiveStore,
+                    self.camera,
+                    self.contrastManager,
                 )
-                self.imageDisplayTabs.addTab(
-                    self.napariMosaicDisplayWidget, "Mosaic View"
-                )
+                self.napariMosaicDisplayWidget = None
+                self.napariPlateViewWidget = None
+                self.imageDisplayTabs.addTab(self.unifiedMosaicWidget, "Mosaic View")
+                if hasattr(self.unifiedMosaicWidget, "signal_clear_viewer"):
+                    self.unifiedMosaicWidget.signal_clear_viewer.connect(
+                        self.navigationViewer.clear_overlay
+                    )
+            else:
+                if self._feature_flags.is_enabled("USE_NAPARI_FOR_MOSAIC_DISPLAY"):
+                    self.napariMosaicDisplayWidget = widgets.NapariMosaicDisplayWidget(
+                        contrastManager=self.contrastManager,
+                        event_bus=self._ui_event_bus,
+                    )
+                    self.imageDisplayTabs.addTab(
+                        self.napariMosaicDisplayWidget, "Mosaic View"
+                    )
 
-            # Plate view for well-based acquisitions (only if enabled)
-            if self._feature_flags.is_enabled("DISPLAY_PLATE_VIEW"):
-                self.napariPlateViewWidget = widgets.NapariPlateViewWidget(
-                    contrastManager=self.contrastManager,
-                )
-                self.imageDisplayTabs.addTab(
-                    self.napariPlateViewWidget, "Plate View"
-                )
+                # Plate view for well-based acquisitions (only if enabled)
+                if self._feature_flags.is_enabled("DISPLAY_PLATE_VIEW"):
+                    self.napariPlateViewWidget = widgets.NapariPlateViewWidget(
+                        contrastManager=self.contrastManager,
+                    )
+                    self.imageDisplayTabs.addTab(
+                        self.napariPlateViewWidget, "Plate View"
+                    )
 
             # Embedded NDViewer - initialized AFTER napari widgets because
             # NDV and napari both use vispy for OpenGL rendering. Initializing NDV first
@@ -606,6 +625,10 @@ class HighContentScreeningGui(QMainWindow):
                     self.napariPlateViewWidget.signal_well_fov_clicked.connect(
                         self._on_plate_view_fov_clicked
                     )
+            if self.unifiedMosaicWidget is not None and self.ndviewerTab is not None:
+                self.unifiedMosaicWidget.signal_well_fov_clicked.connect(
+                    self._on_plate_view_fov_clicked
+                )
 
             # z plot
             self.zPlotWidget = widgets.SurfacePlotWidget()
@@ -1027,7 +1050,14 @@ class HighContentScreeningGui(QMainWindow):
                 )
 
             # Setup mosaic display widget connections
-            if self._feature_flags.is_enabled("USE_NAPARI_FOR_MOSAIC_DISPLAY"):
+            if self.unifiedMosaicWidget is not None:
+                self.napari_connections["unifiedMosaicWidget"] = [
+                    (
+                        self.streamHandler.capture,
+                        self._on_stream_capture_mosaic,
+                    )
+                ]
+            elif self._feature_flags.is_enabled("USE_NAPARI_FOR_MOSAIC_DISPLAY"):
                 self.napari_connections["napariMosaicDisplayWidget"] = []
                 self.napari_connections["napariMosaicDisplayWidget"].append(
                     (
@@ -1057,10 +1087,31 @@ class HighContentScreeningGui(QMainWindow):
             return getattr(getattr(info, "configuration", None), "name", "Unknown")
 
     def _on_stream_capture_mosaic(self, image, info) -> None:
+        channel_name = self._layer_name_from_capture_info(info)
+        if getattr(self, "unifiedMosaicWidget", None) is not None:
+            from squid.backend.controllers.multipoint.multi_point_utils import MosaicTileUpdate
+            from squid.backend.controllers.multipoint.mosaic_utils import parse_well_id
+
+            well_id = str(info.region_id)
+            try:
+                well_row, well_col = parse_well_id(well_id)
+            except ValueError:
+                well_row, well_col = 0, 0
+            update = MosaicTileUpdate(
+                image=image,
+                x_mm=info.position.x_mm,
+                y_mm=info.position.y_mm,
+                channel_name=channel_name,
+                well_id=well_id,
+                well_row=well_row,
+                well_col=well_col,
+                well_origin_mm=self._plate_well_origins_mm.get(well_id),
+            )
+            self.unifiedMosaicWidget.updateMosaic(update)
+            return
         if getattr(self, "napariMosaicDisplayWidget", None) is None:
             log.warning("_on_stream_capture_mosaic: napariMosaicDisplayWidget is None")
             return
-        channel_name = self._layer_name_from_capture_info(info)
         self.napariMosaicDisplayWidget.updateMosaic(image, info, channel_name)
 
     def _on_stream_capture_multichannel(self, image, info) -> None:
@@ -1409,6 +1460,12 @@ class HighContentScreeningGui(QMainWindow):
 
     @handles(PlateViewInit)
     def _on_plate_view_init(self, event: PlateViewInit) -> None:
+        # Unified widget: cache per-well anchors for in-GUI plate placement and
+        # configure the plate layout directly from the event payload.
+        if getattr(self, "unifiedMosaicWidget", None) is not None:
+            self._plate_well_origins_mm = dict(event.well_origins_mm or {})
+            self.unifiedMosaicWidget.setPlateLayout(event)
+            return
         if not getattr(self, "napariPlateViewWidget", None):
             return
         self.napariPlateViewWidget.initPlateLayout(
@@ -1723,7 +1780,8 @@ class HighContentScreeningGui(QMainWindow):
 
         # Close napari viewers to prevent vispy/OpenGL thread hangs on exit
         for attr in ("napariLiveWidget", "napariMultiChannelWidget",
-                     "napariMosaicDisplayWidget", "napariPlateViewWidget"):
+                     "napariMosaicDisplayWidget", "napariPlateViewWidget",
+                     "unifiedMosaicWidget"):
             widget = getattr(self, attr, None)
             if widget is not None and hasattr(widget, "viewer"):
                 try:
