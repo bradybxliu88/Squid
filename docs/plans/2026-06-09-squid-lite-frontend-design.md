@@ -146,6 +146,21 @@ These have standalone value and target `master` independently of the frontend br
 The UI then just publishes `CaptureMultichannelCommand` and, on `CaptureCompleted`, reads the
 saved OME-TIFF back for the result view. No numpy crosses `core` events; no I/O in widgets.
 
+**Confirmed snap sequence (from spike, simulation):**
+- Objective accessor: `microscope.objective_store.current_objective` (e.g. `"4x"`).
+- Channels via `microscope.channel_config_service.get_configurations(objective, enabled_only=True)`
+  → `ChannelMode` with `name, exposure_time, analog_gain, illumination_source,
+  illumination_intensity, emission_filter_position, color`.
+- Per-channel snap: `live.stop_live()` → `mode_controller.apply_mode_for_acquisition(name)` →
+  `illumination.turn_on_channel(src)` → `camera.send_trigger()` (no `illumination_time` arg) →
+  `camera.read_camera_frame()` → `illumination.turn_off_channel(src)`. `src` =
+  `config.illumination_source`. Produces a lit frame (non-zero mean).
+- Pixel format is **dtype-agnostic**: simulation yields MONO8 (uint8); real hardware MONO16
+  (uint16). The writer must preserve whatever dtype the camera returns.
+- Note: `BackendContext` exposes the manager as `microscope.channel_configuration_manager`;
+  `microscope.channel_config_service` also resolves. Add the new accessor to the underlying
+  `ChannelConfigurationManager`.
+
 ### New UI code (create)
 - `squid/ui/lite/window.py` — `SquidLiteWindow`.
 - `squid/ui/lite/save_bar.py` — directory + prefix header (pure UI state).
