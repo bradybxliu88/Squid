@@ -152,8 +152,10 @@ class ImageCaptureExecutor:
         # Apply illumination
         if self._illumination is not None:
             try:
-                # Get illumination settings from config
+                # Get illumination settings from config (accept either attribute name)
                 intensity = getattr(config, "illumination_intensity", None)
+                if intensity is None:
+                    intensity = getattr(config, "intensity", None)
                 channel = getattr(config, "illumination_source", None)
                 if intensity is not None and channel is not None:
                     self._illumination.set_channel_power(channel, intensity)
@@ -170,9 +172,12 @@ class ImageCaptureExecutor:
             except Exception as e:
                 _log.warning(f"Failed to set filter position: {e}")
 
-        # Set camera exposure and gain from config
+        # Set camera exposure and gain from config (align names with ChannelMode /
+        # MicroscopeModeController.apply_mode_for_acquisition).
         try:
-            exposure_ms = getattr(config, "exposure_time_ms", None)
+            exposure_ms = getattr(config, "exposure_time", None)
+            if exposure_ms is None:
+                exposure_ms = getattr(config, "exposure_time_ms", None)
             if exposure_ms is not None:
                 self._camera.set_exposure_time(exposure_ms)
 
