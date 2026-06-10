@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         IlluminationService,
         FilterWheelService,
     )
+    from squid.backend.services.laser_engine_service import LaserEngineService
     from squid.core.events import EventBus
     from squid.backend.controllers.autofocus import AutoFocusController
     from squid.backend.controllers.autofocus import LaserAutofocusController
@@ -60,6 +61,7 @@ class AcquisitionServices:
     piezo: Optional["PiezoService"] = None
     fluidics: Optional["FluidicsService"] = None
     nl5: Optional["NL5Service"] = None
+    laser_engine: Optional["LaserEngineService"] = None
     stream_handler: Optional[object] = None
 
     def validate(self) -> None:
@@ -105,6 +107,11 @@ class AcquisitionServices:
     def has_nl5(self) -> bool:
         """Check if NL5 service is available."""
         return self.nl5 is not None
+
+    @property
+    def has_laser_engine(self) -> bool:
+        """Check if the Squid laser engine service is available."""
+        return self.laser_engine is not None
 
 
 @dataclass
@@ -191,6 +198,7 @@ class AcquisitionDependencies:
         piezo: Optional["PiezoService"] = None,
         fluidics: Optional["FluidicsService"] = None,
         nl5: Optional["NL5Service"] = None,
+        laser_engine: Optional["LaserEngineService"] = None,
         stream_handler: Optional[object] = None,
         # Optional controllers
         autofocus: Optional["AutoFocusController"] = None,
@@ -230,6 +238,7 @@ class AcquisitionDependencies:
             piezo=piezo,
             fluidics=fluidics,
             nl5=nl5,
+            laser_engine=laser_engine,
             stream_handler=stream_handler,
         )
         controllers = AcquisitionControllers(

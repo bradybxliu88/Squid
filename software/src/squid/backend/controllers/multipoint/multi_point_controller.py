@@ -84,6 +84,7 @@ if TYPE_CHECKING:
         IlluminationService,
         FilterWheelService,
     )
+    from squid.backend.services.laser_engine_service import LaserEngineService
     from squid.core.events import EventBus
     from squid.backend.controllers.autofocus.continuous_focus_lock import ContinuousFocusLockController
     from squid.backend.controllers.autofocus.focus_lock_simulator import FocusLockSimulator
@@ -118,6 +119,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
         piezo_service: Optional["PiezoService"] = None,
         fluidics_service: Optional["FluidicsService"] = None,
         nl5_service: Optional["NL5Service"] = None,
+        laser_engine_service: Optional["LaserEngineService"] = None,
         illumination_service: Optional["IlluminationService"] = None,
         filter_wheel_service: Optional["FilterWheelService"] = None,
         mode_gate: Optional[GlobalModeGate] = None,
@@ -186,6 +188,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
         self._focus_lock_controller = focus_lock_controller
         self._fluidics_service = fluidics_service
         self._nl5_service = nl5_service
+        self._laser_engine_service = laser_engine_service
         self._illumination_service = illumination_service
         self._filter_wheel_service = filter_wheel_service
         self._mode_gate = mode_gate
@@ -1060,6 +1063,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 piezo=self._piezo_service,
                 fluidics=self._fluidics_service,
                 nl5=self._nl5_service,
+                laser_engine=self._laser_engine_service,
                 stream_handler=self._stream_handler,
                 autofocus=self.autofocusController,
                 laser_autofocus=self.laserAutoFocusController,
@@ -1085,6 +1089,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 piezo_service=self._piezo_service,
                 fluidics_service=self._fluidics_service,
                 nl5_service=self._nl5_service,
+                laser_engine_service=self._laser_engine_service,
                 event_bus=self._event_bus,
                 stream_handler=self._stream_handler,
                 focus_lock_controller=self._focus_lock_controller,

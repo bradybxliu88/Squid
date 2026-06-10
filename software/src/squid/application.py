@@ -822,6 +822,7 @@ class ApplicationContext:
             piezo_service=self._services.get("piezo"),
             fluidics_service=self._services.get("fluidics"),
             nl5_service=self._services.get("nl5"),
+            laser_engine_service=self._services.get("laser_engine"),
             illumination_service=self._services.get("illumination"),
             filter_wheel_service=self._services.get("filter_wheel"),
             event_bus=event_bus,
@@ -1085,6 +1086,12 @@ class ApplicationContext:
                 "nl5",
                 NL5Service(nl5, event_bus),
             )
+
+        # The laser engine addon is already a LaserEngineService (built in the
+        # microscope factory, where the event_bus is available); just register it.
+        laser_engine = getattr(self._microscope.addons, "squid_laser_engine", None)
+        if laser_engine:
+            self._services.register("laser_engine", laser_engine)
 
         # Movement service for stage/piezo position polling
         # This replaces MovementUpdater from qt_controllers.py

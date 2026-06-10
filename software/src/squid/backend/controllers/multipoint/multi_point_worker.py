@@ -114,10 +114,16 @@ if TYPE_CHECKING:
         FilterWheelService,
     )
     from squid.core.events import EventBus
+    from squid.backend.services.laser_engine_service import LaserEngineService
     from squid.backend.controllers.autofocus.continuous_focus_lock import ContinuousFocusLockController
     from squid.backend.controllers.autofocus.focus_lock_simulator import FocusLockSimulator
 
-from squid.core.events import PlateViewInit, PlateViewUpdate
+from squid.core.events import (
+    LaserEngineReady,
+    LaserEngineWaitingForReady,
+    PlateViewInit,
+    PlateViewUpdate,
+)
 
 # Module-level logger for static methods
 _log = squid.core.logging.get_logger(__name__)
@@ -154,6 +160,7 @@ class MultiPointWorker:
         piezo_service: Optional["PiezoService"] = None,
         fluidics_service: Optional["FluidicsService"] = None,
         nl5_service: Optional["NL5Service"] = None,
+        laser_engine_service: Optional["LaserEngineService"] = None,
         stream_handler: Optional[object] = None,
         alignment_widget: Optional[object] = None,
     ):
@@ -173,6 +180,7 @@ class MultiPointWorker:
             piezo_service = dependencies.services.piezo
             fluidics_service = dependencies.services.fluidics
             nl5_service = dependencies.services.nl5
+            laser_engine_service = dependencies.services.laser_engine
             stream_handler = dependencies.services.stream_handler
 
         self._feature_flags = get_feature_flags()
@@ -182,6 +190,8 @@ class MultiPointWorker:
         self._piezo_service = piezo_service
         self._fluidics_service = fluidics_service
         self._nl5_service = nl5_service
+        self._laser_engine_service = laser_engine_service
+        self._laser_channels_needed: List[str] = []
         self._event_bus = event_bus
         self._stream_handler = stream_handler
         self._trigger_mode = trigger_mode
@@ -943,11 +953,21 @@ class MultiPointWorker:
             self._camera_service.start_streaming()
             sleep_time: float = min(self.dt / 20.0, 0.5)
 
+            # Laser-engine channels this acquisition will fire (empty when the flag is off).
+            self._laser_channels_needed = self._compute_laser_channels_needed()
+
             while self.time_point < self.Nt:
                 # check if abort acquisition has been requested
                 if self._abort_requested.is_set():
                     self._log.debug("In run, abort_acquisition_requested=True")
                     break
+
+                # Gate on laser-engine readiness for the channels this acquisition fires.
+                # Re-checked every timepoint so dt-induced sleep gaps are handled.
+                if self._laser_engine_service is not None and self._laser_channels_needed:
+                    self._wait_for_laser_engine()
+                    if self._abort_requested.is_set():
+                        break
 
                 if self._fluidics_service and self.use_fluidics:
                     # Deprecated: multipoint fluidics integration will be removed in favor of the orchestrator.
@@ -1044,6 +1064,55 @@ class MultiPointWorker:
             self._progress_tracker.finish(
                 success=(acquisition_error is None and not self._aborted),
                 error=acquisition_error,
+            )
+
+    def _compute_laser_channels_needed(self) -> List[str]:
+        """Laser-engine channel keys for the wavelengths this acquisition fires."""
+        if self._laser_engine_service is None:
+            return []
+        illumination_config = self.channelConfigurationManager._illumination_config
+        if illumination_config is None:
+            return []
+        wavelengths = []
+        for cfg in self.selected_configurations:
+            try:
+                w = cfg.get_illumination_wavelength(illumination_config)
+            except Exception:
+                w = None
+            if w is not None:
+                wavelengths.append(w)
+        return self._laser_engine_service.channel_keys_for_wavelengths(wavelengths)
+
+    def _wait_for_laser_engine(self) -> None:
+        """Block until needed channels are ACTIVE. Raises on timeout / disconnect / ERROR.
+
+        Returns silently when an abort is requested — the caller re-checks abort.
+        Publishes LaserEngineWaitingForReady/LaserEngineReady around the wait so the
+        UI can show a cancelable modal.
+        """
+        status = self._laser_engine_service.get_latest_status()
+        if status is not None and status.is_ready_for(self._laser_channels_needed):
+            return
+        self._event_bus.publish(LaserEngineWaitingForReady(channel_keys=list(self._laser_channels_needed)))
+        try:
+            ok = self._laser_engine_service.wait_until_ready(
+                self._laser_channels_needed,
+                timeout_s=self._laser_engine_service.READY_TIMEOUT_S,
+                cancel_fn=self._abort_requested.is_set,
+            )
+        finally:
+            self._event_bus.publish(LaserEngineReady())
+        if not ok:
+            if self._abort_requested.is_set():
+                return
+            channels = ", ".join(self._laser_channels_needed)
+            if self._laser_engine_service.is_connection_lost():
+                raise RuntimeError(
+                    f"Laser engine connection lost while waiting on channel(s) {channels}; aborting acquisition"
+                )
+            raise RuntimeError(
+                f"Laser engine did not reach ready state within timeout "
+                f"while waiting on channel(s) {channels}; aborting acquisition"
             )
 
     def _wait_for_outstanding_callback_images(self) -> None:
