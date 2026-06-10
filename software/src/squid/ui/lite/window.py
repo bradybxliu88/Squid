@@ -215,12 +215,24 @@ class SquidLiteWindow(QMainWindow):
         dot.setObjectName("wordmarkDot")
         wm = QLabel("SQUID LITE")
         wm.setObjectName("wordmark")
-        obj = QLabel(str(self._objective).upper())
-        obj.setObjectName("objBadge")
+        self._obj_combo = QComboBox()
+        self._obj_combo.setObjectName("objCombo")
+        self._obj_combo.setCursor(Qt.PointingHandCursor)
+        self._obj_combo.setToolTip("Objective")
+        try:
+            objectives = list(self._microscope.objective_store.objectives_dict.keys())
+        except Exception:
+            objectives = [self._objective]
+        for name in objectives:
+            self._obj_combo.addItem(str(name).replace("x", "×"), name)
+        idx = self._obj_combo.findData(self._objective)
+        if idx >= 0:
+            self._obj_combo.setCurrentIndex(idx)
+        self._obj_combo.currentIndexChanged.connect(self._on_objective_changed)
         h.addWidget(dot)
         h.addWidget(wm)
         h.addSpacing(2)
-        h.addWidget(obj)
+        h.addWidget(self._obj_combo)
         if self._is_simulation:
             sim = QLabel("SIMULATION")
             sim.setObjectName("simBadge")
@@ -242,18 +254,23 @@ class SquidLiteWindow(QMainWindow):
             grp.addButton(b)
             sh.addWidget(b)
         self._live_tab.setChecked(True)
-        self._live_tab.clicked.connect(lambda: self._stack.setCurrentIndex(0))
-        self._result_tab.clicked.connect(lambda: self._stack.setCurrentIndex(1))
+        self._live_tab.clicked.connect(self._show_live)
+        self._result_tab.clicked.connect(self._show_result)
         h.addWidget(seg)
         h.addStretch(1)
 
-        # global hardware controls: binning (+ gain if supported)
-        h.addWidget(self._field_label("Binning"))
-        h.addWidget(self._binning_combo)
+        # global hardware controls (Live screen only)
+        self._global_controls = QWidget()
+        gc = QHBoxLayout(self._global_controls)
+        gc.setContentsMargins(0, 0, 0, 0)
+        gc.setSpacing(10)
+        gc.addWidget(self._field_label("Binning"))
+        gc.addWidget(self._binning_combo)
         if self._gain_combo is not None:
-            h.addSpacing(6)
-            h.addWidget(self._field_label("Gain"))
-            h.addWidget(self._gain_combo)
+            gc.addSpacing(4)
+            gc.addWidget(self._field_label("Gain"))
+            gc.addWidget(self._gain_combo)
+        h.addWidget(self._global_controls)
         quit_btn = QPushButton("⏻")
         quit_btn.setObjectName("iconBtn")
         quit_btn.setCursor(Qt.PointingHandCursor)
@@ -405,11 +422,19 @@ class SquidLiteWindow(QMainWindow):
             captured.append(CapturedChannel(name, data, self._color_by_name.get(name, "#FFFFFF"), lo, hi))
         self._result_view.set_capture(captured)
         self._result_tab.setChecked(True)
-        self._stack.setCurrentIndex(1)
+        self._show_result()
         self._update_preview()
 
     def _on_capture_failed(self, evt) -> None:
         QMessageBox.warning(self, "Capture failed", evt.reason)
+
+    def _show_live(self) -> None:
+        self._stack.setCurrentIndex(0)
+        self._global_controls.setVisible(True)
+
+    def _show_result(self) -> None:
+        self._stack.setCurrentIndex(1)
+        self._global_controls.setVisible(False)
 
     def _on_binning_changed(self, _idx: int) -> None:
         data = self._binning_combo.currentData()
@@ -421,6 +446,27 @@ class SquidLiteWindow(QMainWindow):
         if data is not None:
             self._global_gain = float(data)
             self._bus.publish(SetAnalogGainCommand(gain=self._global_gain))
+
+    def _on_objective_changed(self, _idx: int) -> None:
+        name = self._obj_combo.currentData()
+        if not name:
+            return
+        try:
+            self._microscope.objective_store.set_current_objective(name)
+        except Exception:
+            self._log_warn("Failed to set objective")
+        self._objective = name
+        self._pixel_size_um = self._compute_pixel_size()
+        self._live_image.set_pixel_size(self._pixel_size_um)
+        active = self._channel_panel.active
+        if active:
+            cfg = self._ccm.get_channel_configuration_by_name(self._objective, active)
+            if cfg is not None:
+                self._channel_controls.set_channel(self._objective, cfg)
+            self._live_image.set_readout(self._readout_text(active))
+
+    def _log_warn(self, msg: str) -> None:
+        _log.warning(msg)
 
     def _compute_pixel_size(self):
         try:

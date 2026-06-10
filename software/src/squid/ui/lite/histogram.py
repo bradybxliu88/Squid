@@ -64,6 +64,14 @@ class LiteHistogram(QWidget):
         w = max(1, self.width())
         return self._data_min + (x / w) * (self._data_max - self._data_min)
 
+    def _handle_positions(self):
+        """On-screen (clamped) x of the low/high handles — for drawing and hit-testing."""
+        edge = 2.0
+        w = float(self.width())
+        xl = min(max(self._x_for_value(self._low), edge), w - edge)
+        xh = min(max(self._x_for_value(self._high), edge), w - edge)
+        return xl, xh
+
     # ---- painting -------------------------------------------------------
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -97,11 +105,8 @@ class LiteHistogram(QWidget):
             p.setBrush(QBrush(grad))
             p.drawPolygon(poly)
 
-        # Clamp handle positions so they're always fully visible, even when a
-        # level sits at (or beyond) the current frame's min/max.
-        edge = 2.0
-        xl = min(max(self._x_for_value(self._low), edge), w - edge)
-        xh = min(max(self._x_for_value(self._high), edge), w - edge)
+        # Clamped (on-screen) handle positions, also used for hit-testing.
+        xl, xh = self._handle_positions()
         # selected window
         p.fillRect(QRectF(xl, 0, max(0.0, xh - xl), h), QColor(255, 255, 255, 14))
         # handles
@@ -117,7 +122,7 @@ class LiteHistogram(QWidget):
     # ---- interaction ----------------------------------------------------
     def mousePressEvent(self, event) -> None:  # noqa: N802
         x = float(event.pos().x())
-        xl, xh = self._x_for_value(self._low), self._x_for_value(self._high)
+        xl, xh = self._handle_positions()
         self._drag = "low" if abs(x - xl) <= abs(x - xh) else "high"
         self._apply(x)
 

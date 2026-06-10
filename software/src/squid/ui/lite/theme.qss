@@ -33,6 +33,12 @@ QLabel#objBadge {
     font-family: "SF Mono", "Menlo", monospace;
     border: 1px solid #2a3447; background-color: #0e131d; border-radius: 3px; padding: 3px 7px;
 }
+QComboBox#objCombo {
+    color: #cdd6e4; font-family: "SF Mono", "Menlo", monospace; font-size: 11px; font-weight: 700;
+    background: #0e131d; border: 1px solid #2a3447; border-radius: 3px;
+    padding: 2px 2px 2px 8px; min-height: 15px;
+}
+QComboBox#objCombo:hover { border-color: #38465f; }
 
 /* ---------- segmented Live / Result ---------- */
 QWidget#segGroup {
