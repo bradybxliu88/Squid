@@ -120,6 +120,24 @@ def build_microscope_addons(
                 sn=_def.XERYON_SERIAL_NUMBER, stage=stage
             )
         )
+    elif _def.USE_OBJECTIVE_TURRET:
+        from squid.backend.drivers.peripherals.objective_turret import (
+            ObjectiveTurret4PosController,
+            ObjectiveTurret4PosController_Simulation,
+        )
+
+        turret_kwargs = dict(
+            serial_number=_def.OBJECTIVE_TURRET_SERIAL_NUMBER,
+            slave_id=_def.OBJECTIVE_TURRET_SLAVE_ID,
+            baudrate=_def.OBJECTIVE_TURRET_BAUDRATE,
+            positions=_def.OBJECTIVE_TURRET_POSITIONS,
+            stage=stage,
+        )
+        objective_changer = (
+            ObjectiveTurret4PosController(**turret_kwargs)
+            if not objective_changer_simulated
+            else ObjectiveTurret4PosController_Simulation(**turret_kwargs)
+        )
 
     camera_focus = None
     if _def.SUPPORT_LASER_AUTOFOCUS:

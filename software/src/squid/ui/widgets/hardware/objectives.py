@@ -9,13 +9,9 @@ from qtpy.QtWidgets import (
     QLabel,
     QComboBox,
     QSizePolicy,
+    QMessageBox,
 )
 
-from _def import (
-    USE_XERYON,
-    XERYON_OBJECTIVE_SWITCHER_POS_1,
-    XERYON_OBJECTIVE_SWITCHER_POS_2,
-)
 from squid.core.events import ObjectiveChanged
 
 if TYPE_CHECKING:
@@ -55,18 +51,23 @@ class ObjectivesWidget(QWidget):
         self.setLayout(layout)
 
     def on_objective_changed(self, objective_name: str) -> None:
+        # Move the hardware first via the unified dispatcher (Xeryon or turret). On an
+        # unknown objective, warn and revert the dropdown to the actual state.
+        if self.objective_changer is not None:
+            try:
+                self.objective_changer.move_to_objective(objective_name)
+            except KeyError as e:
+                QMessageBox.warning(
+                    self,
+                    "Objective Not Available",
+                    f"Objective '{objective_name}' is not configured for the objective changer:\n{e}",
+                )
+                self.dropdown.blockSignals(True)
+                self.dropdown.setCurrentText(self.objectiveStore.current_objective)
+                self.dropdown.blockSignals(False)
+                return
+
         self.objectiveStore.set_current_objective(objective_name)
-        if USE_XERYON and self.objective_changer is not None:
-            if (
-                objective_name in XERYON_OBJECTIVE_SWITCHER_POS_1
-                and self.objective_changer.currentPosition() != 1
-            ):
-                self.objective_changer.moveToPosition1()
-            elif (
-                objective_name in XERYON_OBJECTIVE_SWITCHER_POS_2
-                and self.objective_changer.currentPosition() != 2
-            ):
-                self.objective_changer.moveToPosition2()
 
         # Publish ObjectiveChanged event for simulated camera FOV adjustment
         objective_info = self.objectiveStore.get_current_objective_info()

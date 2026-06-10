@@ -1336,6 +1336,17 @@ class ApplicationContext:
                 except Exception:
                     self._log.exception("Failed to reset objective changer during shutdown")
 
+        # Objective turret: release the serial port and de-energize the motor. Access the
+        # driver directly (the service exposes no close()); this must run independently of
+        # the Xeryon path above.
+        if _def is not None and getattr(_def, "USE_OBJECTIVE_TURRET", False):
+            objective_changer = getattr(self._microscope.addons, "objective_changer", None)
+            if objective_changer is not None:
+                try:
+                    objective_changer.close()
+                except Exception:
+                    self._log.exception("Failed to close objective turret during shutdown")
+
         try:
             self._microscope.low_level_drivers.microcontroller.turn_off_all_pid()
         except Exception:

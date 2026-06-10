@@ -115,6 +115,17 @@ class MicroscopeAddons:
             self.emission_filter_wheel.home()
         if self.piezo_stage:
             self.piezo_stage.home()
+        # Objective turret: home once and move to the default objective. The Xeryon
+        # path is positioned later as a side effect of the objectives widget's initial
+        # selection and is intentionally left unchanged here.
+        if _def.USE_OBJECTIVE_TURRET and self.objective_changer is not None:
+            self.objective_changer.home()
+            try:
+                self.objective_changer.move_to_objective(_def.DEFAULT_OBJECTIVE)
+            except KeyError as e:
+                raise RuntimeError(
+                    f"DEFAULT_OBJECTIVE={_def.DEFAULT_OBJECTIVE!r} is not configured for the objective turret"
+                ) from e
         if self.squid_laser_engine:
             # start() may raise if the USB device is missing — intentional hard fail
             # when USE_SQUID_LASER_ENGINE=True so we don't silently disable it.

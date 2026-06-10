@@ -42,6 +42,7 @@ from _def import (
     SUPPORT_SCIMICROSCOPY_LED_ARRAY,
     USE_JUPYTER_CONSOLE,
     USE_NAPARI_WELL_SELECTION,
+    USE_OBJECTIVE_TURRET,
     USE_PRIOR_STAGE,
     USE_TEMPLATE_MULTIPOINT,
     WELLPLATE_FORMAT,
@@ -394,6 +395,12 @@ class HighContentScreeningGui(QMainWindow):
         filter_action = QAction("Filter Wheels...", self)
         filter_action.triggered.connect(self._open_filter_wheel_config)
         self.settings_menu.addAction(filter_action)
+
+        if USE_OBJECTIVE_TURRET:
+            self.settings_menu.addSeparator()
+            reset_turret_action = QAction("Reset Objective Turret", self)
+            reset_turret_action.triggered.connect(self.resetObjectiveTurret)
+            self.settings_menu.addAction(reset_turret_action)
 
         if USE_JUPYTER_CONSOLE:
             # Create namespace to expose to Jupyter
@@ -1148,6 +1155,28 @@ class HighContentScreeningGui(QMainWindow):
         dialog = FilterWheelConfiguratorDialog(config_repo, self)
         dialog.signal_config_updated.connect(self._on_channel_config_changed)
         dialog.exec_()
+
+    def resetObjectiveTurret(self) -> None:
+        """Clear faults, re-enable the motor, re-home, and rotate back to the current objective."""
+        if self.objective_changer is None:
+            return
+        self.log.info("Resetting objective turret")
+        try:
+            self.objective_changer.clear_alarm()
+            self.objective_changer.enable()
+            # Re-home so the position tracker matches the physical slot: avoids short-circuiting
+            # the rotate in move_to_objective if the tracker is stale from a fault mid-rotation.
+            self.objective_changer.home()
+            current = getattr(self.objectiveStore, "current_objective", None)
+            if current:
+                self.objective_changer.move_to_objective(current)
+        except Exception as exc:
+            self.log.exception("Reset of objective turret failed")
+            QMessageBox.warning(
+                self,
+                "Reset Objective Turret",
+                f"Failed to reset objective turret:\n{exc}",
+            )
 
     def _on_channel_config_changed(self) -> None:
         """Refresh channel configs after dialog save."""

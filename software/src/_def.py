@@ -1302,6 +1302,22 @@ XERYON_OBJECTIVE_SWITCHER_POS_1 = ["4x", "10x"]
 XERYON_OBJECTIVE_SWITCHER_POS_2 = ["20x", "40x", "60x"]
 XERYON_OBJECTIVE_SWITCHER_POS_2_OFFSET_MM = 2
 
+# Motorized 4-position objective turret (NiMotion RS-485 stepper, Modbus-RTU)
+USE_OBJECTIVE_TURRET = False
+OBJECTIVE_TURRET_SERIAL_NUMBER = ""
+OBJECTIVE_TURRET_SLAVE_ID = 1
+OBJECTIVE_TURRET_BAUDRATE = 115200
+# Objective name -> turret slot index (1..4). Override per machine in .ini.
+OBJECTIVE_TURRET_POSITIONS = {"4x": 1, "10x": 2, "20x": 3, "40x": 4}
+
+
+def _validate_objective_changer_flags(use_xeryon: bool, use_turret: bool) -> None:
+    if use_xeryon and use_turret:
+        raise ValueError(
+            "USE_XERYON and USE_OBJECTIVE_TURRET are mutually exclusive " "(set only one to True in the machine .ini)"
+        )
+
+
 # fluidics
 RUN_FLUIDICS = True
 FLUIDICS_CONFIG_PATH = "./merfish_config/MERFISH_config.json"
@@ -1410,6 +1426,9 @@ else:
     else:
         log.error("machine-specific configuration not present, the program will exit")
         sys.exit(1)
+
+# A microscope has exactly one objective changer (turret / Xeryon / manual).
+_validate_objective_changer_flags(USE_XERYON, USE_OBJECTIVE_TURRET)
 
 try:
     with open(CACHE_DIR / "objective_and_sample_format.txt", "r") as f:
