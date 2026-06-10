@@ -71,6 +71,7 @@ from squid.core.events import (
     MoveStageToCommand,
     StopLiveCommand,
     ImageCoordinateClickedCommand,
+    ImageScrollZCommand,
     ClickToMoveEnabledChanged,
     WellplateFormatChanged,
     AcquisitionStateChanged,
@@ -991,6 +992,9 @@ class HighContentScreeningGui(QMainWindow):
                         from_napari=False,
                     )
                 )
+            )
+            self.imageDisplayWindow.signal_z_um_delta.connect(
+                lambda delta_um: self._ui_event_bus.publish(ImageScrollZCommand(delta_um=delta_um))
             )
 
         if not self.live_only_mode:

@@ -12,7 +12,7 @@ import numpy as np
 os.environ["QT_API"] = "pyqt5"
 import pyqtgraph as pg
 import scipy.ndimage
-from qtpy.QtCore import QObject, Qt, Signal
+from qtpy.QtCore import QEvent, QObject, Qt, Signal
 from qtpy.QtGui import QCursor
 from qtpy.QtWidgets import (
     QApplication,
@@ -26,6 +26,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+import _def
 from _def import SpotDetectionMode
 from squid.core.config.feature_flags import get_feature_flags
 from squid.backend.managers import ContrastManager
@@ -102,6 +103,7 @@ class ImageDisplay(QObject):
 
 class ImageDisplayWindow(QMainWindow):
     image_click_coordinates = Signal(int, int, int, int)
+    signal_z_um_delta = Signal(float)
 
     def __init__(
         self,
@@ -273,6 +275,14 @@ class ImageDisplayWindow(QMainWindow):
             image_layout.addWidget(self.graphics_widget)
         self.image_container.setLayout(image_layout)
 
+        # Wheel events arrive at the QGraphicsView's viewport; in show_LUT mode the
+        # graphics view is nested inside pg.ImageView's auto-generated UI.
+        if self.show_LUT:
+            graphics_view = self.graphics_widget.view.ui.graphicsView
+        else:
+            graphics_view = self.graphics_widget
+        graphics_view.viewport().installEventFilter(self)
+
         # Create line profiler widget
         self.line_profiler_widget: Any = pg.GraphicsLayoutWidget()
         self.line_profiler_plot: Any = self.line_profiler_widget.addPlot()
@@ -399,6 +409,24 @@ class ImageDisplayWindow(QMainWindow):
         if self.start_point_marker is not None:
             view.removeItem(self.start_point_marker)
             self.start_point_marker = None
+
+    def eventFilter(self, source: Any, event: Any) -> bool:
+        """Ctrl+Scroll → Z step, Ctrl+Shift+Scroll → fast Z step.
+
+        Plain scroll falls through to pyqtgraph's zoom. Z deltas are emitted as
+        a µm value; the controller applies gating (click-to-move) and clamping.
+        """
+        if event.type() == QEvent.Wheel and (event.modifiers() & Qt.ControlModifier):
+            notches = event.angleDelta().y() / 120.0
+            if notches == 0:
+                return True
+            # Read via the module so runtime updates of the constant are picked up.
+            step_um = (
+                _def.LIVE_VIEW_Z_STEP_FAST_UM if (event.modifiers() & Qt.ShiftModifier) else _def.LIVE_VIEW_Z_STEP_UM
+            )
+            self.signal_z_um_delta.emit(notches * step_um)
+            return True
+        return super().eventFilter(source, event)
 
     def create_line_roi(self) -> None:
         """Create a line ROI for intensity profiling."""

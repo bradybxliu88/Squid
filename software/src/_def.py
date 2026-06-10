@@ -1132,6 +1132,10 @@ SCIMICROSCOPY_LED_ARRAY_TURN_ON_DELAY = (
 
 # Navigation Settings
 ENABLE_CLICK_TO_MOVE_BY_DEFAULT = True
+# Live-view Z navigation: Ctrl+Scroll steps by LIVE_VIEW_Z_STEP_UM,
+# Ctrl+Shift+Scroll by LIVE_VIEW_Z_STEP_FAST_UM (both µm per wheel notch).
+LIVE_VIEW_Z_STEP_UM = 5.0
+LIVE_VIEW_Z_STEP_FAST_UM = 40.0
 
 # Stitcher
 IS_HCS = False

@@ -2307,6 +2307,17 @@ class ImageCoordinateClickedCommand(Event):
 
 
 @dataclass
+class ImageScrollZCommand(Event):
+    """Command from UI when the user Ctrl+Scrolls over the live image to step Z.
+
+    The ImageClickController subscribes to this and moves Z by delta_um, gated on
+    click-to-move and clamped to the software Z limits.
+    """
+
+    delta_um: float  # Signed Z step in micrometers
+
+
+@dataclass
 class ClearScanCoordinatesCommand(Event):
     """Command to clear all scan coordinate regions.
 
