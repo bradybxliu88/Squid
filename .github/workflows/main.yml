@@ -36,6 +36,14 @@ jobs:
       - name: "Copy a valid config into the repo software root"
         run: cp configurations/configuration_Squid+.ini .
         working-directory: ./software
+      - name: "Populate illumination_channel_config from .example template"
+        # illumination_channel_config.yaml is gitignored but required for
+        # default-profile config generation (ensure_default_configs raises
+        # without it, and CI starts with no user_profiles/). Other
+        # machine_configs templates are intentionally not copied to avoid
+        # activating optional hardware paths (e.g. confocal, multi-camera).
+        run: cp machine_configs/illumination_channel_config.yaml.example machine_configs/illumination_channel_config.yaml
+        working-directory: ./software
       # For more on the headless qt prep, see here: https://pytest-qt.readthedocs.io/en/latest/troubleshooting.html#github-actions-azure-pipelines-travis-ci-and-gitlab-ci-cd
       - name: "Prep for headless qt tests."
         run: |

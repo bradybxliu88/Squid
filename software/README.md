@@ -267,3 +267,22 @@ git submodule update
 ```
 
 </details>
+
+## Updating an existing install
+`machine_configs/filter_wheels.yaml` and
+`machine_configs/illumination_channel_config.yaml` were tracked in older
+revisions and are now gitignored (they are per-machine). A `git pull` that
+crosses the untrack commit will delete any unmodified local copy. If yours
+were deleted, restore the last tracked versions from git history (run from
+the repo root):
+
+```bash
+git restore --source=061db6ea^ -- \
+  software/machine_configs/filter_wheels.yaml \
+  software/machine_configs/illumination_channel_config.yaml
+```
+
+The restored content is the last version that was in git, not your personal
+machine settings — re-apply local edits afterward. `git restore --source`
+updates the working tree only, so the files stay gitignored and `git status`
+stays clean. `.example` templates for both files are tracked alongside them.
