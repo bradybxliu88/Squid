@@ -1,43 +1,64 @@
-"""Channel list: include-in-capture checkboxes + active-channel selection."""
+"""Channel list: compact chips with an include-in-capture checkbox + active select."""
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Set
 
-from qtpy.QtCore import Signal
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QLabel
+from qtpy.QtCore import Qt, Signal
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel
+
+
+def _color_dot(color_hex: str) -> QLabel:
+    dot = QLabel()
+    dot.setFixedSize(11, 11)
+    dot.setStyleSheet(f"background-color: {color_hex}; border-radius: 5px;")
+    return dot
 
 
 class ChannelRow(QWidget):
+    """One compact channel chip. Click the chip to make it active; check to include."""
+
     activated = Signal(str)
     include_toggled = Signal(str, bool)
 
     def __init__(self, name: str, color_hex: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._name = name
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        self._include = QCheckBox()
-        self._include.toggled.connect(lambda on: self.include_toggled.emit(self._name, on))
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {color_hex}; font-size: 16px;")
-        self._select = QPushButton(name)
-        self._select.setFlat(True)
-        self._select.clicked.connect(lambda: self.activated.emit(self._name))
+        self.setObjectName("channelChip")
+        self.setProperty("active", False)
+        self.setCursor(Qt.PointingHandCursor)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(11, 7, 12, 7)
+        lay.setSpacing(10)
+
+        self._check = QCheckBox()
+        self._check.setCursor(Qt.PointingHandCursor)
+        self._check.toggled.connect(lambda on: self.include_toggled.emit(self._name, on))
+        self._name_lbl = QLabel(name)
+        self._name_lbl.setObjectName("chipName")
         self._live = QLabel("")
         self._live.setObjectName("liveFlag")
-        layout.addWidget(self._include)
-        layout.addWidget(dot)
-        layout.addWidget(self._select, stretch=1)
-        layout.addWidget(self._live)
+
+        lay.addWidget(self._check)
+        lay.addWidget(_color_dot(color_hex))
+        lay.addWidget(self._name_lbl, 1)
+        lay.addWidget(self._live)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.activated.emit(self._name)
+        super().mousePressEvent(event)
 
     def set_active(self, active: bool) -> None:
-        self._live.setText("● live" if active else "")
+        self._live.setText("●" if active else "")
         self.setProperty("active", active)
         self.style().unpolish(self)
         self.style().polish(self)
 
 
 class ChannelPanel(QWidget):
+    """List of channel chips; manages the active channel + the capture set."""
+
     active_changed = Signal(str)
     capture_set_changed = Signal(set)
 
@@ -46,15 +67,16 @@ class ChannelPanel(QWidget):
         self._rows: Dict[str, ChannelRow] = {}
         self._included: Set[str] = set()
         self._active: Optional[str] = None
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Channels"))
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
         for ch in channels:
             row = ChannelRow(ch["name"], ch["color"])
             row.activated.connect(self._on_activate)
             row.include_toggled.connect(self._on_include)
-            layout.addWidget(row)
+            lay.addWidget(row)
             self._rows[ch["name"]] = row
-        layout.addStretch(1)
 
     def _on_activate(self, name: str) -> None:
         self._active = name
