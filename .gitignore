@@ -4,3 +4,6 @@
 **/.idea/
 .migration_complete
 software/tests/e2e/configs/outputs/
+
+# Machine-specific configs (.example templates are not matched by *.yaml)
+software/machine_configs/*.yaml
