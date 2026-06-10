@@ -18,14 +18,26 @@
 - [x] `core/utils/hardware_utils.serialize_for_yaml`
 - [x] Verified: 39 new pass; existing mosaic-worker + downsampled-view tests (47) still pass
 
-### Step 2 — TODO (approach B: kill plate IPC, keep two tabs OR wire unified widget)
-- [ ] Construct + dispatch `MosaicTileUpdate` from `multi_point_worker` per tile (well_origin_mm from scan plan)
-- [ ] Feed plate mode in-GUI from the per-tile path
-- [ ] Remove `DownsampledViewJob`/`DownsampledViewResult` (job_processing.py), `WellTileAccumulator`/`DownsampledViewManager` (downsampled_views.py)
-- [ ] Remove worker plate plumbing (`_initialize_downsampled_view_manager`, `_process_downsampled_view_result`, `get_plate_view`, job enqueue)
-- [ ] Wire `main_window` to use `UnifiedMosaicWidget` under the flag (or replace both tabs)
-- [ ] Remove now-dead events (`PlateViewInit`/`PlateViewUpdate`) and tests; port `_def` VIEWS changes
-- [ ] Verify with GUI acquisition runs (needs hardware/GUI QA env)
+### Step 2a — DONE (`236ef801`, in-GUI feed wired under flag, IPC bypassed not deleted)
+- [x] Construct + dispatch `MosaicTileUpdate` from `main_window._on_stream_capture_mosaic` per tile
+      (x/y from `CaptureInfo.position`, well_id from `region_id`, well_origin_mm from cached PlateViewInit)
+- [x] `multi_point_worker`: emit `PlateViewInit` with `well_ids` + per-well origins; skip `DownsampledViewJob` when flag on
+- [x] `multi_point_controller`: emit downsampled-view init (PlateViewInit) when unified flag on
+- [x] `events.PlateViewInit`: add `well_ids` + `well_origins_mm` (defaults empty)
+- [x] `main_window`: flag-gated `UnifiedMosaicWidget` tab; setPlateLayout on PlateViewInit; clear + well/fov-click signals; close on exit
+- [x] Export `UnifiedMosaicWidget`; widget fed in-GUI for both modes
+- [x] Verified: flag-off regression identical (23 pre-existing failures unchanged); core acquisition tests pass
+
+### Step 2b — TODO (post-GUI-QA cleanup; needs on-hardware QA first)
+- [ ] **On-hardware/GUI QA** of the flag-on path (mosaic fill, plate fill, mode toggle, save) — REQUIRED before deletion
+- [ ] Wire manual-ROI shape drawing (`enable_shape_drawing`/`signal_shape_drawn`) + click-to-move (`signal_coordinates_clicked`) for the unified widget
+- [ ] After QA: flip `USE_UNIFIED_MOSAIC_VIEW` default on (or remove flag); remove `napari_plate_view.py`
+- [ ] Remove `DownsampledViewJob`/`DownsampledViewResult` (job_processing.py), `WellTileAccumulator`/`DownsampledViewManager` (downsampled_views.py), worker plate plumbing, `PlateViewUpdate` event + dead tests
+- [ ] Update `test_multipoint_scenarios.py` (drop PlateViewUpdate), delete `test_downsampled_views.py`/`test_job_processing_downsampled.py`
+
+**Note:** physical deletion deferred deliberately — removing the working IPC plate pipeline before
+the in-GUI replacement is verified on real hardware would leave no plate view if anything is off.
+The flag keeps both paths available; the IPC code is dead only when the flag is on.
 
 Upstream stat: 27 files, +2157 / −5580. Replaces `NapariMosaicDisplayWidget` +
 `NapariPlateViewWidget` + the IPC "downsampled view" subprocess pipeline with one

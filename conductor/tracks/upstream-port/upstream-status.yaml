@@ -1051,7 +1051,7 @@ commits:
   3bcdca38:
     title: 'feat: unify Mosaic + Plate View into single UnifiedMosaicWidget (#530)'
     status: in-progress
-    ported_in: f000bee3
+    ported_in: 236ef801
     ported_date: '2026-06-10'
-    analysis_file: commits/40-f000bee3-unified-mosaic-part1.md
-    notes: 'PARTIAL (step 1/2). Step 1 done in f000bee3: mosaic_utils.py + UnifiedMosaicWidget (flag USE_UNIFIED_MOSAIC_VIEW, default off) + MosaicTileUpdate + serialize_for_yaml + tests; additive, no removal. Step 2 (follow-up, approach B): remove DownsampledViewJob/WellTileAccumulator/DownsampledViewManager subprocess plate pipeline and rewire multi_point_worker to feed the unified widget in-GUI. arch_v2 already downsamples the mosaic in-GUI, so step 2 targets the plate-view IPC path. Plan 2026-06-10-unified-mosaic.md.'
+    analysis_file: commits/41-236ef801-unified-mosaic-part2a.md
+    notes: 'PARTIAL (steps 1 + 2a done; 2b pending GUI QA). Step 1 (f000bee3): mosaic_utils.py + UnifiedMosaicWidget (flag USE_UNIFIED_MOSAIC_VIEW, default off) + MosaicTileUpdate + serialize_for_yaml + tests. Step 2a (236ef801): wire the unified widget in-GUI under the flag — main_window builds MosaicTileUpdate per tile + setPlateLayout from PlateViewInit (extended with well_ids + per-well origins); worker skips DownsampledViewJob when flag on; controller emits PlateViewInit for unified mode. IPC plate pipeline BYPASSED (flag on) but NOT deleted — physical removal + manual-ROI/click-to-move wiring deferred to step 2b after on-hardware GUI QA (removing the working fallback before the in-GUI path is hardware-verified would leave no plate view if broken). flag-off default fully intact (regression verified identical). Plan 2026-06-10-unified-mosaic.md.'
