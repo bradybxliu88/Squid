@@ -1050,4 +1050,8 @@ commits:
     notes: 'Adapted to arch_v2 EventBus (ImageClickController + new ImageScrollZCommand). Kept ENABLE_CLICK_TO_MOVE_BY_DEFAULT name; omitted preferences Z-step UI (constants are .ini-configurable).'
   3bcdca38:
     title: 'feat: unify Mosaic + Plate View into single UnifiedMosaicWidget (#530)'
-    status: pending
+    status: in-progress
+    ported_in: f000bee3
+    ported_date: '2026-06-10'
+    analysis_file: commits/40-f000bee3-unified-mosaic-part1.md
+    notes: 'PARTIAL (step 1/2). Step 1 done in f000bee3: mosaic_utils.py + UnifiedMosaicWidget (flag USE_UNIFIED_MOSAIC_VIEW, default off) + MosaicTileUpdate + serialize_for_yaml + tests; additive, no removal. Step 2 (follow-up, approach B): remove DownsampledViewJob/WellTileAccumulator/DownsampledViewManager subprocess plate pipeline and rewire multi_point_worker to feed the unified widget in-GUI. arch_v2 already downsamples the mosaic in-GUI, so step 2 targets the plate-view IPC path. Plan 2026-06-10-unified-mosaic.md.'
