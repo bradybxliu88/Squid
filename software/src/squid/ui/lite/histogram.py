@@ -71,6 +71,15 @@ class LiteHistogram(QWidget):
         w, h = self.width(), self.height()
         p.fillRect(self.rect(), _BG)
 
+        # Empty state: faint baseline + hint, no floating handles.
+        if self._counts is None:
+            p.setPen(QPen(QColor(40, 49, 70), 1))
+            p.drawLine(QPointF(8, h - 5), QPointF(w - 8, h - 5))
+            p.setPen(QColor(74, 84, 102))
+            p.drawText(self.rect(), Qt.AlignCenter, "no signal")
+            p.end()
+            return
+
         if self._counts is not None and float(self._counts.max()) > 0:
             n = len(self._counts)
             cmax = float(self._counts.max())

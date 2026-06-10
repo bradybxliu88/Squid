@@ -65,6 +65,11 @@ class ChannelControls(QWidget):
         self._exposure.valueChanged.connect(self._on_exposure)
         self._gain.valueChanged.connect(self._on_gain)
         self._intensity.valueChanged.connect(self._on_intensity)
+        self._set_controls_enabled(False)
+
+    def _set_controls_enabled(self, on: bool) -> None:
+        for wdg in (self._exposure, self._gain, self._intensity, self._auto):
+            wdg.setEnabled(on)
 
     # ---- builders -------------------------------------------------------
     def _spin(self, lo: float, hi: float) -> QDoubleSpinBox:
@@ -98,6 +103,7 @@ class ChannelControls(QWidget):
         self._channel = channel_config.name
         self._illum_source = channel_config.illumination_source
         self._title.setText(channel_config.name)
+        self._set_controls_enabled(True)
         for spin, val in ((self._exposure, channel_config.exposure_time),
                           (self._gain, channel_config.analog_gain),
                           (self._intensity, channel_config.illumination_intensity)):

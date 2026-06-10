@@ -79,6 +79,9 @@ QWidget#channelChip[active="true"] {
 
 /* ---------- live image frame ---------- */
 QWidget#imageFrame { background-color: #05070a; border: 1px solid #1a2233; border-radius: 4px; }
+QLabel#livePlaceholder { background: transparent; }
+QDoubleSpinBox:disabled { color: #3a4456; background-color: #0c111a; border-color: #1c2333; }
+QPushButton#miniBtn:disabled { color: #3a4456; border-color: #1c2333; }
 QLabel#chipName { font-size: 12px; font-weight: 500; color: #d4dcea; }
 QWidget#channelChip[active="true"] QLabel#chipName { color: #e6ecf5; }
 QLabel#liveFlag { color: #2dd4bf; font-size: 9px; font-weight: 800; letter-spacing: 1px; }
