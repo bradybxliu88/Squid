@@ -22,11 +22,11 @@ QWidget#topBar {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0f141e, stop:1 #0a0d14);
     border-bottom: 1px solid #1c2433;
 }
-QLabel#wordmark { font-size: 15px; font-weight: 700; letter-spacing: 3px; color: #eef3fa; }
+QLabel#wordmark { font-size: 13px; font-weight: 700; letter-spacing: 2.5px; color: #eef3fa; }
 QLabel#wordmarkDot { color: #2dd4bf; font-size: 14px; }
 QLabel#simBadge {
     color: #f0b429; font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
-    border: 1px solid #4a3a12; background-color: #1f1908; border-radius: 3px; padding: 3px 7px;
+    border: 1px solid #4a3a12; background-color: #1f1908; border-radius: 3px; padding: 2px 6px;
 }
 QLabel#objBadge {
     color: #9aa6bb; font-size: 10px; font-weight: 700; letter-spacing: 1px;
@@ -46,7 +46,7 @@ QWidget#segGroup {
 }
 QPushButton#segTab {
     background-color: transparent; color: #8893a8; border: none; border-radius: 4px;
-    padding: 6px 17px; font-weight: 600; font-size: 12px; min-height: 16px;
+    padding: 4px 15px; font-weight: 600; font-size: 12px; min-height: 15px;
 }
 QPushButton#segTab:hover { color: #e6ecf5; }
 QPushButton#segTab:checked {
@@ -134,6 +134,10 @@ QComboBox QAbstractItemView {
     background-color: #131a27; border: 1px solid #283146; border-radius: 4px;
     selection-background-color: #103029; selection-color: #2dd4bf; outline: none; padding: 3px;
 }
+QComboBox QAbstractItemView::item {
+    min-height: 22px; padding: 3px 12px; color: #cdd6e4; border: none;
+}
+QComboBox QAbstractItemView::item:selected { background-color: #103029; color: #2dd4bf; }
 
 QPushButton#miniBtn {
     background-color: transparent; border: 1px solid #283146; color: #8893a8;

@@ -206,10 +206,10 @@ class SquidLiteWindow(QMainWindow):
     def _build_top_bar(self) -> QWidget:
         bar = QWidget()
         bar.setObjectName("topBar")
-        bar.setFixedHeight(52)
+        bar.setFixedHeight(44)
         h = QHBoxLayout(bar)
-        h.setContentsMargins(18, 0, 14, 0)
-        h.setSpacing(10)
+        h.setContentsMargins(16, 0, 12, 0)
+        h.setSpacing(9)
 
         dot = QLabel("◆")
         dot.setObjectName("wordmarkDot")
@@ -254,31 +254,32 @@ class SquidLiteWindow(QMainWindow):
             grp.addButton(b)
             sh.addWidget(b)
         self._live_tab.setChecked(True)
-        self._live_tab.clicked.connect(self._show_live)
-        self._result_tab.clicked.connect(self._show_result)
+        self._live_tab.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        self._result_tab.clicked.connect(lambda: self._stack.setCurrentIndex(1))
         h.addWidget(seg)
         h.addStretch(1)
 
-        # global hardware controls (Live screen only)
-        self._global_controls = QWidget()
-        gc = QHBoxLayout(self._global_controls)
-        gc.setContentsMargins(0, 0, 0, 0)
-        gc.setSpacing(10)
-        gc.addWidget(self._field_label("Binning"))
-        gc.addWidget(self._binning_combo)
-        if self._gain_combo is not None:
-            gc.addSpacing(4)
-            gc.addWidget(self._field_label("Gain"))
-            gc.addWidget(self._gain_combo)
-        h.addWidget(self._global_controls)
         quit_btn = QPushButton("⏻")
         quit_btn.setObjectName("iconBtn")
         quit_btn.setCursor(Qt.PointingHandCursor)
         quit_btn.setToolTip("Quit  ⌘Q")
         quit_btn.clicked.connect(self._quit)
-        h.addSpacing(6)
         h.addWidget(quit_btn)
         return bar
+
+    def _build_global_row(self) -> QWidget:
+        """Global camera settings (binning + gain), shown in the live rail."""
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(7)
+        lay.addWidget(self._field_label("Binning"))
+        lay.addWidget(self._binning_combo, 1)
+        if self._gain_combo is not None:
+            lay.addSpacing(6)
+            lay.addWidget(self._field_label("Gain"))
+            lay.addWidget(self._gain_combo, 1)
+        return w
 
     def _build_rail(self) -> QScrollArea:
         inner = QWidget()
@@ -286,6 +287,7 @@ class SquidLiteWindow(QMainWindow):
         v.setContentsMargins(14, 12, 14, 14)
         v.setSpacing(9)
         v.addWidget(self._live_toggle)
+        v.addWidget(self._build_global_row())
         v.addWidget(self._divider())
         v.addWidget(self._section("CHANNELS"))
         v.addWidget(self._channel_panel)
@@ -422,19 +424,11 @@ class SquidLiteWindow(QMainWindow):
             captured.append(CapturedChannel(name, data, self._color_by_name.get(name, "#FFFFFF"), lo, hi))
         self._result_view.set_capture(captured)
         self._result_tab.setChecked(True)
-        self._show_result()
+        self._stack.setCurrentIndex(1)
         self._update_preview()
 
     def _on_capture_failed(self, evt) -> None:
         QMessageBox.warning(self, "Capture failed", evt.reason)
-
-    def _show_live(self) -> None:
-        self._stack.setCurrentIndex(0)
-        self._global_controls.setVisible(True)
-
-    def _show_result(self) -> None:
-        self._stack.setCurrentIndex(1)
-        self._global_controls.setVisible(False)
 
     def _on_binning_changed(self, _idx: int) -> None:
         data = self._binning_combo.currentData()
