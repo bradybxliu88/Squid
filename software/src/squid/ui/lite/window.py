@@ -7,13 +7,14 @@ from typing import TYPE_CHECKING
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QStackedWidget,
-    QPushButton, QButtonGroup, QMessageBox,
+    QPushButton, QButtonGroup, QMessageBox, QComboBox, QLabel,
 )
 
 import squid.core.logging
 from squid.core.events import (
     SetMicroscopeModeCommand, StartLiveCommand,
     CaptureMultichannelCommand, CaptureCompleted, CaptureFailed,
+    SetBinningCommand,
 )
 from squid.ui.qt_stream_handler import QtStreamHandler
 from squid.ui.lite.save_bar import SaveBar
@@ -60,6 +61,7 @@ class SquidLiteWindow(QMainWindow):
         self._channel_controls.attach_image_item(self._live_image.image_item)
         self._result_view = ResultView()
         self._capture_btn = QPushButton("📷 Capture 0")
+        self._binning_combo = self._build_binning_combo()
 
         self._qt_stream = QtStreamHandler(handler=controllers.stream_handler)
         self._qt_stream.image_to_display.connect(self._live_image.update_frame)
@@ -106,6 +108,8 @@ class SquidLiteWindow(QMainWindow):
         tlay.addWidget(self._live_tab)
         tlay.addWidget(self._result_tab)
         tlay.addStretch(1)
+        tlay.addWidget(QLabel("Binning"))
+        tlay.addWidget(self._binning_combo)
 
         central = QWidget()
         clay = QVBoxLayout(central)
@@ -149,3 +153,34 @@ class SquidLiteWindow(QMainWindow):
 
     def _on_capture_failed(self, evt) -> None:
         QMessageBox.warning(self, "Capture failed", evt.reason)
+
+    def _build_binning_combo(self) -> QComboBox:
+        combo = QComboBox()
+        cam = self._services.get("camera")
+        options = []
+        try:
+            options = list(cam.get_binning_options()) if cam is not None else []
+        except Exception:
+            options = []
+        if not options:
+            options = [(1, 1)]
+        current = None
+        try:
+            current = tuple(cam.get_binning()) if cam is not None else None
+        except Exception:
+            current = None
+        for opt in options:
+            bx, by = int(opt[0]), int(opt[1])
+            combo.addItem(f"{bx}×{by}", (bx, by))
+        if current is not None:
+            idx = combo.findData((int(current[0]), int(current[1])))
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        # Connect after population + setCurrentIndex to avoid spurious publish
+        combo.currentIndexChanged.connect(self._on_binning_changed)
+        return combo
+
+    def _on_binning_changed(self, _idx: int) -> None:
+        data = self._binning_combo.currentData()
+        if data is not None:
+            self._bus.publish(SetBinningCommand(binning_x=int(data[0]), binning_y=int(data[1])))
