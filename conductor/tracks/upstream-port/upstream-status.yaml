@@ -988,10 +988,10 @@ commits:
   603c0ad3:
     title: 'feat: Squid laser engine — status polling, GUI tab, acquisition gating (#536)'
     status: in-progress
-    ported_in: 5c8bb3ae
+    ported_in: c0d4eab3
     ported_date: '2026-06-09'
     analysis_file: plans/2026-06-09-squid-laser-engine.md
-    notes: 'Parts 1 & 2 done (6df218f8 driver+sim+41 tests; 5c8bb3ae service+GUI tab+addons wiring+10 tests). Engine is built/visible/controllable behind USE_SQUID_LASER_ENGINE. Part 3 TODO: LiveController warn + MultiPointWorker per-timepoint acquisition gate (needs DI plumbing of LaserEngineService through AcquisitionDependencies — acquisition-critical). See plan.'
+    notes: 'Functionally complete across 4 commits: 6df218f8 (driver+sim), 5c8bb3ae (service+GUI tab+addons), 4da055b6 (acquisition gate, DI-plumbed through AcquisitionDependencies), c0d4eab3 (acquisition modal). 65 tests (driver 41, service 6, widget 4, gate 7 + helpers). Engine built/visible/controllable behind USE_SQUID_LASER_ENGINE; acquisition gates on readiness (abortable + modal). REMAINING (low priority): LiveController warn-only check at start_live — needs illumination-config plumbed into LiveController; minor convenience. See plan part 3c.'
   beaf48cc:
     title: 'fix: fall back to per-iris defaults when channel has no confocal_hardware_settings (#537)'
     status: skipped
