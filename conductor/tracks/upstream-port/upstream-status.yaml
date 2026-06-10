@@ -999,7 +999,11 @@ commits:
     analysis_file: commits/32-a8039815-config-and-small-fixes.md
   9bee0201:
     title: 'feat: live view click-to-move fix and Ctrl+Scroll Z navigation (#532)'
-    status: pending
+    status: ported
+    ported_in: 278b9fc8
+    ported_date: '2026-06-09'
+    analysis_file: commits/35-278b9fc8-clicktomove-zscroll.md
+    notes: 'Adapted to arch_v2 EventBus (ImageClickController + new ImageScrollZCommand). Kept ENABLE_CLICK_TO_MOVE_BY_DEFAULT name; omitted preferences Z-step UI (constants are .ini-configurable).'
   3bcdca38:
     title: 'feat: unify Mosaic + Plate View into single UnifiedMosaicWidget (#530)'
     status: pending
