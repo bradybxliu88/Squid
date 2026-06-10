@@ -28,9 +28,9 @@
 - [x] Export `UnifiedMosaicWidget`; widget fed in-GUI for both modes
 - [x] Verified: flag-off regression identical (23 pre-existing failures unchanged); core acquisition tests pass
 
-### Step 2b — TODO (post-GUI-QA cleanup; needs on-hardware QA first)
-- [ ] **On-hardware/GUI QA** of the flag-on path (mosaic fill, plate fill, mode toggle, save) — REQUIRED before deletion
-- [ ] Wire manual-ROI shape drawing (`enable_shape_drawing`/`signal_shape_drawn`) + click-to-move (`signal_coordinates_clicked`) for the unified widget
+### Step 2b — partial done; rest is post-GUI-QA cleanup
+- [x] Wire manual-ROI shape drawing (`enable_shape_drawing`/`signal_shape_drawn`) + click-to-move (`signal_coordinates_clicked`) for the unified widget (`033447ab`)
+- [ ] **On-hardware/GUI QA** of the flag-on path (mosaic fill, plate fill, mode toggle, save, manual ROI, click-to-move) — REQUIRED before deletion
 - [ ] After QA: flip `USE_UNIFIED_MOSAIC_VIEW` default on (or remove flag); remove `napari_plate_view.py`
 - [ ] Remove `DownsampledViewJob`/`DownsampledViewResult` (job_processing.py), `WellTileAccumulator`/`DownsampledViewManager` (downsampled_views.py), worker plate plumbing, `PlateViewUpdate` event + dead tests
 - [ ] Update `test_multipoint_scenarios.py` (drop PlateViewUpdate), delete `test_downsampled_views.py`/`test_job_processing_downsampled.py`
