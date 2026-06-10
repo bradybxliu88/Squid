@@ -922,7 +922,11 @@ commits:
     status: pending
   19b883eb:
     title: 'fix(firmware): close strobe ISR race that leaves old channel HIGH on switch (#549)'
-    status: pending
+    status: skipped
+    skip_reason: deferred
+    skip_justification: 'Real bug, CONFIRMED present in arch_v2 ISR_strobeTimer (illumination, not filter-wheel — old laser/LED stays HIGH when channel switched mid-strobe during HW-triggered acquisition). Deferred: requires firmware C++ changes that cannot be compiled (no PlatformIO) or hardware-tested (no Teensy) in the dev env, and the upstream helper-extraction/default-fallback depend on multi-port illumination infra arch_v2 firmware lacks (no illumination_source_to_port_index / turn_off_all_ports / NUM_ILLUMINATION_PORTS; no FIRMWARE_VERSION defines). Core strobe_active_source latch is portable to arch_v2''s older model. See plans/2026-06-09-firmware-correctness-deferred.md.'
+    skip_date: '2026-06-09'
+    analysis_file: plans/2026-06-09-firmware-correctness-deferred.md
   9c8556db:
     title: 'docs: document how to restore machine configs after PR #546 pull (#550)'
     status: pending
@@ -955,7 +959,11 @@ commits:
     status: pending
   f2a2cef0:
     title: 'fix: firmware reports failed moves; filter wheel uses absolute moveto (#540)'
-    status: pending
+    status: skipped
+    skip_reason: deferred
+    skip_justification: 'Real bug, CONFIRMED present in arch_v2 callback_move_to_w (failed/early-return W move falsely reports COMPLETED_WITHOUT_ERRORS -> off-by-one filter-wheel desync, no W encoder to catch it). Deferred: firmware C++ refactor of all-axis move callbacks + serial status path, unbuildable (no PlatformIO) / untestable (no Teensy) here; host absolute-moveto rewrite needs MOVETO_W2 which arch_v2 firmware lacks. User does not use a filter wheel (2026-06-09), so low priority. See plans/2026-06-09-firmware-correctness-deferred.md.'
+    skip_date: '2026-06-09'
+    analysis_file: plans/2026-06-09-firmware-correctness-deferred.md
   fae3aa0a:
     title: 'config: migrate filter_controller_enable to USE_EMISSION_FILTER_WHEEL (#543)'
     status: ported
