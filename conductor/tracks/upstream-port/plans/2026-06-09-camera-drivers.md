@@ -1,12 +1,13 @@
 # Camera Drivers (Suite E)
 
-**Status:** IN-PROGRESS (cf4bba2a ported in 47ef3027; a894eda5 pending separate analysis)
+**Status:** COMPLETED (cf4bba2a → 47ef3027; a894eda5 → 4658668d)
 **Started:** 2026-06-09
+**Completed:** 2026-06-09
 
 ## Upstream Commits
 
 - [x] `cf4bba2a` - feat(tucsen): callback-based frame delivery (TUCAM_Buf_DataCallBack) (#552) — ported 47ef3027
-- [ ] `a894eda5` - fix: legacy RecordingWidget + Toupcam continuous-mode FPS + Live illumination (#535) — SEPARATE ANALYSIS
+- [x] `a894eda5` - fix: legacy RecordingWidget + Toupcam continuous-mode FPS + Live illumination (#535) — ported 4658668d (all 3 parts; Toupcam debug instrumentation omitted)
 
 ## cf4bba2a — Tucsen callback frame delivery
 

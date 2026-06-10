@@ -922,7 +922,11 @@ commits:
     analysis_file: commits/33-47ef3027-tucsen-callback.md
   a894eda5:
     title: 'fix: legacy RecordingWidget + Toupcam continuous-mode FPS + Live illumination (#535)'
-    status: pending
+    status: ported
+    ported_in: 4658668d
+    ported_date: '2026-06-09'
+    analysis_file: commits/34-4658668d-recording-imagesaver-toupcam.md
+    notes: 'Recording was broken in arch_v2 (base_path_is_set never flipped). Omits upstream per-frame timing / startup-option-dump debug instrumentation (untestable hot-path overhead + SKU-constant risk); the FPS fix (AutoExpoEnable + framerate fallback) is complete.'
   19b883eb:
     title: 'fix(firmware): close strobe ISR race that leaves old channel HIGH on switch (#549)'
     status: skipped
