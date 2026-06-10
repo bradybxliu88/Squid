@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from squid.backend.controllers.workflow_runner import WorkflowRunnerController
     from squid.core.abc import AbstractFluidicsController
     from squid.backend.controllers.snap_controller import SnapController
+    from squid.ui.lite.window import SquidLiteWindow
 
 
 @dataclass
@@ -1198,6 +1199,20 @@ class ApplicationContext:
         )
         self._gui = gui
         self._log.info("GUI created successfully")
+        return gui
+
+    def create_lite_gui(self) -> "SquidLiteWindow":
+        """Create the Squid Lite frontend (additive; does not replace the HCS GUI)."""
+        from squid.ui.lite.window import SquidLiteWindow
+
+        assert self._microscope is not None, "Microscope must be built before GUI"
+        event_bus = self.create_ui_event_bus()
+        self._log.info("Creating Squid Lite GUI...")
+        gui = SquidLiteWindow(
+            microscope=self._microscope, controllers=self._controllers,
+            services=self._services, event_bus=event_bus, is_simulation=self._simulation,
+        )
+        self._gui = gui
         return gui
 
     def shutdown(self) -> None:
