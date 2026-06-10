@@ -621,6 +621,16 @@ class StopLiveCommand(Event):
     camera: str = "main"
 
 
+@dataclass
+class CaptureMultichannelCommand(Event):
+    """Command: capture one frame per named channel and save as a single OME-TIFF."""
+
+    channel_names: List[str]
+    objective: str
+    save_directory: str
+    file_prefix: str = "capture"
+
+
 # ============================================================
 # State Events (Service -> GUI)
 # ============================================================
@@ -666,6 +676,21 @@ class LiveStateChanged(Event):
     is_live: bool
     camera: str = "main"
     configuration: Optional[str] = None
+
+
+@dataclass
+class CaptureCompleted(Event):
+    """Notification: a multichannel capture finished and was saved."""
+
+    save_path: str
+    channel_names: List[str]
+
+
+@dataclass
+class CaptureFailed(Event):
+    """Notification: a multichannel capture failed."""
+
+    reason: str
 
 
 @dataclass
