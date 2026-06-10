@@ -1101,6 +1101,14 @@ ENABLE_NDVIEWER = False
 
 MOSAIC_VIEW_TARGET_PIXEL_SIZE_UM = 2
 
+# Unified mosaic/plate view (UnifiedMosaicWidget). Feature flag, default off:
+# when enabled (a later step wires it in), one tab with a Full View <-> Plate View
+# toggle replaces the separate Mosaic View and Plate View tabs.
+USE_UNIFIED_MOSAIC_VIEW = False
+# SAVE_DOWNSAMPLED_OVERVIEW: save a downsampled full-mosaic overview image per
+# timepoint (used by the unified widget's Save View path).
+SAVE_DOWNSAMPLED_OVERVIEW = False
+
 # Downsampled view settings (for Select Well Mode)
 # SAVE_DOWNSAMPLED_WELL_IMAGES: Save individual well TIFFs (e.g., wells/A1_5um.tiff)
 # DISPLAY_PLATE_VIEW: Show plate view tab in GUI during acquisition

@@ -27,6 +27,32 @@ class ScanPositionInformation:
 
 
 @dataclass
+class MosaicTileUpdate:
+    """Data for the unified mosaic/plate view tile update.
+
+    Constructed from the CameraFrame and CaptureInfo available at acquisition
+    time. well_row/well_col are derived from CaptureInfo.region_id via
+    parse_well_id; for non-plate scans where region_id is not a well ID, they
+    default to 0 and plate mode is unavailable anyway.
+
+    well_origin_mm is the (top-left x, top-left y) of the well's bounding box
+    in stage coordinates, computed once at acquisition start from the scan
+    plan. The widget uses this as a stable per-well anchor so tiles arriving
+    in arbitrary scan order always land in non-negative offsets within the
+    well slot. ``None`` for non-plate scans (plate mode is disabled then).
+    """
+
+    image: "np.ndarray"
+    x_mm: float
+    y_mm: float
+    channel_name: str
+    well_id: str = ""
+    well_row: int = 0
+    well_col: int = 0
+    well_origin_mm: Optional[Tuple[float, float]] = None
+
+
+@dataclass
 class AcquisitionParameters:
     experiment_ID: Optional[str]
     base_path: Optional[str]
