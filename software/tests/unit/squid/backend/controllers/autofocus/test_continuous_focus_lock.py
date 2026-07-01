@@ -50,6 +50,10 @@ class _DummyLaserAF:
         self.is_initialized = True
         self._displacement_um = 0.5
         self._camera_service = _DummyCameraService()
+        self._image = None  # set by tests that exercise commit_reference_from_result
+        self.commit_reference_calls: list = []
+        self.clear_reference_calls = 0
+        self._commit_reference_succeeds = True
 
     def turn_on_laser(self, bypass_mode_gate: bool = False) -> None:  # noqa: ARG002
         self.on_calls += 1
@@ -67,7 +71,20 @@ class _DummyLaserAF:
             spot_x_px=100.0,
             spot_y_px=50.0,
             timestamp=time.monotonic(),
+            image=self._image,
         )
+
+    def commit_reference_from_result(self, result: LaserAFResult) -> bool:
+        self.commit_reference_calls.append(result)
+        if self._commit_reference_succeeds:
+            self.laser_af_properties.has_reference = True
+            self.laser_af_properties.x_reference = result.spot_x_px
+        return self._commit_reference_succeeds
+
+    def clear_reference(self) -> None:
+        self.clear_reference_calls += 1
+        self.laser_af_properties.has_reference = False
+        self.laser_af_properties.x_reference = None
 
 
 class _DummyPiezoService:
@@ -579,6 +596,109 @@ def test_set_lock_reference_no_valid_displacement_keeps_status():
     assert controller._target_um == 0.5
 
 
+def test_set_lock_reference_anchors_reference_before_commit():
+    """Lock action must anchor x_reference on the laser AF config (via
+    commit_reference_from_result) before committing the lock target. Without
+    this, _detect_spot_and_compute_displacement falls back to spot.x every
+    frame, displacement is always 0, and the PI loop never moves the piezo."""
+    import numpy as np
+
+    bus = EventBus()
+    laser_af = _DummyLaserAF()
+    laser_af._image = np.zeros((4, 16), dtype=np.uint8)
+    laser_af.laser_af_properties.has_reference = False
+    laser_af.laser_af_properties.x_reference = None
+    laser_af._displacement_um = 0.0
+
+    controller = ContinuousFocusLockController(
+        laser_af=laser_af,
+        piezo_service=_DummyPiezoService(),
+        event_bus=bus,
+    )
+    controller._running = True
+    controller._should_run = True
+
+    controller._set_lock_reference()
+    bus.drain()
+
+    assert len(laser_af.commit_reference_calls) == 1
+    committed_result = laser_af.commit_reference_calls[0]
+    assert committed_result.spot_x_px == 100.0
+    assert committed_result.image is not None
+    assert laser_af.laser_af_properties.has_reference is True
+    assert laser_af.laser_af_properties.x_reference == 100.0
+    assert controller.status == "locked"
+
+
+def test_set_lock_reference_skips_anchor_when_sample_unhealthy():
+    """Don't commit garbage as the reference when the live sample is bad
+    (no image). Lock should still attempt to commit the lock target from the
+    measurement but must not call commit_reference_from_result."""
+    bus = EventBus()
+    laser_af = _DummyLaserAF()
+    laser_af._image = None
+    laser_af.laser_af_properties.has_reference = False
+
+    def measure_no_image() -> LaserAFResult:
+        import time
+        return LaserAFResult(
+            displacement_um=0.5,
+            spot_intensity=100.0,
+            spot_snr=10.0,
+            correlation=0.95,
+            spot_x_px=100.0,
+            spot_y_px=50.0,
+            timestamp=time.monotonic(),
+            image=None,
+        )
+
+    laser_af.measure_displacement_continuous = measure_no_image
+    controller = ContinuousFocusLockController(
+        laser_af=laser_af,
+        piezo_service=_DummyPiezoService(),
+        event_bus=bus,
+    )
+    controller._running = True
+    controller._should_run = True
+
+    controller._set_lock_reference()
+    bus.drain()
+
+    assert laser_af.commit_reference_calls == []
+    assert laser_af.laser_af_properties.has_reference is False
+
+
+def test_release_lock_reference_clears_af_reference():
+    """Release must wipe has_reference on the laser AF config so the next
+    Lock cycle re-anchors against the live spot rather than reusing stale
+    state from a prior lock."""
+    import numpy as np
+
+    bus = EventBus()
+    laser_af = _DummyLaserAF()
+    laser_af._image = np.zeros((4, 16), dtype=np.uint8)
+    controller = ContinuousFocusLockController(
+        laser_af=laser_af,
+        piezo_service=_DummyPiezoService(),
+        event_bus=bus,
+    )
+    controller._running = True
+    controller._should_run = True
+
+    controller._set_lock_reference()
+    bus.drain()
+    assert controller.status == "locked"
+    assert laser_af.laser_af_properties.has_reference is True
+
+    controller._release_lock_reference()
+    bus.drain()
+
+    assert laser_af.clear_reference_calls == 1
+    assert laser_af.laser_af_properties.has_reference is False
+    assert laser_af.laser_af_properties.x_reference is None
+    assert controller.status == "ready"
+
+
 def test_acquire_lock_reference_retries_until_measurement_stabilizes():
     bus = EventBus()
     laser_af = _SequenceLaserAF(
@@ -978,8 +1098,9 @@ def test_start_precondition_not_initialized():
     assert controller.status == "disabled"
 
 
-def test_start_precondition_no_reference():
-    """Test that start() returns early if no reference is set."""
+def test_start_without_reference_succeeds_and_runs_ready():
+    """start() no longer requires has_reference up front: spot detection runs and
+    the user clicks Lock to capture a reference once the spot looks healthy."""
     bus = EventBus()
     laser_af = _DummyLaserAF()
     laser_af.laser_af_properties.has_reference = False
@@ -989,9 +1110,12 @@ def test_start_precondition_no_reference():
         event_bus=bus,
     )
 
-    controller.start()
-    assert not controller.is_running
-    assert controller.status == "disabled"
+    try:
+        controller.start()
+        assert controller.is_running
+        assert controller.status == "ready"
+    finally:
+        controller.stop()
 
 
 def test_reset_clears_all_histories():

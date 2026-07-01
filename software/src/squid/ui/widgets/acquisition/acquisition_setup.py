@@ -615,10 +615,24 @@ class AcquisitionSetupWidget(EventBusWidget):
         h.setContentsMargins(0, 0, 0, 0)
         self._save_path_edit = QLineEdit()
         self._save_path_edit.setPlaceholderText("Experiment folder...")
+        self._save_path_edit.setToolTip("Folder where acquired images will be saved")
         h.addWidget(self._save_path_edit, 1)
         self._btn_browse_path = QPushButton("Browse")
+        self._btn_browse_path.setToolTip("Browse for an experiment save folder")
         h.addWidget(self._btn_browse_path)
         right.addLayout(h)
+
+        # Disk space indicator
+        self._disk_space_label = QLabel("")
+        self._disk_space_label.setStyleSheet("color: gray; font-size: 10px;")
+        self._disk_space_label.setToolTip("Available disk space at the save path")
+        right.addWidget(self._disk_space_label)
+        self._save_path_edit.textChanged.connect(self._update_disk_space)
+        self._disk_space_timer = QTimer(self)
+        self._disk_space_timer.setInterval(30000)
+        self._disk_space_timer.timeout.connect(self._update_disk_space)
+        self._disk_space_timer.start()
+        self._update_disk_space()
 
         # Experiment ID
         from datetime import datetime
@@ -626,6 +640,9 @@ class AcquisitionSetupWidget(EventBusWidget):
         self._experiment_id_edit = QLineEdit()
         self._experiment_id_edit.setPlaceholderText("Experiment ID")
         self._experiment_id_edit.setText(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        self._experiment_id_edit.setToolTip(
+            "Unique name for this experiment. A subfolder with this name will be created in the save path."
+        )
         right.addWidget(self._experiment_id_edit)
 
         # Options row: format, skip saving
@@ -634,8 +651,15 @@ class AcquisitionSetupWidget(EventBusWidget):
         opts.addWidget(QLabel("Format:"))
         self._save_format = QComboBox()
         self._save_format.addItems(["OME-TIFF", "TIFF", "Zarr V3"])
+        self._save_format.setToolTip(
+            "Image file format. OME-TIFF: standard with metadata. "
+            "Zarr V3: fast writes, good for large datasets."
+        )
         opts.addWidget(self._save_format)
         self._skip_saving = QCheckBox("Skip Saving")
+        self._skip_saving.setToolTip(
+            "When checked, images are acquired but not saved to disk. Useful for previewing or testing."
+        )
         opts.addWidget(self._skip_saving)
         opts.addStretch()
         right.addLayout(opts)
@@ -645,11 +669,24 @@ class AcquisitionSetupWidget(EventBusWidget):
         self._btn_start_stop = QPushButton("Start Acquisition")
         self._btn_start_stop.setCheckable(True)
         self._btn_start_stop.setMinimumHeight(32)
+        self._btn_start_stop.setToolTip("Start or stop the multi-point acquisition")
         acq_btns.addWidget(self._btn_start_stop)
         self._btn_run_current_fov = QPushButton("Run Current FOV")
         self._btn_run_current_fov.setMinimumHeight(32)
+        self._btn_run_current_fov.setToolTip(
+            "Acquire all selected channels at the current stage position only (single FOV)"
+        )
         acq_btns.addWidget(self._btn_run_current_fov)
         right.addLayout(acq_btns)
+
+        # Time estimate label
+        self._time_estimate_label = QLabel("")
+        self._time_estimate_label.setStyleSheet("color: gray; font-size: 10px;")
+        self._time_estimate_label.setToolTip(
+            "Estimate based on exposure times + stage overhead. "
+            "Actual time may vary with autofocus, stage speed, and I/O."
+        )
+        right.addWidget(self._time_estimate_label)
 
         # Progress bar
         self._progress_bar = QProgressBar()
@@ -743,6 +780,11 @@ class AcquisitionSetupWidget(EventBusWidget):
         self._btn_start_stop.clicked.connect(self._on_start_stop_acquisition)
         self._btn_run_current_fov.clicked.connect(self._on_run_current_fov)
         self._btn_quick_scan.clicked.connect(self._quick_scan)
+
+        # Wire up time estimate updates
+        self._z_checkbox.toggled.connect(lambda _: self._update_time_estimate())
+        self._z_nz.valueChanged.connect(lambda _: self._update_time_estimate())
+        self._channel_order_widget.selection_changed.connect(self._update_time_estimate)
 
     # =========================================================================
     # Tab toggles
@@ -917,19 +959,99 @@ class AcquisitionSetupWidget(EventBusWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Load Coordinates CSV", "", "CSV files (*.csv);;All files (*)")
         if not path:
             return
-        self._csv_filename_label.setText(os.path.basename(path))
         region_fov_coordinates: Dict[str, list] = {}
         try:
-            with open(path, "r") as f:
+            with open(path, "r", newline="") as f:
                 reader = csv.DictReader(f)
-                for row in reader:
-                    region = row.get("region", row.get("Region", "0"))
-                    x = float(row.get("x", row.get("X", row.get("x_mm", 0))))
-                    y = float(row.get("y", row.get("Y", row.get("y_mm", 0))))
-                    z = float(row.get("z", row.get("Z", row.get("z_mm", 0))))
-                    if region not in region_fov_coordinates:
-                        region_fov_coordinates[region] = []
-                    region_fov_coordinates[region].append((x, y, z))
+                fieldnames = reader.fieldnames or []
+                # Map normalized -> actual header so we accept the standard Squid
+                # "x (mm)" / "y (mm)" / "z (mm)" / "z (um)" columns as well as the
+                # plain "x" / "y" / "x_mm" variants this widget used to write.
+                cols = {name.strip().lower(): name for name in fieldnames}
+
+                def _col(*aliases):
+                    for a in aliases:
+                        if a in cols:
+                            return cols[a]
+                    return None
+
+                x_col = _col("x (mm)", "x_mm", "x")
+                y_col = _col("y (mm)", "y_mm", "y")
+                z_mm_col = _col("z (mm)", "z_mm", "z")
+                z_um_col = _col("z (um)", "z_um")
+                region_col = _col("region", "region_id")
+
+                # Fail loudly instead of silently defaulting to (0, 0). The old
+                # parser only recognized "x"/"x_mm", so a standard "x (mm)" CSV
+                # parsed every FOV as the origin and drove the stage off-sample.
+                if x_col is None or y_col is None:
+                    raise ValueError(
+                        "CSV is missing X/Y position columns. Expected 'x (mm)' and "
+                        f"'y (mm)' (or 'x'/'y'). Found columns: {fieldnames}"
+                    )
+
+                for line_no, row in enumerate(reader, start=2):
+                    x_raw = (row.get(x_col) or "").strip()
+                    y_raw = (row.get(y_col) or "").strip()
+                    if not x_raw or not y_raw:
+                        raise ValueError(f"Row {line_no} is missing an X or Y value.")
+                    x = float(x_raw)
+                    y = float(y_raw)
+
+                    # Keep the current focus height when the CSV has no usable Z,
+                    # rather than forcing Z to 0 mm.
+                    z = self._cached_z_mm
+                    if z_mm_col and (row.get(z_mm_col) or "").strip():
+                        z = float(row[z_mm_col])
+                    elif z_um_col and (row.get(z_um_col) or "").strip():
+                        z = float(row[z_um_col]) / 1000.0
+
+                    region = ((row.get(region_col) if region_col else None) or "0").strip() or "0"
+                    region_fov_coordinates.setdefault(region, []).append((x, y, z))
+
+            if not region_fov_coordinates:
+                raise ValueError("No coordinate rows found in CSV.")
+
+            # Safety guard: the loaded path drives to absolute stage mm with no
+            # downstream clamp. If points fall outside the (live) stage travel
+            # limits the CSV is almost certainly in the wrong units (um vs mm) or
+            # a different origin, so warn before moving instead of slewing off the
+            # sample. The user can still choose to proceed.
+            all_pts = [pt for pts in region_fov_coordinates.values() for pt in pts]
+            n_out = sum(
+                1
+                for (x, y, _z) in all_pts
+                if not (
+                    SOFTWARE_POS_LIMIT.X_NEGATIVE <= x <= SOFTWARE_POS_LIMIT.X_POSITIVE
+                    and SOFTWARE_POS_LIMIT.Y_NEGATIVE <= y <= SOFTWARE_POS_LIMIT.Y_POSITIVE
+                )
+            )
+            if n_out:
+                reply = QMessageBox.warning(
+                    self,
+                    "Coordinates Outside Stage Limits",
+                    f"{n_out} of {len(all_pts)} coordinates are outside the stage travel limits "
+                    f"(X [{SOFTWARE_POS_LIMIT.X_NEGATIVE}, {SOFTWARE_POS_LIMIT.X_POSITIVE}] mm, "
+                    f"Y [{SOFTWARE_POS_LIMIT.Y_NEGATIVE}, {SOFTWARE_POS_LIMIT.Y_POSITIVE}] mm).\n\n"
+                    "This usually means the CSV is in micrometers instead of millimeters, or uses a "
+                    "different stage origin. Loading it may drive the stage off the sample.\n\n"
+                    "Load anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply != QMessageBox.Yes:
+                    self._csv_status_label.setText("Load cancelled (coordinates out of range).")
+                    return
+
+            # Start the scan at the top-left corner: sort each region's FOVs by
+            # ascending Y then X. This matches the (min-x, min-y)-first order the
+            # grid generator uses, so a loaded scan begins at the same corner and
+            # rasters the same way as a generated grid, instead of starting at raw
+            # CSV row order.
+            for pts in region_fov_coordinates.values():
+                pts.sort(key=lambda c: (round(c[1], 4), round(c[0], 4)))
+
+            self._csv_filename_label.setText(os.path.basename(path))
             coord_tuples = {rid: tuple(tuple(pt) for pt in pts) for rid, pts in region_fov_coordinates.items()}
             total = sum(len(pts) for pts in region_fov_coordinates.values())
             self._csv_status_label.setText(f"{len(region_fov_coordinates)} regions, {total} FOVs loaded")
@@ -964,6 +1086,92 @@ class AcquisitionSetupWidget(EventBusWidget):
     # Acquisition controls
     # =========================================================================
 
+    # =========================================================================
+    # Disk space display
+    # =========================================================================
+
+    def _update_disk_space(self) -> None:
+        """Update the disk space indicator for the current save path."""
+        path = self._save_path_edit.text().strip()
+        if not path or not os.path.isdir(path):
+            self._disk_space_label.setText("")
+            return
+        try:
+            import shutil
+
+            _, _, free = shutil.disk_usage(path)
+            free_gb = free / (1024**3)
+            if free_gb > 50:
+                color = "#4caf50"  # green
+            elif free_gb > 10:
+                color = "#ff9800"  # yellow/orange
+            else:
+                color = "#f44336"  # red
+            self._disk_space_label.setText(f"Free: {free_gb:.1f} GB")
+            self._disk_space_label.setStyleSheet(f"color: {color}; font-size: 10px;")
+        except Exception:
+            self._disk_space_label.setText("")
+
+    # =========================================================================
+    # Acquisition time estimate
+    # =========================================================================
+
+    def _update_time_estimate(self) -> None:
+        """Update the estimated acquisition time based on current settings."""
+        try:
+            channels = self._channel_order_widget.get_selected_channels_ordered()
+            n_channels = len(channels)
+            if n_channels == 0:
+                self._time_estimate_label.setText("")
+                return
+
+            # Sum exposure times across selected channels (ms -> s)
+            total_exposure_per_fov = sum(
+                ch.exposure_time for ch in channels
+            ) / 1000.0
+
+            n_z = self._z_nz.value() if self._z_checkbox.isChecked() else 1
+            n_t = 1
+            dt = 0.0
+            if hasattr(self, "_time_checkbox") and self._time_checkbox.isChecked():
+                n_t = self._nt_spin.value() if hasattr(self, "_nt_spin") else 1
+                dt = self._dt_spin.value() if hasattr(self, "_dt_spin") else 0.0
+            n_fovs = max(self._get_fov_count(), 1)
+
+            overhead_per_fov = 0.5  # stage move + settling (seconds)
+            time_per_fov = total_exposure_per_fov * n_z + overhead_per_fov
+            time_per_timepoint = time_per_fov * n_fovs
+            total_seconds = time_per_timepoint * n_t + dt * max(n_t - 1, 0)
+
+            desc = f"{n_fovs} FOVs x {n_channels} ch"
+            if n_z > 1:
+                desc += f" x {n_z} Z"
+            if n_t > 1:
+                desc += f" x {n_t} T"
+            formatted = self._format_duration(total_seconds)
+            self._time_estimate_label.setText(f"Est: {formatted} ({desc})")
+        except Exception:
+            self._time_estimate_label.setText("")
+
+    def _get_fov_count(self) -> int:
+        """Get the current FOV count from cached scan coordinates or default to 1."""
+        count = self._get_cached_state("total_fovs", 0)
+        return max(count, 1)
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """Format seconds into a human-readable duration string."""
+        if seconds < 60:
+            return f"~{seconds:.0f}s"
+        elif seconds < 3600:
+            m = int(seconds // 60)
+            s = int(seconds % 60)
+            return f"~{m}m {s:02d}s"
+        else:
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            return f"~{h}h {m:02d}m"
+
     def _on_browse_save_path(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Experiment Folder")
         if path:
@@ -973,6 +1181,16 @@ class AcquisitionSetupWidget(EventBusWidget):
         if not self._is_acquiring and self._start_pending_experiment_id is None:
             self._start_acquisition()
         else:
+            reply = QMessageBox.question(
+                self,
+                "Stop Acquisition",
+                "An acquisition is in progress.\nAre you sure you want to stop?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                self._btn_start_stop.setChecked(True)
+                return
             self._btn_start_stop.setText("Stopping...")
             self._btn_start_stop.setChecked(True)
             self._publish(StopAcquisitionCommand())
@@ -1071,9 +1289,9 @@ class AcquisitionSetupWidget(EventBusWidget):
             QMessageBox.warning(self, "No Channels", "Select at least one channel.")
             return
 
-        from datetime import datetime
-
-        experiment_id = f"quick_scan_{datetime.now().strftime('%H-%M-%S-%f')}"
+        # Clean prefix; the controller appends the unique timestamp (avoids a
+        # doubled "quick_scan_<time>_<date_time>" folder name).
+        experiment_id = "quick_scan"
         nx = self._qs_nx.value()
         ny = self._qs_ny.value()
         overlap = self._qs_overlap.value()
@@ -1505,15 +1723,27 @@ class AcquisitionSetupWidget(EventBusWidget):
             QMessageBox.warning(self, "Busy", "Stop the current acquisition first.")
             return
 
-        from datetime import datetime
-
-        experiment_id = f"current_fov_{datetime.now().strftime('%H-%M-%S-%f')}"
+        # Use a clean prefix and let the controller append the unique timestamp.
+        # Pre-stamping here produced a doubled "current_fov_<time>_<date_time>"
+        # folder name; the start-watchdog matches on prefix so this still tracks.
+        experiment_id = "current_fov"
 
         # Push current widget state to controller
         try:
             protocol = self.build_imaging_protocol()
         except ValueError as e:
             QMessageBox.warning(self, "Validation Error", str(e))
+            return
+
+        # Require a save path unless Skip Saving is enabled. Previously an empty
+        # path silently wrote the FOV to the OS temp dir, where it appeared lost.
+        save_path = self._save_path_edit.text().strip()
+        if not save_path and not protocol.skip_saving:
+            QMessageBox.warning(
+                self,
+                "No Save Path",
+                "Set a save path or enable 'Skip Saving' before running a single FOV.",
+            )
             return
 
         z_stacking_config = self._z_direction.currentIndex() if self._z_checkbox.isChecked() else 1
@@ -1528,7 +1758,10 @@ class AcquisitionSetupWidget(EventBusWidget):
             widget_type="setup",
         ))
         self._publish(SetAcquisitionChannelsCommand(channel_names=selected))
-        self._publish(SetAcquisitionPathCommand(base_path=tempfile.gettempdir()))
+        # Real save path -> abspath (avoid CWD-relative surprises). Only reach the
+        # temp dir when Skip Saving is on (validated above) — a throwaway run.
+        base_path = os.path.abspath(save_path) if save_path else tempfile.gettempdir()
+        self._publish(SetAcquisitionPathCommand(base_path=base_path))
         self._publish(StartNewExperimentCommand(experiment_id=experiment_id))
 
         canonical_id = self._normalize_experiment_id(experiment_id)
@@ -1621,7 +1854,9 @@ class AcquisitionSetupWidget(EventBusWidget):
     @handles(ScanCoordinatesUpdated)
     def _on_scan_coordinates_updated(self, event: ScanCoordinatesUpdated) -> None:
         self._total_fovs = event.total_fovs
+        self._cache_state("total_fovs", event.total_fovs)
         self._fov_count_label.setText(f"{event.total_fovs} FOVs ({event.total_regions} regions)")
+        self._update_time_estimate()
 
     @handles(ChannelConfigurationsChanged)
     def _on_channel_configs_changed(self, event: ChannelConfigurationsChanged) -> None:

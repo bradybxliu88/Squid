@@ -826,6 +826,47 @@ class ExperimentRunner:
         if action == "abort":
             raise CancellationError("Operator abort during protocol review")
 
+    def _get_focus_lock_controller(self):
+        """Best-effort lookup of the focus lock controller through the imaging executor.
+
+        Returns None if not available for any reason; all callers must handle None.
+        """
+        executor = self._imaging_executor
+        if executor is None:
+            return None
+        multipoint = getattr(executor, "_multipoint", None)
+        if multipoint is None:
+            return None
+        return getattr(multipoint, "_focus_lock_controller", None)
+
+    def _stop_focus_lock_for_fluidics(self) -> None:
+        """Stop the continuous focus lock controller before a fluidics step.
+
+        Safe no-op when:
+          - No focus lock controller is configured
+          - Controller is already stopped
+          - Controller doesn't have an is_running/stop interface
+
+        This pairs with MultiPointWorker._get_per_fov_strategy (FOCUS_LOCK_PER_FOV
+        mode) which re-engages the lock per FOV via acquire_lock_reference.
+        For other modes (plain FOCUS_LOCK), _prepare_focus_lock_for_acquisition
+        restarts the controller as needed.
+        """
+        controller = self._get_focus_lock_controller()
+        if controller is None:
+            return
+        try:
+            is_running = bool(getattr(controller, "is_running", False))
+        except Exception:
+            return
+        if not is_running:
+            return
+        try:
+            controller.stop()
+            _log.info("Stopped focus lock controller before fluidics step")
+        except Exception:
+            _log.exception("Failed to stop focus lock controller before fluidics")
+
     def _execute_fluidics_step(self, round_idx: int, step: FluidicsStep) -> StepResult:
         """Execute a fluidics step."""
         if self._progress.current_round is None:
@@ -837,6 +878,14 @@ class ExperimentRunner:
         if self._fluidics_controller is None:
             _log.error(f"No fluidics controller configured for protocol '{protocol_name}'")
             return StepResult.failed("fluidics", "No fluidics controller configured")
+
+        # Stop the continuous focus lock during fluidics flow - the physical
+        # disturbance (flow, bubbles, refractive-index changes) makes the laser
+        # AF spot unstable, and a running lock will spray warnings and drift
+        # the piezo chasing a phantom. The next imaging step will re-engage
+        # the lock (per-FOV seeded, in FOCUS_LOCK_PER_FOV mode). Safe no-op
+        # if no focus lock controller is configured or lock isn't running.
+        self._stop_focus_lock_for_fluidics()
 
         try:
             self._cancel_token.check_point()

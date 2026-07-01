@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main_hcs.py --simulation)",
+      "Bash(taskkill //F //FI \"WINDOWTITLE eq *Squid*\")",
+      "Bash(taskkill //F //FI \"IMAGENAME eq python.exe\" //FI \"WINDOWTITLE eq *main_hcs*\")",
+      "Bash(python main_hcs.py)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(find:*)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(python -c ':*)",
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "Bash(tasklist //FI \"IMAGENAME eq python.exe\" //FO CSV)",
+      "Bash(wait %1)",
+      "Bash(git -C /c/Users/CZC4457GCG/Desktop/Will/Squid_BL/software log --oneline -5)",
+      "Bash(git -C /c/Users/CZC4457GCG/Desktop/Will/Squid_BL stash list)",
+      "Bash(git -C /c/Users/CZC4457GCG/Desktop/Will/Squid_BL stash push -- software/src/squid/core/events.py software/src/squid/backend/controllers/multipoint/fov_focus_memory.py software/src/squid/backend/controllers/multipoint/per_fov_focus_lock.py software/src/squid/backend/controllers/autofocus/continuous_focus_lock.py software/src/squid/backend/controllers/autofocus/laser_auto_focus_controller.py software/src/squid/backend/drivers/stages/prior.py software/src/squid/ui/widgets/fluidics.py software/src/squid/ui/widgets/orchestrator/orchestrator_widget.py software/tests/unit/squid/controllers/multipoint/test_fov_focus_memory.py software/tests/unit/squid/controllers/multipoint/test_per_fov_focus_lock.py software/tests/unit/squid/controllers/multipoint/test_per_fov_focus_lock_stress.py)",
+      "Bash(git stash:*)",
+      "Bash(awk -F, 'NR>1 {status[$6]++} END {for \\(s in status\\) print s\": \"status[s]}' \"/d/brady/new_software/outputs/12-Round_Fluidics_Imaging_\\(Real_Hardware\\)_2026-04-12_21-05-13.140738/fov_metrics.csv\")",
+      "Bash(python3:*)",
+      "Bash(where python:*)",
+      "Bash(C:/Users/CZC4457GCG/anaconda3/python.exe:*)",
+      "Bash(git --git-dir=.git diff --stat -- software/)",
+      "Bash(GIT_DIR=.git git status)",
+      "Bash(git -c submodule.recurse=false status --ignore-submodules=all)",
+      "Bash(git -c submodule.recurse=false status --ignore-submodules=all --short)",
+      "Bash(git -c submodule.recurse=false diff --ignore-submodules=all -- software/src/_def.py)",
+      "Bash(git -c submodule.recurse=false add -- software/src/_def.py software/src/squid/core/config/focus_lock.py software/src/squid/backend/controllers/autofocus/continuous_focus_lock.py software/tests/unit/squid/backend/controllers/autofocus/test_continuous_focus_lock.py software/tests/unit/squid/core/test_focus_lock_config.py)",
+      "Bash(git -c submodule.recurse=false diff --cached --stat --ignore-submodules=all)",
+      "Bash(git -c submodule.recurse=false -c core.hooksPath=/dev/null commit -m ':*)",
+      "Bash(git -c submodule.recurse=false -c user.name=WEA -c user.email=we.allen@gmail.com commit -m ':*)",
+      "Bash(cmd //c launch.bat)",
+      "Bash(tasklist)",
+      "Bash(launch.bat)",
+      "Bash(mode COM6:*)",
+      "Bash(cmd:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(python -m pytest tests/unit --ignore=tests/unit/squid/controllers/multipoint/test_multi_point_worker_focus_lock.py -q)",
+      "Read(//tmp/**)"
+    ]
+  }
+}

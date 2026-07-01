@@ -879,8 +879,81 @@ class MultiPointWorker:
         self._checkpoint_interval = max(1, interval)
         self._log.info(f"Checkpoint interval set to {self._checkpoint_interval}")
 
+    def set_ephemeral_run(self, ephemeral: bool) -> None:
+        """Mark this run as an ad-hoc single-FOV ("Run Current FOV") acquisition.
+
+        Ephemeral runs must not seed from / record into the persistent per-FOV
+        focus memory (a stale cross-run Z would drive the piezo off the sample).
+        """
+        self._ephemeral_run = bool(ephemeral)
+
+    def _get_per_fov_strategy(self):
+        """Lazy-init PerFOVFocusLockStrategy for FOCUS_LOCK_PER_FOV mode.
+
+        The strategy shares a single FOVFocusMemory instance via the
+        ContinuousFocusLockController (which outlives per-round workers).
+        """
+        from squid.backend.controllers.multipoint.per_fov_focus_lock import (
+            PerFOVFocusLockStrategy,
+        )
+        existing = getattr(self, "_per_fov_strategy", None)
+        if existing is not None:
+            return existing
+        controller = self._focus_lock_controller
+        if controller is None:
+            raise RuntimeError(
+                "FOCUS_LOCK_PER_FOV requires a focus_lock_controller"
+            )
+        memory = getattr(controller, "fov_focus_memory", None)
+        if memory is None:
+            from squid.backend.controllers.multipoint.fov_focus_memory import FOVFocusMemory
+            memory = FOVFocusMemory()
+            controller.fov_focus_memory = memory  # type: ignore[attr-defined]
+        settings = getattr(self, "focus_lock_settings", None)
+        lock_timeout_s = float(getattr(settings, "lock_timeout_s", 5.0))
+        max_attempts = int(getattr(settings, "per_fov_max_attempts", 2))
+        settle_s = float(getattr(settings, "per_fov_settle_s", 0.2))
+        ephemeral = bool(getattr(self, "_ephemeral_run", False))
+        strat = PerFOVFocusLockStrategy(
+            focus_lock_controller=controller,
+            piezo_service=self._piezo_service,
+            memory=memory,
+            lock_timeout_s=lock_timeout_s,
+            max_attempts=max_attempts,
+            settle_s=settle_s,
+            ephemeral=ephemeral,
+        )
+        # Initialize default seed from current piezo the first time we use the
+        # strategy — but NOT for ephemeral ad-hoc runs, which would overwrite the
+        # persistent default_z_um with a one-off FOV's Z and then seed later real
+        # runs' first-round FOVs off it.
+        if not ephemeral and memory.default_z_um is None:
+            strat.record_initial_seed_from_piezo()
+        # Ensure the controller is running so acquire_lock_reference has fresh data.
+        strat.restart_for_imaging()
+        self._per_fov_strategy = strat  # type: ignore[attr-defined]
+        return strat
+
+    def _run_per_fov_focus_lock(self, region_id: str, fov: int):
+        """Invoke per-FOV focus lock engagement for this FOV."""
+        strategy = self._get_per_fov_strategy()
+        return strategy.prepare(str(region_id), int(fov))
+
+    def _record_per_fov_lock_success(self, region_id: str, fov: int, z_um: float) -> None:
+        """Record the successful locked piezo Z for this (region, fov)."""
+        strategy = getattr(self, "_per_fov_strategy", None)
+        if strategy is None:
+            return
+        strategy.record_success(str(region_id), int(fov), float(z_um))
+
     def _prepare_focus_lock_for_acquisition(self) -> None:
         """Start and verify focus lock for focus-lock acquisition mode."""
+        if self.autofocus_mode == AutofocusMode.FOCUS_LOCK_PER_FOV:
+            # Per-FOV mode handles engagement per FOV via acquire_at_position.
+            # Here we just ensure the controller is running (laser on) so the
+            # first FOV's acquire_lock_reference has fresh measurements.
+            self._get_per_fov_strategy()
+            return
         if self.autofocus_mode != AutofocusMode.FOCUS_LOCK:
             return
 
@@ -1833,6 +1906,67 @@ class MultiPointWorker:
             # (sets direction sign and records home for return_to_start)
             self._zstack_executor.initialize()
             self._zstack_executor.z_piezo_um = self.z_piezo_um
+
+        # ------------------------------------------------------------------
+        # Per-FOV focus lock mode: seed piezo to cached Z, engage lock fresh
+        # per FOV. This replaces the continuous-lock behavior with a
+        # lock/unlock cycle that is robust against fluidics disturbance.
+        # ------------------------------------------------------------------
+        if self.autofocus_mode == AutofocusMode.FOCUS_LOCK_PER_FOV:
+            per_fov_result = self._run_per_fov_focus_lock(region_id, fov)
+            method = getattr(per_fov_result, "method", None) or "unknown"
+            if not per_fov_result.ok:
+                # With the tiered fallback (locked → single_shot → seed),
+                # ok=False only happens with catastrophic hardware failure.
+                # Log and raise to let focus_gate policy handle it.
+                message = (
+                    f"FOCUS_LOCK_PER_FOV: all tiers failed for region={region_id} "
+                    f"fov={fov} (reason={per_fov_result.reason})"
+                )
+                self._log.error(message)
+                raise RuntimeError(message)
+            # Log the tier that succeeded for QC
+            self._log.info(
+                "FOCUS_LOCK_PER_FOV: region=%s fov=%s method=%s piezo=%s seed=%s",
+                region_id, fov, method,
+                f"{per_fov_result.locked_piezo_um:.2f}um" if per_fov_result.locked_piezo_um is not None else "unknown",
+                f"{per_fov_result.seed_used_um:.2f}um" if per_fov_result.seed_used_um is not None else "none",
+            )
+            # Record the final Z so future rounds seed from it — but ONLY for
+            # positively-verified focus (locked / single-shot measurement). A
+            # degraded seed/no-seed fallback means focus was NOT confirmed; caching
+            # that (possibly de-focused) Z would poison the next round's seed and
+            # ratchet the piezo further off the sample. Warn instead.
+            degraded = bool(getattr(per_fov_result, "degraded", False))
+            if per_fov_result.locked_piezo_um is not None and not degraded:
+                self._record_per_fov_lock_success(
+                    region_id, fov, per_fov_result.locked_piezo_um
+                )
+            elif degraded and self._event_bus is not None:
+                self._event_bus.publish(
+                    AddWarningCommand(
+                        category="FOCUS",
+                        severity="MEDIUM",
+                        message=(
+                            f"Per-FOV focus lock degraded at region {region_id}, fov {fov} "
+                            f"(method={method}); imaging without verified focus"
+                        ),
+                        round_index=self._current_round_index,
+                        round_name=f"Round {self._current_round_index + 1}",
+                        time_point=self.time_point,
+                        operation_type="imaging",
+                        fov_id=fov_id,
+                        fov_index=fov,
+                        context={"region_id": region_id, "method": method},
+                    )
+                )
+            # Update piezo tracking to reflect our final Z. Also re-home the
+            # z-stack executor to the locked plane: initialize() snapshotted the
+            # PRE-lock piezo, so without this later channels re-center on the wrong
+            # plane (return_to_start uses the stale home).
+            if self.use_piezo and per_fov_result.locked_piezo_um is not None:
+                self.z_piezo_um = float(per_fov_result.locked_piezo_um)
+                self._zstack_executor.set_home(self.z_piezo_um)
 
         # Check if focus lock is active (handles focus continuously)
         focus_lock_active = self._autofocus_executor.is_focus_lock_active()

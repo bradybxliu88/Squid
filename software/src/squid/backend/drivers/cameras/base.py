@@ -17,7 +17,7 @@ from _def import CAMERA_PIXEL_SIZE_UM
 try:
     import squid.backend.drivers.gxipy as gx
 except Exception:
-    print("gxipy import error")
+    pass
 
 
 class DefaultCameraCapabilities(pydantic.BaseModel):
@@ -46,7 +46,7 @@ def get_sn_by_model(camera_model: GxipyCameraModel):
 
 class DefaultCamera(AbstractCamera):
     @staticmethod
-    def _open(device_manager: gx.DeviceManager, sn=None, index=None):
+    def _open(device_manager: "gx.DeviceManager", sn=None, index=None):
         if sn is None and index is None:
             raise ValueError(
                 "You must specify a serial number or index of camera to open."

@@ -24,16 +24,11 @@ squid.core.logging.setup_uncaught_exception_logging()
 
 # app specific libraries
 import squid.ui.main_window as gui
-from _def import USE_TERMINAL_CONSOLE
 from _def import SQUID_ICON_PATH
 from _def import SIMULATED_DISK_IO_ENABLED
 from _def import SIMULATION_FORCE_SAVE_IMAGES
 import squid.core.utils.hardware_utils
 from squid.application import ApplicationContext
-
-
-if USE_TERMINAL_CONSOLE:
-    from squid.ui.console import ConsoleThread
 
 
 if __name__ == "__main__":
@@ -280,11 +275,6 @@ if __name__ == "__main__":
         )
 
     win.showMaximized()
-
-    if USE_TERMINAL_CONSOLE:
-        console_locals = {"microscope": context.microscope, "context": context}
-        console_thread = ConsoleThread(console_locals)
-        console_thread.start()
 
     # Use os._exit() to prevent segfault during Python's shutdown sequence.
     # PyQt5's C++ destructor order conflicts with Python's garbage collector.

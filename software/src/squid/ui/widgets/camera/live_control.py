@@ -120,6 +120,11 @@ class LiveControlWidget(EventBusFrame):
         self.dropdown_triggerManu.setCurrentText(self._initial_trigger_mode)
         sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.dropdown_triggerManu.setSizePolicy(sizePolicy)
+        self.dropdown_triggerManu.setToolTip(
+            "Software: camera triggers each frame internally. "
+            "Hardware: external trigger signal controls frame timing. "
+            "Continuous: camera streams continuously at max rate."
+        )
 
         # line 1: fps
         self.entry_triggerFPS = QDoubleSpinBox()
@@ -128,6 +133,7 @@ class LiveControlWidget(EventBusFrame):
         self.entry_triggerFPS.setMaximum(1000)
         self.entry_triggerFPS.setSingleStep(1)
         self.entry_triggerFPS.setValue(self.fps_trigger)
+        self.entry_triggerFPS.setToolTip("Camera trigger rate in frames per second")
 
         self.entry_displayFPS = QDoubleSpinBox()
         self.entry_displayFPS.setKeyboardTracking(False)
@@ -135,12 +141,16 @@ class LiveControlWidget(EventBusFrame):
         self.entry_displayFPS.setMaximum(240)
         self.entry_displayFPS.setSingleStep(1)
         self.entry_displayFPS.setValue(self.fps_display)
+        self.entry_displayFPS.setToolTip("Display refresh rate (does not affect capture rate)")
 
         # line 2: choose microscope mode / channel
         self.dropdown_modeSelection = QComboBox()
         for config_name in self._channel_config_names:
             self.dropdown_modeSelection.addItem(config_name)
         self.dropdown_modeSelection.setCurrentText(self.currentConfiguration.name)
+        self.dropdown_modeSelection.setToolTip(
+            "Select the imaging channel/mode (sets illumination, filters, and camera settings)"
+        )
 
         # line 3: exposure time and analog gain associated with the current mode
         self.entry_exposureTime = QDoubleSpinBox()
@@ -149,6 +159,7 @@ class LiveControlWidget(EventBusFrame):
         self.entry_exposureTime.setMaximum(self._exposure_limits[1])
         self.entry_exposureTime.setSingleStep(1)
         self.entry_exposureTime.setValue(self.currentConfiguration.exposure_time)
+        self.entry_exposureTime.setToolTip("Camera exposure time in milliseconds for the current channel")
 
         self.entry_analogGain = QDoubleSpinBox()
         self.entry_analogGain.setKeyboardTracking(False)
@@ -170,6 +181,7 @@ class LiveControlWidget(EventBusFrame):
         self.slider_illuminationIntensity.setMaximum(100)
         self.slider_illuminationIntensity.setValue(100)
         self.slider_illuminationIntensity.setSingleStep(1)
+        self.slider_illuminationIntensity.setToolTip("Illumination intensity (0-100%)")
 
         self.entry_illuminationIntensity = QDoubleSpinBox()
         self.entry_illuminationIntensity.setKeyboardTracking(False)
@@ -177,15 +189,20 @@ class LiveControlWidget(EventBusFrame):
         self.entry_illuminationIntensity.setMaximum(100)
         self.entry_illuminationIntensity.setSingleStep(1)
         self.entry_illuminationIntensity.setValue(100)
+        self.entry_illuminationIntensity.setToolTip("Illumination intensity (0-100%)")
 
         self.btn_live = QPushButton("Start Live")
         self.btn_live.setCheckable(True)
         self.btn_live.setChecked(False)
         self.btn_live.setDefault(False)
+        self.btn_live.setToolTip("Start or stop the live camera view (Ctrl+L)")
 
         self.btn_autolevel = QPushButton("Autolevel")
         self.btn_autolevel.setCheckable(True)
         self.btn_autolevel.setChecked(autolevel)
+        self.btn_autolevel.setToolTip(
+            "Automatically adjust display contrast to match the image brightness range"
+        )
 
         # layout
         self.grid = QVBoxLayout()

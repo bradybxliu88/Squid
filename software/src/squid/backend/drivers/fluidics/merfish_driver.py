@@ -317,7 +317,7 @@ class MERFISHFluidicsDriver(AbstractFluidicsController):
             from fluidics.control.syringe_pump import SyringePump, SyringePumpSimulation
             from fluidics.control.selector_valve import SelectorValveSystem
             from fluidics.merfish_operations import MERFISHOperations
-            from fluidics._def import CMD_SET
+            from fluidics.control._def import CMD_SET
 
             # Create hardware components
             if self._simulation:

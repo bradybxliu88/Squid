@@ -1092,6 +1092,12 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 alignment_widget=self._alignment_widget,
             )
             self.multiPointWorker.set_current_round_index(self._current_round_index)
+            # Ad-hoc "Run Current FOV" runs are ephemeral: the per-FOV focus lock
+            # must not seed from / record into the persistent memory (a stale
+            # cross-run Z would drive the piezo off the sample).
+            self.multiPointWorker.set_ephemeral_run(
+                getattr(self, "run_acquisition_current_fov", False)
+            )
             # Set start FOV index for resume support
             if self._start_fov_index > 0:
                 self.multiPointWorker.set_start_fov_index(self._start_fov_index)
@@ -1366,6 +1372,19 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
         if total_fovs == 0:
             self._log.error(
                 "No FOVs defined - please add scan positions before starting acquisition"
+            )
+            return False
+
+        # Z-stacks are piezo-only: a multi-plane stack (NZ > 1) requires a piezo
+        # service. Without one, ZStackExecutor.step() raises "Piezo service
+        # required" partway through the run. Fail fast here with a clear message
+        # instead. (We only gate on the service being present, not on the
+        # use_piezo flag: some configs run z-stacks on the piezo even when the
+        # objective-piezo flag is off.)
+        if self._config.zstack.nz > 1 and self._piezo_service is None:
+            self._log.error(
+                "Z-stack (NZ=%d) requires a piezo, but no piezo is available.",
+                self._config.zstack.nz,
             )
             return False
 

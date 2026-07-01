@@ -743,8 +743,23 @@ class FluidicsWidget(QWidget):
                     "Cannot initialize fluidics: core EventBus unavailable"
                 )
 
+            # Detect simulation config by checking the syringe pump serial number
+            import json
+            use_simulation = self._is_simulation
+            if not use_simulation:
+                try:
+                    with open(self._config_path, "r") as f:
+                        config_data = json.load(f)
+                    syringe_sn = config_data.get("syringe_pump", {}).get("serial_number", "")
+                    mc_sn = config_data.get("microcontroller", {}).get("serial_number", "")
+                    if syringe_sn == "SIMULATION" or mc_sn == "SIMULATION":
+                        use_simulation = True
+                        self._log.info("Detected simulation fluidics config, using simulated driver")
+                except Exception:
+                    pass
+
             driver = None
-            if self._is_simulation:
+            if use_simulation:
                 driver = SimulatedFluidicsController(
                     config_path=self._config_path,
                     simulate_timing=True,

@@ -984,6 +984,12 @@ class OrchestratorControlPanel(EventBusWidget):
             return
         if not self._validated:
             _log.warning("Protocol must be validated before starting")
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Validation Required",
+                "Please click 'Validate' before starting the acquisition.",
+            )
             return
 
         rounds = (self._protocol_data or {}).get("rounds", [])

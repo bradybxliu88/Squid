@@ -96,12 +96,16 @@ class PriorStage(AbstractStage):
             time.sleep(0.1)
             self.serial.flushInput()
 
-            self._send_command(baud_command)
+            # Probing: wrong baudrates produce no response - suppress TimeoutError here.
+            try:
+                self._send_command(baud_command, read_timeout_s=0.5)
+            except TimeoutError:
+                pass
 
             self.serial.baudrate = baud
 
             try:
-                test_response = self._send_command("$")  # Send a simple query command
+                test_response = self._send_command("$", read_timeout_s=0.5)  # Send a simple query command
                 if not test_response:
                     raise Exception("No response received after changing baud rate")
                 else:
@@ -131,13 +135,45 @@ class PriorStage(AbstractStage):
         self._get_pos_poll_stage()
         self._ensure_pos_polling_thread()
 
-    def _send_command(self, command: str) -> str:
-        with self.serial_lock:
+    def _send_command(self, command: str, read_timeout_s: float = 2.0) -> str:
+        """Send a command and read the response, with a hard timeout.
+
+        The pyserial read timeout is 0.1s per call, so we retry until we either
+        get a terminator or exceed read_timeout_s. Raises TimeoutError if the
+        stage fails to respond within the budget (prevents indefinite hangs).
+        """
+        # Use a bounded lock acquisition so a stuck thread can't freeze everything.
+        acquired = self.serial_lock.acquire(timeout=max(5.0, read_timeout_s + 1.0))
+        if not acquired:
+            raise TimeoutError(
+                f"PriorStage: could not acquire serial_lock within timeout (command={command!r})"
+            )
+        try:
             self.serial.write(f"{command}\r".encode())
-            response = self.serial.readline().decode().strip()
+            deadline = time.time() + read_timeout_s
+            buf = b""
+            while time.time() < deadline:
+                chunk = self.serial.readline()  # respects self.serial.timeout (~0.1s)
+                if chunk:
+                    buf += chunk
+                    if buf.endswith(b"\r") or buf.endswith(b"\n"):
+                        break
+                    # readline returned a full line without trailing newline -> done
+                    if b"\r" in chunk or b"\n" in chunk:
+                        break
+                else:
+                    # No data in this 0.1s slice; continue until deadline.
+                    continue
+            response = buf.decode(errors="replace").strip()
+            if not response:
+                raise TimeoutError(
+                    f"PriorStage: no response within {read_timeout_s}s (command={command!r})"
+                )
             if response.startswith("E"):
                 raise Exception(f"Error from controller: {response}")
             return response
+        finally:
+            self.serial_lock.release()
 
     def get_stage_info(self):
         stage_info = self._send_command("STAGE")
@@ -281,16 +317,38 @@ class PriorStage(AbstractStage):
             self._send_command("PY 0")
             self.y_pos = 0
 
-    def wait_for_stop(self):
+    def wait_for_stop(self, timeout_s: float = 120.0):
+        """Poll stage status until it reports stopped, with an overall timeout.
+
+        Raises TimeoutError if the stage fails to report stopped within
+        timeout_s seconds (prevents indefinite hangs if the controller
+        stops responding mid-move).
+        """
         self.is_busy = True
-        while True:
-            status = int(self._send_command("$,S"))
-            if status == 0:
-                self._get_pos_poll_stage()
-                # print("xy position: ", self.x_pos, self.y_pos)
-                self.is_busy = False
-                break
-            time.sleep(0.05)
+        deadline = time.time() + timeout_s
+        try:
+            while True:
+                if time.time() > deadline:
+                    raise TimeoutError(
+                        f"PriorStage: stage did not report stopped within {timeout_s}s"
+                    )
+                try:
+                    raw = self._send_command("$,S")
+                    status = int(raw)
+                except (ValueError, TimeoutError) as e:
+                    # Malformed response or read timeout - don't give up immediately,
+                    # but do propagate if we've exhausted the outer budget.
+                    self._log.warning(
+                        f"PriorStage wait_for_stop: unexpected response: {e}"
+                    )
+                    time.sleep(0.1)
+                    continue
+                if status == 0:
+                    self._get_pos_poll_stage()
+                    break
+                time.sleep(0.05)
+        finally:
+            self.is_busy = False
 
     def set_limits(
         self,
@@ -306,4 +364,4 @@ class PriorStage(AbstractStage):
         pass
 
     def get_config(self) -> StageConfig:
-        return super().get_config()
+        return self._config

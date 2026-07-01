@@ -16,6 +16,7 @@ from squid.ui.widgets.stage._common import (
     handles,
     squid,
 )
+from qtpy.QtWidgets import QApplication
 from _def import IS_PIEZO_ONLY
 from squid.core.events import MoveStageRelativeCommand, MovePiezoRelativeCommand
 
@@ -65,6 +66,11 @@ class NavigationWidget(EventBusFrame):
         self.checkbox_clickToMove: QCheckBox
         self.grid: QVBoxLayout
 
+        # Cached position for copy button
+        self._last_x_mm: float = 0.0
+        self._last_y_mm: float = 0.0
+        self._last_z_um: float = 0.0
+
         self.add_components()
         self.setFrameStyle(QFrame.Panel | QFrame.Raised)
 
@@ -74,6 +80,19 @@ class NavigationWidget(EventBusFrame):
         self.label_Xpos.setNum(event.x_mm)
         self.label_Ypos.setNum(event.y_mm)
         self.label_Zpos.setNum(event.z_mm * 1000)
+        self._last_x_mm = event.x_mm
+        self._last_y_mm = event.y_mm
+        self._last_z_um = event.z_mm * 1000
+
+    def _copy_position_to_clipboard(self) -> None:
+        """Copy current stage position to system clipboard."""
+        text = (
+            f"X: {self._last_x_mm:.4f} mm, "
+            f"Y: {self._last_y_mm:.4f} mm, "
+            f"Z: {self._last_z_um:.1f} um"
+        )
+        QApplication.clipboard().setText(text)
+        self.log.info(f"Position copied to clipboard: {text}")
 
     def add_components(self) -> None:
         x_label = QLabel("X :")
@@ -137,6 +156,29 @@ class NavigationWidget(EventBusFrame):
         self.btn_moveZ_backward = QPushButton("Backward")
         self.btn_moveZ_backward.setDefault(False)
 
+        # Copy Position button
+        self.btn_copyPosition = QPushButton("Copy Pos")
+        self.btn_copyPosition.setDefault(False)
+        self.btn_copyPosition.setToolTip("Copy current stage position (X, Y, Z) to clipboard")
+        self.btn_copyPosition.clicked.connect(self._copy_position_to_clipboard)
+
+        # Tooltips for all controls
+        self.label_Xpos.setToolTip("Current X position in millimeters")
+        self.label_Ypos.setToolTip("Current Y position in millimeters")
+        self.label_Zpos.setToolTip("Current Z position in micrometers")
+        self.entry_dX.setToolTip("Step size for X axis movement (mm)")
+        self.entry_dY.setToolTip("Step size for Y axis movement (mm)")
+        self.entry_dZ.setToolTip("Step size for Z axis movement (um)")
+        self.btn_moveX_forward.setToolTip("Move stage forward along X axis by step size")
+        self.btn_moveX_backward.setToolTip("Move stage backward along X axis by step size")
+        self.btn_moveY_forward.setToolTip("Move stage forward along Y axis by step size")
+        self.btn_moveY_backward.setToolTip("Move stage backward along Y axis by step size")
+        self.btn_moveZ_forward.setToolTip("Move stage up (increase Z) by step size")
+        self.btn_moveZ_backward.setToolTip("Move stage down (decrease Z) by step size")
+        self.checkbox_clickToMove.setToolTip(
+            "When enabled, click on the live image to move the stage to that position"
+        )
+
         grid_line0 = QGridLayout()
         grid_line0.addWidget(x_label, 0, 0)
         grid_line0.addWidget(self.label_Xpos, 0, 1)
@@ -155,6 +197,7 @@ class NavigationWidget(EventBusFrame):
         grid_line0.addWidget(self.entry_dZ, 2, 2)
         grid_line0.addWidget(self.btn_moveZ_forward, 2, 3)
         grid_line0.addWidget(self.btn_moveZ_backward, 2, 4)
+        grid_line0.addWidget(self.btn_copyPosition, 0, 5, 3, 1)
 
         self.grid = QVBoxLayout()
         self.grid.addLayout(grid_line0)

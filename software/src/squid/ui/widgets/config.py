@@ -37,168 +37,6 @@ if TYPE_CHECKING:
     from squid.ui.ui_event_bus import UIEventBus
 
 
-class ConfigEditor(QDialog):
-    config: ConfigParser
-    scroll_area: QScrollArea
-    scroll_area_widget: QWidget
-    scroll_area_layout: QVBoxLayout
-    save_config_button: QPushButton
-    save_to_file_button: QPushButton
-    load_config_button: QPushButton
-    config_value_widgets: Dict[str, Dict[str, Any]]
-    groups: Dict[str, CollapsibleGroupBox]
-
-    def __init__(self, config: ConfigParser) -> None:
-        super().__init__()
-        self._log = squid.core.logging.get_logger(self.__class__.__name__)
-        self.config = config
-
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area_widget = QWidget()
-        self.scroll_area_layout = QVBoxLayout()
-        self.scroll_area_widget.setLayout(self.scroll_area_layout)
-        self.scroll_area.setWidget(self.scroll_area_widget)
-
-        self.save_config_button = QPushButton("Save Config")
-        self.save_config_button.clicked.connect(self.save_config)
-        self.save_to_file_button = QPushButton("Save to File")
-        self.save_to_file_button.clicked.connect(self.save_to_file)
-        self.load_config_button = QPushButton("Load Config from File")
-        self.load_config_button.clicked.connect(self.load_config_from_file)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.scroll_area)
-        layout.addWidget(self.save_config_button)
-        layout.addWidget(self.save_to_file_button)
-        layout.addWidget(self.load_config_button)
-
-        self.config_value_widgets = {}
-
-        self.setLayout(layout)
-        self.setWindowTitle("Configuration Editor")
-        self.init_ui()
-
-    def init_ui(self) -> None:
-        self.groups = {}
-        for section in self.config.sections():
-            group_box = CollapsibleGroupBox(section)
-            group_layout = QVBoxLayout()
-
-            section_value_widgets = {}
-
-            self.groups[section] = group_box
-
-            for option in self.config.options(section):
-                if option.startswith("_") and option.endswith("_options"):
-                    continue
-                option_value = self.config.get(section, option)
-                option_name = QLabel(option)
-                option_layout = QHBoxLayout()
-                option_layout.addWidget(option_name)
-                if f"_{option}_options" in self.config.options(section):
-                    option_value_list = self.config.get(section, f"_{option}_options")
-                    values = option_value_list.strip("[]").split(",")
-                    for i in range(len(values)):
-                        values[i] = values[i].strip()
-                    if option_value not in values:
-                        values.append(option_value)
-                    combo_box = QComboBox()
-                    combo_box.addItems(values)
-                    combo_box.setCurrentText(option_value)
-                    option_layout.addWidget(combo_box)
-                    section_value_widgets[option] = combo_box
-                else:
-                    option_input = QLineEdit(option_value)
-                    option_layout.addWidget(option_input)
-                    section_value_widgets[option] = option_input
-                group_layout.addLayout(option_layout)
-
-            self.config_value_widgets[section] = section_value_widgets
-            group_box.content.addLayout(group_layout)
-            self.scroll_area_layout.addWidget(group_box)
-
-    def save_config(self) -> None:
-        for section in self.config.sections():
-            for option in self.config.options(section):
-                if option.startswith("_") and option.endswith("_options"):
-                    continue
-                old_val = self.config.get(section, option)
-                widget = self.config_value_widgets[section][option]
-                if type(widget) is QLineEdit:
-                    self.config.set(section, option, widget.text())
-                else:
-                    self.config.set(section, option, widget.currentText())
-                if old_val != self.config.get(section, option):
-                    print(self.config.get(section, option))
-
-    def save_to_filename(self, filename: str) -> bool:
-        try:
-            with open(filename, "w") as configfile:
-                self.config.write(configfile)
-                return True
-        except IOError:
-            self._log.exception(f"Failed to write config file to '{filename}'")
-            return False
-
-    def save_to_file(self) -> None:
-        self.save_config()
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Config File", "", "INI Files (*.ini);;All Files (*)"
-        )
-        if file_path:
-            if not self.save_to_filename(file_path):
-                QMessageBox.warning(
-                    self,
-                    "Warning",
-                    f"Failed to write config file to '{file_path}'.  Check permissions!",
-                )
-
-    def load_config_from_file(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Load Config File", "", "INI Files (*.ini);;All Files (*)"
-        )
-        if file_path:
-            self.config.read(file_path)
-            # Clear and re-initialize the UI
-            self.scroll_area_widget.deleteLater()
-            self.scroll_area_widget = QWidget()
-            self.scroll_area_layout = QVBoxLayout()
-            self.scroll_area_widget.setLayout(self.scroll_area_layout)
-            self.scroll_area.setWidget(self.scroll_area_widget)
-            self.init_ui()
-
-
-class ConfigEditorBackwardsCompatible(ConfigEditor):
-    original_filepath: str
-    main_window: QWidget
-    apply_exit_button: QPushButton
-
-    def __init__(
-        self, config: ConfigParser, original_filepath: str, main_window: QWidget
-    ) -> None:
-        super().__init__(config)
-        self.original_filepath = original_filepath
-        self.main_window = main_window
-
-        self.apply_exit_button = QPushButton("Apply and Exit")
-        self.apply_exit_button.clicked.connect(self.apply_and_exit)
-
-        layout = self.layout()
-        if layout is not None:
-            layout.addWidget(self.apply_exit_button)
-
-    def apply_and_exit(self) -> None:
-        self.save_config()
-        with open(self.original_filepath, "w") as configfile:
-            self.config.write(configfile)
-        try:
-            self.main_window.close()
-        except Exception:
-            pass
-        self.close()
-
-
 class ProfileWidget(QFrame):
     signal_profile_changed: Signal = Signal()
 
@@ -316,6 +154,7 @@ class PreferencesDialog(QDialog):
         self._create_camera_tab()
         self._create_views_tab()
         self._create_advanced_tab()
+        self._create_help_tab()
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -969,6 +808,71 @@ class PreferencesDialog(QDialog):
         tab_layout = QVBoxLayout(tab)
         tab_layout.addWidget(scroll)
         self.tab_widget.addTab(tab, "Advanced")
+
+    def _create_help_tab(self) -> None:
+        from squid.ui.user_preferences import load_preferences, save_preferences
+
+        tab = QWidget()
+        layout = QFormLayout(tab)
+        layout.setSpacing(10)
+
+        prefs = load_preferences()
+
+        self._help_show_tips = QCheckBox()
+        self._help_show_tips.setChecked(prefs.show_tips)
+        self._help_show_tips.setToolTip("Show contextual tips when you use a feature for the first time")
+        layout.addRow("Show Contextual Tips:", self._help_show_tips)
+
+        self._help_show_hints = QCheckBox()
+        self._help_show_hints.setChecked(prefs.show_status_hints)
+        self._help_show_hints.setToolTip("Show rotating helpful hints in the status bar")
+        layout.addRow("Show Status Bar Hints:", self._help_show_hints)
+
+        self._help_show_getting_started = QCheckBox()
+        self._help_show_getting_started.setChecked(prefs.show_getting_started)
+        self._help_show_getting_started.setToolTip("Show the Getting Started checklist panel")
+        layout.addRow("Show Getting Started Panel:", self._help_show_getting_started)
+
+        reset_btn = QPushButton("Reset All Tips && Onboarding")
+        reset_btn.setToolTip("Re-enable all tips, hints, and the welcome dialog")
+        reset_btn.clicked.connect(self._reset_all_tips)
+        layout.addRow("", reset_btn)
+
+        note = QLabel("Changes to these settings take effect on next app restart.")
+        note.setStyleSheet("color: gray; font-size: 10px; font-style: italic;")
+        layout.addRow("", note)
+
+        self.tab_widget.addTab(tab, "Help && Tips")
+
+        # Save help preferences when the main save button is clicked
+        self.save_button.clicked.connect(self._save_help_preferences)
+
+    def _save_help_preferences(self) -> None:
+        from squid.ui.user_preferences import load_preferences, save_preferences
+
+        try:
+            prefs = load_preferences()
+            updated = prefs.with_update(
+                show_tips=self._help_show_tips.isChecked(),
+                show_status_hints=self._help_show_hints.isChecked(),
+                show_getting_started=self._help_show_getting_started.isChecked(),
+            )
+            save_preferences(updated)
+        except Exception:
+            pass  # Non-critical
+
+    def _reset_all_tips(self) -> None:
+        from squid.ui.user_preferences import UserPreferences, save_preferences
+
+        save_preferences(UserPreferences())  # All defaults
+        self._help_show_tips.setChecked(True)
+        self._help_show_hints.setChecked(True)
+        self._help_show_getting_started.setChecked(True)
+        QMessageBox.information(
+            self, "Tips Reset",
+            "All tips and onboarding have been reset.\n"
+            "The welcome dialog will show on next launch."
+        )
 
     def _get_config_value(self, section: str, option: str, default: str = "") -> str:
         try:

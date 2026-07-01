@@ -186,12 +186,18 @@ class ContinuousFocusLockController(BaseController):
             self.stop()
 
     def start(self, target_um: float = 0.0) -> None:
+        # Soft-init: apply cached ROI/exposure from per-objective settings without
+        # running the stage-moving auto-calibration. Lets the user click Start
+        # directly without first running the legacy "Initialize" workflow.
         if not self._laser_af.is_initialized:
-            self._log.error("Cannot start: laser AF not initialized")
-            return
-        if not self._laser_af.laser_af_properties.has_reference:
-            self._log.error("Cannot start: no reference set")
-            return
+            try:
+                self._laser_af.initialize_manual(self._laser_af.laser_af_properties)
+            except Exception:
+                self._log.exception("Cannot start: soft-init via initialize_manual failed")
+                return
+        # has_reference is no longer required up front. The lock target is held
+        # by this controller; users click Lock to capture the current spot
+        # position as the reference once spot detection looks healthy.
         with self._lock:
             if self._running:
                 return
@@ -438,8 +444,27 @@ class ContinuousFocusLockController(BaseController):
         return False
 
     def _set_lock_reference(self) -> None:
-        """Set the lock reference at current position."""
+        """Set the lock reference at current position.
+
+        Captures one measurement to anchor x_reference on the laser AF config so
+        subsequent frames compute real displacements (otherwise the no-reference
+        fallback returns 0 for every frame and the feedback loop never moves
+        the piezo). Then commits the lock target at displacement = 0.
+        """
         result = self._laser_af.measure_displacement_continuous()
+        if (
+            result.spot_x_px is not None
+            and result.image is not None
+            and not math.isnan(result.spot_snr)
+            and result.spot_snr >= self._config.min_spot_snr
+        ):
+            committed = self._laser_af.commit_reference_from_result(result)
+            if committed:
+                # Re-measure now that has_reference is True so target_um is the
+                # true (near-zero) displacement against the freshly anchored
+                # reference rather than the displacement we read pre-anchor.
+                result = self._laser_af.measure_displacement_continuous()
+
         target_um = result.displacement_um
         if math.isnan(target_um):
             target_um = self._latest_valid_displacement_um
@@ -463,6 +488,13 @@ class ContinuousFocusLockController(BaseController):
             self._lock_reference_active = False
             self._lock_buffer_fill = 0
             self._locked_spot_x_px = float("nan")
+        # Clear the laser AF reference too so the next Lock starts from a clean
+        # has_reference=False state and re-anchors against the live spot rather
+        # than the previously committed (now stale) reference.
+        try:
+            self._laser_af.clear_reference()
+        except Exception:
+            self._log.exception("Failed to clear laser AF reference on release")
         self._set_status("ready")
 
     def _commit_lock_reference(self, target_um: float, spot_x_px: Optional[float]) -> None:

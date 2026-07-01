@@ -18,15 +18,11 @@ __all__ = [
     "CollapsibleGroupBox",
     "PandasTableModel",
     # config
-    "ConfigEditor",
-    "ConfigEditorBackwardsCompatible",
     "PreferencesDialog",
     "ProfileWidget",
     # camera
     "CameraSettingsWidget",
     "LiveControlWidget",
-    "RecordingWidget",
-    "MultiCameraRecordingWidget",
     # stage
     "StageUtils",
     "PiezoWidget",
@@ -93,15 +89,11 @@ _LAZY_IMPORTS: Final[dict[str, tuple[str, str]]] = {
     "CollapsibleGroupBox": ("squid.ui.widgets.base", "CollapsibleGroupBox"),
     "PandasTableModel": ("squid.ui.widgets.base", "PandasTableModel"),
     # config
-    "ConfigEditor": ("squid.ui.widgets.config", "ConfigEditor"),
-    "ConfigEditorBackwardsCompatible": ("squid.ui.widgets.config", "ConfigEditorBackwardsCompatible"),
     "PreferencesDialog": ("squid.ui.widgets.config", "PreferencesDialog"),
     "ProfileWidget": ("squid.ui.widgets.config", "ProfileWidget"),
     # camera
     "CameraSettingsWidget": ("squid.ui.widgets.camera", "CameraSettingsWidget"),
     "LiveControlWidget": ("squid.ui.widgets.camera", "LiveControlWidget"),
-    "RecordingWidget": ("squid.ui.widgets.camera", "RecordingWidget"),
-    "MultiCameraRecordingWidget": ("squid.ui.widgets.camera", "MultiCameraRecordingWidget"),
     # stage
     "StageUtils": ("squid.ui.widgets.stage", "StageUtils"),
     "PiezoWidget": ("squid.ui.widgets.stage", "PiezoWidget"),

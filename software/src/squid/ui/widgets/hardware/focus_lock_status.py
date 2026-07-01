@@ -4,7 +4,7 @@ import math
 from typing import Optional, TYPE_CHECKING, Tuple
 
 import numpy as np
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QRect
 from qtpy.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from qtpy.QtWidgets import (
     QCheckBox,
@@ -256,11 +256,15 @@ class SpotPreviewWidget(QWidget):
         self._spot_y: float = 0.0
         self._spot_valid: bool = False
         self._pixmap: Optional[QPixmap] = None
+        self._zoomed: bool = False
+        self._zoom_factor: float = 4.0
 
         # Expand horizontally to fill available width
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setFixedHeight(70)  # Taller for better visibility
         self.setStyleSheet("background-color: #000;")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to toggle 4x zoom on the spot")
 
     def set_frame(
         self, frame: np.ndarray, spot_x: float, spot_y: float, spot_valid: bool = True
@@ -303,6 +307,14 @@ class SpotPreviewWidget(QWidget):
 
         self._pixmap = QPixmap.fromImage(qimg)
 
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._zoomed = not self._zoomed
+            self.update()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -311,27 +323,69 @@ class SpotPreviewWidget(QWidget):
         widget_h = self.height()
         painter.fillRect(0, 0, widget_w, widget_h, QColor(0, 0, 0))
 
-        if self._pixmap is not None and not self._pixmap.isNull():
-            # Keep camera geometry intact: show full frame without distortion.
-            scaled = self._pixmap.scaled(
-                widget_w, widget_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
-            )
-            x_offset = (widget_w - scaled.width()) // 2
-            y_offset = (widget_h - scaled.height()) // 2
-            painter.drawPixmap(x_offset, y_offset, scaled)
+        if self._pixmap is not None and not self._pixmap.isNull() and self._frame is not None:
+            frame_h, frame_w = self._frame.shape[:2]
 
-            # Draw small circle at spot centroid position (only if spot detection was valid)
-            if self._frame is not None and self._spot_valid:
-                frame_h, frame_w = self._frame.shape[:2]
-                scale_x = scaled.width() / frame_w
-                scale_y = scaled.height() / frame_h
-                spot_x = int(x_offset + self._spot_x * scale_x)
-                spot_y = int(y_offset + self._spot_y * scale_y)
+            if self._zoomed and self._zoom_factor > 1.0:
+                # Zoomed view: crop a window around the spot (or frame center if
+                # the spot reading isn't valid right now) and stretch to fit.
+                crop_w = max(1, int(round(frame_w / self._zoom_factor)))
+                crop_h = max(1, int(round(frame_h / self._zoom_factor)))
+                if self._spot_valid:
+                    cx, cy = self._spot_x, self._spot_y
+                else:
+                    cx, cy = frame_w / 2.0, frame_h / 2.0
+                src_x = int(round(cx - crop_w / 2.0))
+                src_y = int(round(cy - crop_h / 2.0))
+                src_x = max(0, min(src_x, frame_w - crop_w))
+                src_y = max(0, min(src_y, frame_h - crop_h))
+                source_rect = QRect(src_x, src_y, crop_w, crop_h)
 
-                # Draw green circle at spot center
-                painter.setPen(QPen(QColor(0, 255, 0), 2))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(spot_x - 6, spot_y - 6, 12, 12)
+                # Letterbox the zoomed crop to keep the aspect ratio consistent.
+                src_aspect = crop_w / crop_h if crop_h else 1.0
+                widget_aspect = widget_w / widget_h if widget_h else 1.0
+                if src_aspect > widget_aspect:
+                    target_w = widget_w
+                    target_h = max(1, int(round(widget_w / src_aspect)))
+                else:
+                    target_h = widget_h
+                    target_w = max(1, int(round(widget_h * src_aspect)))
+                tx = (widget_w - target_w) // 2
+                ty = (widget_h - target_h) // 2
+                target_rect = QRect(tx, ty, target_w, target_h)
+
+                painter.drawPixmap(target_rect, self._pixmap, source_rect)
+
+                if self._spot_valid:
+                    scale_x = target_w / crop_w
+                    scale_y = target_h / crop_h
+                    spot_x = int(tx + (self._spot_x - src_x) * scale_x)
+                    spot_y = int(ty + (self._spot_y - src_y) * scale_y)
+                    painter.setPen(QPen(QColor(0, 255, 0), 2))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawEllipse(spot_x - 8, spot_y - 8, 16, 16)
+
+                painter.setPen(QPen(QColor(255, 215, 0), 1))
+                painter.drawText(
+                    4, 12, f"ZOOM {int(self._zoom_factor)}x"
+                )
+            else:
+                # Default view: keep camera geometry intact (no distortion).
+                scaled = self._pixmap.scaled(
+                    widget_w, widget_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                x_offset = (widget_w - scaled.width()) // 2
+                y_offset = (widget_h - scaled.height()) // 2
+                painter.drawPixmap(x_offset, y_offset, scaled)
+
+                if self._spot_valid:
+                    scale_x = scaled.width() / frame_w
+                    scale_y = scaled.height() / frame_h
+                    spot_x = int(x_offset + self._spot_x * scale_x)
+                    spot_y = int(y_offset + self._spot_y * scale_y)
+                    painter.setPen(QPen(QColor(0, 255, 0), 2))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawEllipse(spot_x - 6, spot_y - 6, 12, 12)
         else:
             # Draw placeholder text
             painter.setPen(QPen(QColor(85, 85, 85)))
@@ -350,7 +404,12 @@ class SpotPreviewWidget(QWidget):
 class FocusLockStatusWidget(EventBusFrame):
     """Focus lock widget with vertical bars and space for laser spot view."""
 
-    def __init__(self, event_bus: "UIEventBus", parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        event_bus: "UIEventBus",
+        parent: Optional[QWidget] = None,
+        initial_laser_af_properties: Optional[dict] = None,
+    ) -> None:
         super().__init__(event_bus, parent)
         self._config = FocusLockConfig()
         self._mode: str = self._config.default_mode
@@ -365,6 +424,8 @@ class FocusLockStatusWidget(EventBusFrame):
         self._z_error_rms_um: Optional[float] = None
         self._drift_rate_um_per_s: Optional[float] = None
         self._collapsed = False
+        self._initial_laser_af_properties: dict = dict(initial_laser_af_properties or {})
+        self._settings_dialog = None  # Lazy-constructed FocusLockSettingsDialog
 
         self._setup_ui()
         self._connect_events()
@@ -530,7 +591,15 @@ class FocusLockStatusWidget(EventBusFrame):
             "Automatically search to recover focus when lock is lost"
         )
         self._auto_recover_checkbox.toggled.connect(self._on_auto_recover_toggled)
-        controls_grid.addWidget(self._auto_recover_checkbox, 0, 2, 1, 2)
+        controls_grid.addWidget(self._auto_recover_checkbox, 0, 2)
+
+        self._settings_btn = QPushButton("Settings…")
+        self._settings_btn.setFixedWidth(75)
+        self._settings_btn.setToolTip(
+            "Open camera, spot detection, and lock loop parameters"
+        )
+        self._settings_btn.clicked.connect(self._on_settings_clicked)
+        controls_grid.addWidget(self._settings_btn, 0, 3)
 
         # Row 1: Adjust target (nudge) controls
         adjust_label = QLabel("Adjust target:")
@@ -720,6 +789,22 @@ class FocusLockStatusWidget(EventBusFrame):
             self._publish(ReleaseFocusLockReferenceCommand())
         else:
             self._publish(SetFocusLockReferenceCommand())
+
+    def _on_settings_clicked(self) -> None:
+        if self._settings_dialog is None:
+            from squid.ui.widgets.hardware.focus_lock_settings_dialog import (
+                FocusLockSettingsDialog,
+            )
+
+            self._settings_dialog = FocusLockSettingsDialog(
+                event_bus=self._bus,
+                initial_laser_af_properties=self._initial_laser_af_properties,
+                initial_focus_lock_config=self._config,
+                parent=self,
+            )
+        self._settings_dialog.show()
+        self._settings_dialog.raise_()
+        self._settings_dialog.activateWindow()
 
     def _nudge(self, direction: float) -> None:
         delta = direction * float(self._nudge_step.value())

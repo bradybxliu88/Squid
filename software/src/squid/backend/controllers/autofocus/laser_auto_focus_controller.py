@@ -30,6 +30,7 @@ from squid.core.events import (
     InitializeLaserAFCommand,
     SetLaserAFCharacterizationModeCommand,
     UpdateLaserAFThresholdCommand,
+    UpdateLaserAFLiveParamsCommand,
     MoveToLaserAFTargetCommand,
     SetLaserAFReferenceCommand,
     MeasureLaserAFDisplacementCommand,
@@ -479,9 +480,88 @@ class LaserAutofocusController(BaseController):
         return True
 
     def set_laser_af_properties(self, updates: dict) -> None:
-        """Update laser autofocus properties. Used for updating settings from GUI."""
+        """Update laser autofocus properties. Used for updating settings from GUI.
+
+        Clears is_initialized so a re-init is required afterward. For live
+        parameter tuning during a running focus lock, use update_live_properties.
+        """
         self.laser_af_properties = self.laser_af_properties.model_copy(update=updates)
         self.is_initialized = False
+
+    # Fields safe to edit while the focus lock is running. The continuous lock
+    # loop reads laser_af_properties on every frame, so detection-side changes
+    # take effect on the next measurement; camera changes are pushed below.
+    _LIVE_EDITABLE_FIELDS = frozenset({
+        "focus_camera_exposure_time_ms",
+        "focus_camera_analog_gain",
+        "spot_detection_mode",
+        "y_window",
+        "x_window",
+        "min_peak_width",
+        "min_peak_distance",
+        "min_peak_prominence",
+        "spot_spacing",
+        "filter_sigma",
+        "laser_af_averaging_n",
+        "displacement_success_window_um",
+        "correlation_threshold",
+        "laser_af_range",
+    })
+
+    def update_live_properties(self, updates: dict) -> None:
+        """Update parameters live without invalidating initialization.
+
+        Intended for tuning camera exposure/gain, spot-detection params, and
+        tolerance settings while the focus lock is running. Camera parameters
+        are pushed to the camera service immediately so they take effect on the
+        next trigger. Persists to the per-objective settings cache and publishes
+        LaserAFPropertiesChanged so other widgets stay in sync.
+        """
+        if not updates:
+            return
+
+        rejected = set(updates) - self._LIVE_EDITABLE_FIELDS
+        if rejected:
+            self._log.warning(
+                "update_live_properties: ignoring non-live-editable fields: %s",
+                sorted(rejected),
+            )
+        applied = {k: v for k, v in updates.items() if k in self._LIVE_EDITABLE_FIELDS}
+        if not applied:
+            return
+
+        self.laser_af_properties = self.laser_af_properties.model_copy(update=applied)
+
+        if "focus_camera_exposure_time_ms" in applied:
+            try:
+                self._set_camera_exposure(float(applied["focus_camera_exposure_time_ms"]))
+            except Exception:
+                self._log.exception("Failed to push focus camera exposure live")
+        if "focus_camera_analog_gain" in applied:
+            try:
+                self._set_camera_analog_gain(float(applied["focus_camera_analog_gain"]))
+            except NotImplementedError:
+                pass
+            except Exception:
+                self._log.exception("Failed to push focus camera analog gain live")
+
+        if (
+            self.laserAFSettingManager
+            and self.objectiveStore
+            and self.objectiveStore.current_objective
+        ):
+            try:
+                self.laserAFSettingManager.update_laser_af_settings(
+                    self.objectiveStore.current_objective, applied
+                )
+                self.laserAFSettingManager.save_configurations(
+                    self.objectiveStore.current_objective
+                )
+            except Exception:
+                self._log.exception("Failed to persist live laser AF properties")
+
+        if self._event_bus is not None:
+            self._event_bus.publish(LaserAFPropertiesChanged(properties=applied))
 
     def update_threshold_properties(self, updates: dict) -> None:
         """Update threshold properties. Save settings without re-initializing."""
@@ -758,6 +838,93 @@ class LaserAutofocusController(BaseController):
 
         return True
 
+    def commit_reference_from_result(self, result: "LaserAFResult") -> bool:
+        """Commit the spot in ``result`` as the displacement reference.
+
+        Lighter equivalent of set_reference() that uses an in-flight frame
+        instead of re-acquiring. The continuous focus lock loop calls this when
+        the user clicks Lock, so subsequent measure_displacement_continuous()
+        calls compute a real displacement against the locked spot rather than
+        always returning 0 from the no-reference fallback.
+        """
+        if (
+            result is None
+            or result.image is None
+            or result.spot_x_px is None
+            or not self.is_initialized
+        ):
+            return False
+
+        crop_size = max(1, int(self.laser_af_properties.spot_crop_size))
+        center_y = result.image.shape[0] / 2
+        reference_crop, _ = extract_spot_crop(
+            result.image, float(result.spot_x_px), center_y, crop_size
+        )
+        normalized = normalize_crop_for_reference(reference_crop)
+        if normalized is None:
+            self._log.error("Failed to normalize reference crop from live result")
+            return False
+        self.reference_crop = normalized
+
+        x = float(result.spot_x_px)
+        self.laser_af_properties = self.laser_af_properties.model_copy(
+            update={"x_reference": x, "has_reference": True}
+        )
+
+        # Tell simulated camera to use current Z as reference (matches set_reference()).
+        try:
+            self._camera_service.set_reference_position()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        if (
+            self.laserAFSettingManager
+            and self.objectiveStore
+            and self.objectiveStore.current_objective
+        ):
+            try:
+                self.laserAFSettingManager.update_laser_af_settings(
+                    self.objectiveStore.current_objective,
+                    {
+                        "x_reference": x + self.laser_af_properties.x_offset,
+                        "has_reference": True,
+                    },
+                    crop_image=self.reference_crop,
+                )
+                self.laserAFSettingManager.save_configurations(
+                    self.objectiveStore.current_objective
+                )
+            except Exception:
+                self._log.exception(
+                    "Failed to persist live lock reference to settings cache"
+                )
+
+        if self._event_bus is not None:
+            self._event_bus.publish(LaserAFReferenceSet(success=True))
+        return True
+
+    def clear_reference(self) -> None:
+        """Clear the displacement reference, returning to no-reference state."""
+        self.reference_crop = None
+        self.laser_af_properties = self.laser_af_properties.model_copy(
+            update={"x_reference": None, "has_reference": False}
+        )
+        if (
+            self.laserAFSettingManager
+            and self.objectiveStore
+            and self.objectiveStore.current_objective
+        ):
+            try:
+                self.laserAFSettingManager.update_laser_af_settings(
+                    self.objectiveStore.current_objective,
+                    {"has_reference": False},
+                )
+                self.laserAFSettingManager.save_configurations(
+                    self.objectiveStore.current_objective
+                )
+            except Exception:
+                self._log.exception("Failed to persist cleared reference")
+
     def on_settings_changed(self) -> None:
         """Handle objective change or profile load event.
 
@@ -852,6 +1019,11 @@ class LaserAutofocusController(BaseController):
         # disable camera callback
         self._enable_camera_callbacks(False)
 
+        # Ensure the focus camera is streaming so triggers/reads work
+        was_streaming = self._camera_service.get_is_streaming()
+        if not was_streaming:
+            self._camera_service.start_streaming()
+
         # Wait for camera to settle after disabling callbacks
         # This is necessary because if live mode just stopped, the camera
         # might still be processing frames or in a transitional state
@@ -889,6 +1061,10 @@ class LaserAutofocusController(BaseController):
 
             except Exception:
                 continue
+
+        # Stop streaming if we started it
+        if not was_streaming:
+            self._camera_service.stop_streaming()
 
         # Re-enable camera callbacks
         self._enable_camera_callbacks(True)
@@ -1078,6 +1254,11 @@ class LaserAutofocusController(BaseController):
         """Handle UpdateLaserAFThresholdCommand from EventBus."""
         self.update_threshold_properties(cmd.updates)
 
+    @handles(UpdateLaserAFLiveParamsCommand)
+    def _on_update_live_params(self, cmd: UpdateLaserAFLiveParamsCommand) -> None:
+        """Handle live parameter updates without invalidating initialization."""
+        self.update_live_properties(cmd.updates)
+
     @handles(MoveToLaserAFTargetCommand)
     def _on_move_to_target(self, cmd: MoveToLaserAFTargetCommand) -> None:
         """Handle MoveToLaserAFTargetCommand from EventBus."""
@@ -1115,6 +1296,11 @@ class LaserAutofocusController(BaseController):
             )
             return
 
+        # Ensure the focus camera is streaming so triggers/reads work
+        was_streaming = self._camera_service.get_is_streaming()
+        if not was_streaming:
+            self._camera_service.start_streaming()
+
         try:
             # Capture a single frame for spot detection
             image = self.get_new_frame()
@@ -1148,6 +1334,9 @@ class LaserAutofocusController(BaseController):
                     LaserAFSpotCentroidMeasured(success=True, x_px=x, y_px=y, image=image)
                 )
         finally:
+            # Stop streaming if we started it
+            if not was_streaming:
+                self._camera_service.stop_streaming()
             try:
                 self._turn_off_af_laser()
             except TimeoutError:

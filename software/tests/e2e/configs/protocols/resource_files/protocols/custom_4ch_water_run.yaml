@@ -1,0 +1,41 @@
+description: "Custom 4-channel imaging protocol for 12-round water run. Uses FOCUS_LOCK_PER_FOV: laser AF is stopped during fluidics, re-engaged per FOV with seeded piezo Z from previous rounds."
+acquisition:
+  channels:
+    - name: "Fluorescence 405 nm Ex"
+      exposure_time_ms: 50.0
+      illumination_intensity: 25.0
+    - name: "Fluorescence 488 nm Ex"
+      exposure_time_ms: 250.0
+      illumination_intensity: 30.0
+    - name: "Fluorescence 638 nm Ex"
+      exposure_time_ms: 250.0
+      illumination_intensity: 50.0
+    - name: "Fluorescence 730 nm Ex"
+      exposure_time_ms: 500.0
+      illumination_intensity: 100.0
+  z_stack:
+    planes: 8
+    step_um: 1.5
+    direction: from_center
+  acquisition_order: channel_first
+  skip_saving: false
+focus_gate:
+  mode: focus_lock_per_fov
+  interval_fovs: 1
+  require_in_focus: true
+  max_focus_attempts: 3
+  on_focus_gate_fail: skip_fov
+  focus_lock:
+    min_spot_snr: 2.0           # Tolerant of weak spots (was 3.0)
+    lock_timeout_s: 2.0         # SHORT timeout — tier-2 single-shot fallback handles failures
+    acquire_threshold_um: 1.0   # Looser acquisition gate
+    maintain_threshold_um: 1.5  # Looser maintenance gate
+    buffer_length: 5
+    recovery_attempts: 3
+    auto_search_enabled: true
+    per_fov_max_attempts: 1     # Try once — if strict lock fails, fallback to single-shot measurement, then seed
+    per_fov_settle_s: 0.2       # Settle time after piezo seed move before acquire
+capture_policy:
+  max_capture_attempts: 2
+  retry_delay_s: 0.1
+  on_capture_fail: fail_step

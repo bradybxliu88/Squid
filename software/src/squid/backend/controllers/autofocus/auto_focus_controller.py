@@ -219,6 +219,10 @@ class AutoFocusController(StateMachine[AutofocusControllerState]):
         else:
             self.callback_was_enabled_before_autofocus = False
 
+        # ensure camera is streaming so the worker can send triggers
+        if not self._camera_service.get_is_streaming():
+            self._camera_service.start_streaming()
+
         # create a QThread object
         if self._focus_thread and self._focus_thread.is_alive():
             self._keep_running.clear()

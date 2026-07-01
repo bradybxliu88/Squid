@@ -391,6 +391,10 @@ class ApplicationContext:
             camera="main",
         )
 
+        # Give LiveController access to channel configs for event-driven mode switching
+        channel_configs = self._get_channel_configs_for_current_objective()
+        live_controller.set_channel_configs(channel_configs)
+
         # Create StreamHandler with backend hooks preserved across Qt wiring.
         stream_handler = StreamHandler(
             handler_functions=StreamHandlerFunctions(
@@ -639,11 +643,14 @@ class ApplicationContext:
         self, controller: Optional[MicroscopeModeController]
     ) -> None:
         """Update channel configs on the controller from the current objective."""
-        if controller is None:
-            return
         channel_configs = self._get_channel_configs_for_current_objective()
-        if channel_configs:
+        if controller is not None and channel_configs:
             controller.update_channel_configs(channel_configs)
+        # Also update LiveController's channel configs
+        if self._microscope is not None and hasattr(self._microscope, "live_controller"):
+            live_ctrl = self._microscope.live_controller
+            if live_ctrl is not None and channel_configs:
+                live_ctrl.set_channel_configs(channel_configs)
 
     def _create_peripherals_controller(self) -> PeripheralsController:
         """Create PeripheralsController with dependencies."""

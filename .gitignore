@@ -4,3 +4,5 @@
 **/.idea/
 .migration_complete
 software/tests/e2e/configs/outputs/
+# Acquisition output written to the repo root by single-FOV / quick-scan runs
+brady_images/

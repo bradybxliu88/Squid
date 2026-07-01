@@ -14,7 +14,7 @@ os.environ["QT_API"] = "pyqt5"
 from typing import Any, Optional
 
 # qt libraries
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
     QAction,
     QDockWidget,
@@ -23,7 +23,7 @@ from qtpy.QtWidgets import (
     QMessageBox,
     QTabWidget,
 )
-from qtpy.QtGui import QCloseEvent
+from qtpy.QtGui import QCloseEvent, QKeySequence, QShortcut
 
 from _def import (
     ENABLE_NDVIEWER,
@@ -35,11 +35,9 @@ from _def import (
     IS_HCS,
     LIVE_ONLY_MODE,
     RUN_FLUIDICS,
-    SHOW_LEGACY_DISPLACEMENT_MEASUREMENT_WINDOWS,
     SIMULATED_DISK_IO_ENABLED,
     SIMULATION_FORCE_SAVE_IMAGES,
     SUPPORT_SCIMICROSCOPY_LED_ARRAY,
-    USE_JUPYTER_CONSOLE,
     USE_NAPARI_WELL_SELECTION,
     USE_PRIOR_STAGE,
     USE_TEMPLATE_MULTIPOINT,
@@ -69,6 +67,7 @@ from squid.core.events import (
     AcquisitionCoordinates,
     AcquisitionStarted,
     MoveStageToCommand,
+    StartLiveCommand,
     StopLiveCommand,
     ImageCoordinateClickedCommand,
     ClickToMoveEnabledChanged,
@@ -78,9 +77,11 @@ from squid.core.events import (
     ActiveAcquisitionTabChanged,
     AutoLevelCommand,
     LiveStateChanged,
+    StagePositionChanged,
     PlateViewInit,
     PlateViewUpdate,
 )
+from squid.core.abc import Pos
 
 from squid.backend.controllers.workflow_runner.state import WorkflowRunnerStateChanged
 
@@ -95,7 +96,6 @@ from squid.backend.drivers.peripherals.piezo import PiezoStage
 
 # control.core.core was a shim - import classes directly
 from squid.ui.qt_stream_handler import QtStreamHandler
-from squid.ui.image_saver import ImageSaver
 from squid.ui.widgets.display.image_display import ImageDisplay, ImageDisplayWindow, ImageArrayDisplayWindow
 from squid.ui.widgets.display.navigation_viewer import NavigationViewer
 from typing import TYPE_CHECKING
@@ -105,12 +105,10 @@ if TYPE_CHECKING:
 import squid.backend.drivers.lighting as serial_peripherals
 
 if _FEATURE_FLAGS.is_enabled("SUPPORT_LASER_AUTOFOCUS"):
-    import squid.ui.displacement_measurement as core_displacement_measurement
+    pass  # Legacy displacement_measurement module removed
 
 SINGLE_WINDOW = True  # set to False if use separate windows for display and control
 
-if USE_JUPYTER_CONSOLE:
-    from squid.ui.console import JupyterWidget
 
 # Legacy Fluidics import removed - now using FluidicsService from ApplicationContext
 # See: squid/backend/services/fluidics_service.py
@@ -214,9 +212,6 @@ class HighContentScreeningGui(QMainWindow):
         self.liveController_focus_camera: Optional[LiveController] = None
         self.streamHandler_focus_camera: Optional[StreamHandler] = None
         self.imageDisplayWindow_focus: Optional[ImageDisplayWindow] = None
-        self.displacementMeasurementController: Optional[
-            core_displacement_measurement.DisplacementMeasurementController
-        ] = None
         self.laserAutofocusController: Optional[LaserAutofocusController] = None
 
         if self._feature_flags.is_enabled("SUPPORT_LASER_AUTOFOCUS"):
@@ -236,9 +231,6 @@ class HighContentScreeningGui(QMainWindow):
             )
             self.imageDisplayWindow_focus = ImageDisplayWindow(
                 event_bus=self._ui_event_bus, show_LUT=False, autoLevels=False
-            )
-            self.displacementMeasurementController = (
-                core_displacement_measurement.DisplacementMeasurementController()
             )
             core_laser_af = (
                 self._controllers.laser_autofocus
@@ -261,7 +253,6 @@ class HighContentScreeningGui(QMainWindow):
 
         self.streamHandler: QtStreamHandler = None
         self.autofocusController: AutoFocusController = None
-        self.imageSaver: ImageSaver = ImageSaver()
         self.imageDisplay: ImageDisplay = ImageDisplay()
         self.trackingController: Optional["TrackingControllerCore"] = None
         self.navigationViewer: NavigationViewer = None
@@ -284,7 +275,6 @@ class HighContentScreeningGui(QMainWindow):
         self.objectivesWidget: Optional[widgets.ObjectivesWidget] = None
         self.filterControllerWidget: Optional[widgets.FilterControllerWidget] = None
         self.squidFilterWidget: Optional[widgets.SquidFilterWidget] = None
-        self.recordingControlWidget: Optional[widgets.RecordingWidget] = None
         self.wellplateFormatWidget: Optional[widgets.WellplateFormatWidget] = None
         self.wellSelectionWidget: Optional[widgets.WellSelectionWidget] = None
         self.focusMapWidget: Optional[widgets.FocusMapWidget] = None
@@ -293,10 +283,6 @@ class HighContentScreeningGui(QMainWindow):
         ] = None
         self.laserAutofocusSettingWidget: Optional[
             widgets.LaserAutofocusSettingWidget
-        ] = None
-        self.waveformDisplay: Optional[widgets.WaveformDisplay] = None
-        self.displacementMeasurementWidget: Optional[
-            widgets.DisplacementMeasurementWidget
         ] = None
         self.laserAutofocusControlWidget: Optional[
             widgets.LaserAutofocusControlWidget
@@ -390,21 +376,44 @@ class HighContentScreeningGui(QMainWindow):
         filter_action.triggered.connect(self._open_filter_wheel_config)
         self.settings_menu.addAction(filter_action)
 
-        if USE_JUPYTER_CONSOLE:
-            # Create namespace to expose to Jupyter
-            self.namespace = {
-                "microscope": self.microscope,
-            }
-
-            # Create Jupyter widget as a dock widget
-            self.jupyter_dock = QDockWidget("Jupyter Console", self)
-            self.jupyter_widget = JupyterWidget(namespace=self.namespace)
-            self.jupyter_dock.setWidget(self.jupyter_widget)
-            self.addDockWidget(Qt.LeftDockWidgetArea, self.jupyter_dock)
-
         # Add warning/error widget to status bar
         if self.warningErrorWidget is not None:
             self.statusBar().addWidget(self.warningErrorWidget)
+
+        # --- Status bar hints (onboarding) ---
+        from squid.ui.user_preferences import load_preferences
+        self._user_prefs = load_preferences()
+        from squid.ui.widgets.onboarding.status_bar_hints import StatusBarHintWidget
+        self._status_hints = StatusBarHintWidget(
+            warning_widget=self.warningErrorWidget, parent=self
+        )
+        self.statusBar().addPermanentWidget(self._status_hints)
+
+        # --- Welcome dialog (first run) ---
+        if not self._user_prefs.first_run_completed:
+            from squid.ui.widgets.onboarding.welcome_dialog import WelcomeDialog
+            dialog = WelcomeDialog(self, self._user_prefs)
+            dialog.exec_()
+            self._user_prefs = load_preferences()  # Reload after dialog saves
+
+        # --- Keyboard shortcuts ---
+        self._shortcut_live = QShortcut(QKeySequence("Ctrl+L"), self)
+        self._shortcut_live.activated.connect(self._toggle_live_shortcut)
+        self._shortcut_perf = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
+        self._shortcut_perf.activated.connect(self._toggle_performance_shortcut)
+
+        # --- Periodic stage position auto-save (crash recovery) ---
+        self._last_stage_pos: Optional[tuple] = None  # (x_mm, y_mm, z_mm)
+        self._stage_pos_changed_since_save: bool = False
+        # Capture stage config before dropping service references
+        stage_service = self._services.get("stage") if self._services else None
+        self._stage_config = getattr(stage_service, "_stage_config", None) if stage_service else None
+        if self._stage_config is None and hasattr(self.microscope, "stage"):
+            self._stage_config = getattr(self.microscope.stage, "_stage_config", None)
+        self._stage_autosave_timer = QTimer(self)
+        self._stage_autosave_timer.setInterval(60000)
+        self._stage_autosave_timer.timeout.connect(self._autosave_stage_position)
+        self._stage_autosave_timer.start()
 
         # Capture stage service reference for alignment widget before dropping registries.
         self._stage_service = self._services.get("stage") if self._services else None
@@ -477,6 +486,22 @@ class HighContentScreeningGui(QMainWindow):
 
         # Create acquisition widgets (depends on napariMosaicDisplayWidget from above)
         widget_factory.create_acquisition_widgets(self)
+
+        # Getting Started widget (onboarding)
+        from squid.ui.user_preferences import load_preferences as _load_prefs
+        _prefs = _load_prefs()
+        if _prefs.show_getting_started:
+            from squid.ui.widgets.onboarding.getting_started import GettingStartedWidget
+            self.gettingStartedWidget = GettingStartedWidget(self._ui_event_bus)
+        else:
+            self.gettingStartedWidget = None
+
+        # Contextual tips (onboarding)
+        if _prefs.show_tips:
+            from squid.ui.widgets.onboarding.contextual_tips import ContextualTipManager
+            self._contextual_tips = ContextualTipManager(self._ui_event_bus, parent=self)
+        else:
+            self._contextual_tips = None
 
         self.setupRecordTabWidget()
         self.setupCameraTabWidget()
@@ -630,21 +655,6 @@ class HighContentScreeningGui(QMainWindow):
                 self.laserAutofocusSettingWidget.minimumSizeHint().width()
             )
 
-            dock_waveform = dock.Dock("Displacement Measurement", autoOrientation=False)
-            dock_waveform.showTitleBar()
-            dock_waveform.addWidget(self.waveformDisplay)
-            dock_waveform.setStretch(x=100, y=40)
-
-            dock_displayMeasurement = dock.Dock(
-                "Displacement Measurement Control", autoOrientation=False
-            )
-            dock_displayMeasurement.showTitleBar()
-            dock_displayMeasurement.addWidget(self.displacementMeasurementWidget)
-            dock_displayMeasurement.setStretch(x=100, y=40)
-            dock_displayMeasurement.setFixedWidth(
-                self.displacementMeasurementWidget.minimumSizeHint().width()
-            )
-
             laserfocus_dockArea = dock.DockArea()
             laserfocus_dockArea.addDock(dock_laserfocus_image_display)
             laserfocus_dockArea.addDock(
@@ -652,14 +662,6 @@ class HighContentScreeningGui(QMainWindow):
                 "right",
                 relativeTo=dock_laserfocus_image_display,
             )
-
-            if SHOW_LEGACY_DISPLACEMENT_MEASUREMENT_WINDOWS:
-                laserfocus_dockArea.addDock(
-                    dock_waveform, "bottom", relativeTo=dock_laserfocus_liveController
-                )
-                laserfocus_dockArea.addDock(
-                    dock_displayMeasurement, "bottom", relativeTo=dock_waveform
-                )
 
             self.imageDisplayTabs.addTab(
                 laserfocus_dockArea, self.LASER_BASED_FOCUS_TAB_NAME
@@ -854,8 +856,6 @@ class HighContentScreeningGui(QMainWindow):
             )
         if self._feature_flags.is_enabled("ENABLE_TRACKING"):
             self.recordTabWidget.addTab(self.trackingControlWidget, "Tracking")
-        if self._feature_flags.is_enabled("ENABLE_RECORDING"):
-            self.recordTabWidget.addTab(self.recordingControlWidget, "Simple Recording")
         self.recordTabWidget.currentChanged.connect(
             lambda: self.resizeCurrentTab(self.recordTabWidget)
         )
@@ -894,8 +894,6 @@ class HighContentScreeningGui(QMainWindow):
 
     def make_connections(self) -> None:
         # Core stream handler connections
-        self.streamHandler.packet_image_to_write.connect(self.imageSaver.enqueue)
-
         # Napari connections (complex, kept as method)
         self.makeNapariConnections()
         self._connect_tab_signals()
@@ -938,13 +936,6 @@ class HighContentScreeningGui(QMainWindow):
         )
         self.streamHandler_focus_camera.image_to_display.connect(
             self.imageDisplayWindow_focus.display_image
-        )
-        self.streamHandler_focus_camera.image_to_display.connect(
-            self.displacementMeasurementController.update_measurement
-        )
-        self.displacementMeasurementController.signal_plots.connect(self.waveformDisplay.plot)
-        self.displacementMeasurementController.signal_readings.connect(
-            self.displacementMeasurementWidget.display_readings
         )
 
     def makeNapariConnections(self) -> None:
@@ -1333,6 +1324,36 @@ class HighContentScreeningGui(QMainWindow):
             else:
                 self.alignmentWidget.disable()
 
+    @handles(StagePositionChanged)
+    def _on_stage_position_for_autosave(self, event: StagePositionChanged) -> None:
+        """Cache stage position for periodic auto-save (crash recovery)."""
+        self._last_stage_pos = (event.x_mm, event.y_mm, event.z_mm)
+        self._stage_pos_changed_since_save = True
+
+    def _toggle_live_shortcut(self) -> None:
+        """Keyboard shortcut handler: toggle live view."""
+        if self.liveControlWidget is not None:
+            self.liveControlWidget.btn_live.click()
+
+    def _toggle_performance_shortcut(self) -> None:
+        """Keyboard shortcut handler: toggle performance mode."""
+        if hasattr(self, "performanceModeToggle"):
+            self.performanceModeToggle.click()
+
+    def _autosave_stage_position(self) -> None:
+        """Periodically save stage position for crash recovery."""
+        if not self._stage_pos_changed_since_save or self._last_stage_pos is None:
+            return
+        try:
+            from squid.backend.drivers.stages.stage_utils import cache_position
+
+            x_mm, y_mm, z_mm = self._last_stage_pos
+            pos = Pos(x_mm=x_mm, y_mm=y_mm, z_mm=z_mm, theta_rad=None)
+            cache_position(pos, self._stage_config)
+            self._stage_pos_changed_since_save = False
+        except Exception:
+            self.log.debug("Stage position auto-save failed (non-critical)", exc_info=True)
+
     @handles(AcquisitionCoordinates)
     def _on_acquisition_coordinates(self, event: AcquisitionCoordinates) -> None:
         if getattr(self, "zPlotWidget", None) is None:
@@ -1669,10 +1690,6 @@ class HighContentScreeningGui(QMainWindow):
                 except Exception:
                     pass
 
-        try:
-            self.imageSaver.close()
-        except Exception:
-            pass
         try:
             self.imageDisplay.close()
         except Exception:

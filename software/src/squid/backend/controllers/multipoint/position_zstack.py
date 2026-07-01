@@ -270,6 +270,18 @@ class ZStackExecutor:
         self._z_piezo_um = self._z_home_um
         self._current_z_level = 0
 
+    def set_home(self, position_um: float) -> None:
+        """Update the recorded home (return_to_start target) and current tracked Z.
+
+        Used when a per-FOV focus lock moves the piezo AFTER :meth:`initialize`
+        has already snapshotted the pre-lock position: without this, both the
+        current tracked Z and the home used by :meth:`return_to_start` would be
+        stale, re-centering later channels' z-stacks on the wrong (pre-lock)
+        plane and imaging them out of focus.
+        """
+        self._z_home_um = float(position_um)
+        self._z_piezo_um = float(position_um)
+
     def step(self) -> None:
         """
         Move to next z-level in stack using piezo.
@@ -284,8 +296,22 @@ class ZStackExecutor:
         _log.info(
             f"ZStackExecutor.step: moving piezo from {self._z_piezo_um:.2f} to {target_um:.2f} um"
         )
-        self._z_piezo_um = target_um
-        self._piezo.move_to(self._z_piezo_um)
+        # Track the ACTUAL (clamped) position PiezoService.move_to returns, not the
+        # requested target. Otherwise, once the stack exceeds piezo travel, the
+        # recorded z_piezo climbs past the hardware limit while the piezo is pinned
+        # at the edge — producing fictitious per-plane Z metadata.
+        actual = self._piezo.move_to(target_um)
+        if actual is not None:
+            self._z_piezo_um = float(actual)
+            if abs(self._z_piezo_um - target_um) > 1e-3:
+                _log.warning(
+                    "ZStackExecutor.step: piezo clamped to %.2fum (requested %.2fum) — "
+                    "z-stack range exceeds piezo travel; remaining planes will duplicate",
+                    self._z_piezo_um,
+                    target_um,
+                )
+        else:
+            self._z_piezo_um = target_um
         if self._trigger_mode == TriggerMode.SOFTWARE:
             time.sleep(scale_duration(self._piezo_delay_s, min_seconds=1e-6))
         self._current_z_level += 1

@@ -1,0 +1,8 @@
+sequence_name,fluidic_port,flow_rate,volume,incubation_time,repeat,fill_tubing_with,include
+Flow Probe,1,500,3000,15,1,0,1
+Flow Wash Buffer,26,500,2000,5,2,0,1
+Flow Readout Buffer,25,500,3000,15,1,0,1
+Flow Wash Buffer,26,500,2000,5,2,0,1
+Flow Imaging Buffer,27,500,2000,3,1,0,1
+Flow Cleavage Buffer,28,500,2000,10,1,0,1
+Flow Wash Buffer,26,500,2000,5,2,0,1

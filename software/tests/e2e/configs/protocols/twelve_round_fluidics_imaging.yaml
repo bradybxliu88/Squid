@@ -1,0 +1,159 @@
+name: "12-Round Fluidics Imaging (Real Hardware)"
+version: "3.0"
+description: "Twelve sequential probe-delivery rounds with imaging between each round, using real MERFISH fluidics hardware."
+output_directory: D:/brady/new_software/outputs
+
+resources:
+  fluidics_protocols_file: C:/Users/CZC4457GCG/Desktop/Will/Squid_BL/software/merfish_config/water_run_fluidics_protocols.yaml
+  fluidics_config_file: C:/Users/CZC4457GCG/Desktop/Will/Squid_BL/software/merfish_config/MERFISH_config.json
+  fov_file: D:/brady/new_software/water_run_FOV.csv
+
+rounds:
+  - name: "Round 1"
+    steps:
+      - step_type: fluidics
+        protocol: initial_wash
+      - step_type: fluidics
+        protocol: round_1
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_01
+
+  - name: "Round 2"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_2
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_02
+
+  - name: "Round 3"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_3
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_03
+
+  - name: "Round 4"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_4
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_04
+
+  - name: "Round 5"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_5
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_05
+
+  - name: "Round 6"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_6
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_06
+
+  - name: "Round 7"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_7
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_07
+
+  - name: "Round 8"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_8
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_08
+
+  - name: "Round 9"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_9
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_09
+
+  - name: "Round 10"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_10
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_10
+
+  - name: "Round 11"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_11
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_11
+
+  - name: "Round 12"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_12
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: resource_files/protocols/custom_4ch_water_run.yaml
+        output_label: round_12
+
+  - name: "Final Wash"
+    steps:
+      - step_type: fluidics
+        protocol: final_wash

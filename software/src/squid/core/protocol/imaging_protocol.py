@@ -72,6 +72,12 @@ class FocusLockConfig(BaseModel):
     maintain_threshold_um: float = 0.5
     auto_search_enabled: bool = False
     lock_timeout_s: float = 5.0
+    # Per-FOV lock tuning (used when mode == focus_lock_per_fov).
+    # per_fov_max_attempts: how many acquire_lock_reference tries per FOV before
+    #   skipping the FOV (per focus_gate.on_focus_gate_fail policy).
+    # per_fov_settle_s: sleep between piezo seed move and acquire attempt.
+    per_fov_max_attempts: int = 2
+    per_fov_settle_s: float = 0.2
 
 
 class ImagingAcquisitionConfig(BaseModel):

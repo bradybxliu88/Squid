@@ -17,6 +17,7 @@ from squid.core.events import (
     EventBus,
     StartLiveCommand,
     StopLiveCommand,
+    SetMicroscopeModeCommand,
     SetTriggerModeCommand,
     SetTriggerFPSCommand,
     SetFilterAutoSwitchCommand,
@@ -104,6 +105,7 @@ class LiveController(StateMachine[LiveControllerState]):
         self._nl5_service = nl5_service
         self._mode_gate = mode_gate
         self._acquisition_service = acquisition_service
+        self._channel_configs: dict = {}  # Set via set_channel_configs()
         self.currentConfiguration: Optional["AcquisitionChannel"] = None
         self.trigger_mode: Optional[TriggerMode] = (
             TriggerMode.SOFTWARE
@@ -767,6 +769,23 @@ class LiveController(StateMachine[LiveControllerState]):
         # Publish state change outside lock
         if self._event_bus:
             self._event_bus.publish(FilterAutoSwitchChanged(enabled=cmd.enabled))
+
+    @handles(SetMicroscopeModeCommand)
+    def _on_set_microscope_mode_command(self, cmd: SetMicroscopeModeCommand) -> None:
+        """Handle SetMicroscopeModeCommand from EventBus."""
+        if getattr(cmd, "camera", "main") != self._camera:
+            return
+        config = self._channel_configs.get(cmd.configuration_name)
+        if config is None:
+            self._log.warning(
+                "SetMicroscopeModeCommand: config '%s' not found", cmd.configuration_name
+            )
+            return
+        self.set_microscope_mode(config)
+
+    def set_channel_configs(self, channel_configs: dict) -> None:
+        """Set channel configuration mapping for event-driven mode switching."""
+        self._channel_configs = channel_configs
 
     @handles(UpdateIlluminationCommand)
     def _on_update_illumination(self, cmd: UpdateIlluminationCommand) -> None:

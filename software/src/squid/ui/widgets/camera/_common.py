@@ -71,7 +71,6 @@ from squid.core.events import (
     ProfileChanged,
 )
 from squid.backend.io.stream_handler import StreamHandler
-from squid.ui.image_saver import ImageSaver
 from squid.backend.managers import ObjectiveStore
 from squid.backend.managers import ChannelConfigService
 from squid.core.config.models import AcquisitionChannel

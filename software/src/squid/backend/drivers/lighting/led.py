@@ -8,6 +8,9 @@ from pathlib import Path
 
 from _def import ILLUMINATION_CODE
 from squid.backend.microcontroller import Microcontroller
+import squid.core.logging
+
+_log = squid.core.logging.get_logger("squid.illumination")
 
 # Number of illumination ports supported (matches firmware)
 NUM_ILLUMINATION_PORTS = 16
@@ -80,6 +83,9 @@ class IlluminationController:
 
         # Try to load mappings from file
         self.channel_mappings_TTL = self._load_channel_mappings(default_mappings)
+        # Build reverse lookup: illumination source code -> wavelength key
+        # This allows callers to pass either wavelength (405) or source code (11)
+        self._source_code_to_channel = {v: k for k, v in self.channel_mappings_TTL.items()}
 
         self.channel_mappings_software = {}
         self.is_on = {}
@@ -100,6 +106,19 @@ class IlluminationController:
             and self.disable_intensity_calibration is False
         ):
             self._load_intensity_calibrations()
+
+    def _resolve_channel(self, channel):
+        """Resolve a channel identifier to a wavelength key in channel_mappings_TTL.
+
+        Accepts either a wavelength (405, 488, etc.) or an illumination source code
+        (11, 12, etc.). Returns the wavelength key, or None if not found.
+        """
+        if channel in self.channel_mappings_TTL:
+            return channel
+        # Check if it's an illumination source code (e.g., 11 for D1)
+        if channel in self._source_code_to_channel:
+            return self._source_code_to_channel[channel]
+        return None
 
     def _load_channel_mappings(self, default_mappings):
         """Load channel mappings from JSON file, fallback to default if file not found."""
@@ -150,40 +169,41 @@ class IlluminationController:
         if channel is None:
             channel = self.current_channel
 
-        # Check if channel is mapped
-        if channel not in self.channel_mappings_TTL:
+        resolved = self._resolve_channel(channel)
+        if resolved is None:
+            _log.warning("turn_on_illumination: channel %s could not be resolved, skipping", channel)
             return
 
         if self.shutter_control_mode == ShutterControlMode.Software:
-            if channel in self.channel_mappings_software:
+            if resolved in self.channel_mappings_software:
                 self.light_source.set_shutter_state(
-                    self.channel_mappings_software[channel], on=True
+                    self.channel_mappings_software[resolved], on=True
                 )
         elif self.shutter_control_mode == ShutterControlMode.TTL:
-            # self.microcontroller.set_illumination(self.channel_mappings_TTL[channel], self.intensity_settings[channel])
             self.microcontroller.turn_on_illumination()
             self.microcontroller.wait_till_operation_is_completed()
 
-        self.is_on[channel] = True
+        self.is_on[resolved] = True
 
     def turn_off_illumination(self, channel=None):
         if channel is None:
             channel = self.current_channel
 
-        # Check if channel is mapped
-        if channel not in self.channel_mappings_TTL:
+        # Resolve channel (accepts wavelength or illumination source code)
+        resolved = self._resolve_channel(channel)
+        if resolved is None:
             return
 
         if self.shutter_control_mode == ShutterControlMode.Software:
-            if channel in self.channel_mappings_software:
+            if resolved in self.channel_mappings_software:
                 self.light_source.set_shutter_state(
-                    self.channel_mappings_software[channel], on=False
+                    self.channel_mappings_software[resolved], on=False
                 )
         elif self.shutter_control_mode == ShutterControlMode.TTL:
             self.microcontroller.turn_off_illumination()
             self.microcontroller.wait_till_operation_is_completed()
 
-        self.is_on[channel] = False
+        self.is_on[resolved] = False
 
     def _load_intensity_calibrations(self):
         """Load intensity calibrations for all available wavelengths."""
@@ -237,40 +257,38 @@ class IlluminationController:
         return np.clip(dac_percent, 0, 100)
 
     def set_intensity(self, channel, intensity):
-        # Check if channel is mapped before attempting to set intensity
-        if channel not in self.channel_mappings_TTL:
-            # Channel not configured - log warning and return silently
-            # This can happen when illumination_source is an index (0, 1, 2)
-            # rather than a wavelength (405, 488, etc.)
+        resolved = self._resolve_channel(channel)
+        if resolved is None:
+            _log.warning("set_intensity: channel %s could not be resolved, skipping", channel)
             return
 
         # initialize intensity setting for this channel if it doesn't exist
-        if channel not in self.intensity_settings:
-            self.intensity_settings[channel] = -1
+        if resolved not in self.intensity_settings:
+            self.intensity_settings[resolved] = -1
         if self.intensity_control_mode == IntensityControlMode.Software:
-            if intensity != self.intensity_settings[channel]:
+            if intensity != self.intensity_settings[resolved]:
                 self.light_source.set_intensity(
-                    self.channel_mappings_software[channel], intensity
+                    self.channel_mappings_software[resolved], intensity
                 )
-                self.intensity_settings[channel] = intensity
+                self.intensity_settings[resolved] = intensity
             if self.shutter_control_mode == ShutterControlMode.TTL:
                 # This is needed, because we select the channel in microcontroller set_illumination().
                 # Otherwise, the wrong channel will be opened when turn_on_illumination() is called.
                 self.microcontroller.set_illumination(
-                    self.channel_mappings_TTL[channel], intensity
+                    self.channel_mappings_TTL[resolved], intensity
                 )
         else:
-            if channel in self.intensity_luts:
+            if resolved in self.intensity_luts:
                 # Apply LUT to convert power percentage to DAC percent (0-100)
-                dac_percent = self._apply_lut(channel, intensity)
+                dac_percent = self._apply_lut(resolved, intensity)
                 self.microcontroller.set_illumination(
-                    self.channel_mappings_TTL[channel], dac_percent
+                    self.channel_mappings_TTL[resolved], dac_percent
                 )
             else:
                 self.microcontroller.set_illumination(
-                    self.channel_mappings_TTL[channel], intensity
+                    self.channel_mappings_TTL[resolved], intensity
                 )
-            self.intensity_settings[channel] = intensity
+            self.intensity_settings[resolved] = intensity
 
     def get_shutter_state(self):
         return self.is_on

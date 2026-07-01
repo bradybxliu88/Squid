@@ -28,6 +28,10 @@ from ctypes import (
 )
 import sys
 
+# Alias for backward compatibility: gxiapi.py imports 'string' from this module.
+# The old wildcard 'from ctypes import *' exposed ctypes.string_at as 'string'.
+string = string_at
+
 
 if sys.platform == "linux2" or sys.platform == "linux":
     try:

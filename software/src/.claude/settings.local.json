@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main_hcs.py --simulation)",
+      "Bash(pip install:*)",
+      "Bash(python -c \"from crc import CrcCalculator, Crc8; help\\(CrcCalculator.__init__\\)\")",
+      "Bash(python:*)",
+      "Bash(git config:*)",
+      "Bash(cp:*)",
+      "Bash(rm -rf \"C:\\\\Users\\\\CZC4457GCG\\\\Desktop\\\\Will\\\\Squid\\\\software\\\\fluidics_v2\")",
+      "Bash(cp -r \"C:\\\\Users\\\\CZC4457GCG\\\\Desktop\\\\Squid_widefield\\\\software\\\\fluidics_v2/.\" \"C:\\\\Users\\\\CZC4457GCG\\\\Desktop\\\\Will\\\\Squid\\\\software\\\\fluidics_v2\")",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(rm -f \"C:\\\\Users\\\\CZC4457GCG\\\\AppData\\\\Local\\\\cephla\\\\squid\\\\Logs\\\\main_hcs.log.1\")",
+      "Bash(rm -f \"C:\\\\Users\\\\CZC4457GCG\\\\AppData\\\\Local\\\\cephla\\\\squid\\\\Logs\\\\main_hcs.log\")",
+      "Bash(powershell -Command \"Get-Process | Where-Object {$_.Path -like '*python*'} | Select-Object Id, ProcessName, Path | Format-Table -AutoSize\" 2>&1)",
+      "Bash(tasklist)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "squid-microscope"
+  ]
+}

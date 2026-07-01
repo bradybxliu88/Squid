@@ -37,6 +37,12 @@ def setup_control_panel_layout(gui: "HighContentScreeningGui") -> None:
     layout.setContentsMargins(4, 4, 4, 4)
     layout.setSpacing(4)
 
+    # Getting Started panel (onboarding, shown for new users)
+    if getattr(gui, "gettingStartedWidget", None) is not None:
+        getting_started_group = CollapsibleGroupBox("Getting Started")
+        getting_started_group.content.addWidget(gui.gettingStartedWidget)
+        layout.addWidget(getting_started_group)
+
     # Top section (Profile/Live Control) - always visible, not collapsible
     if _FEATURE_FLAGS.is_enabled("USE_NAPARI_FOR_LIVE_CONTROL") and not gui.live_only_mode:
         layout.addWidget(gui.navigationWidget)

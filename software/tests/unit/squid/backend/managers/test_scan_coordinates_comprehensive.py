@@ -108,6 +108,26 @@ def scan_coords(event_bus, mock_objective_store, mock_stage, mock_camera):
 
 
 # ============================================================================
+# 0. TestSingleFovRegionStoresZ — add_single_fov_region keeps the focal Z (L3)
+# ============================================================================
+
+
+class TestSingleFovRegionStoresZ:
+    """The per-FOV coordinate must retain the focal Z (3-tuple). Dropping it left
+    the top-level coordinates.csv "z (mm)" column blank for single-FOV runs."""
+
+    def test_single_fov_region_stores_3tuple_with_z(self, scan_coords):
+        scan_coords.add_single_fov_region(
+            "current", center_x=20.0, center_y=20.0, center_z=1.234
+        )
+        coords = scan_coords.region_fov_coordinates["current"]
+        assert len(coords) == 1
+        assert coords[0] == (20.0, 20.0, 1.234)
+        # region_centers continues to record the center (with Z) as before.
+        assert scan_coords.region_centers["current"][2] == 1.234
+
+
+# ============================================================================
 # 1. TestWellSelectionMode — Select Wells XY mode
 # ============================================================================
 
@@ -844,7 +864,9 @@ class TestRegionManagement:
         scan_coords.add_single_fov_region("R1", 20.0, 20.0, 0.0)
         assert "R1" in scan_coords.region_fov_coordinates
         assert len(scan_coords.region_fov_coordinates["R1"]) == 1
-        assert scan_coords.region_fov_coordinates["R1"][0] == pytest.approx((20.0, 20.0), abs=0.1)
+        # The per-FOV coordinate keeps the focal Z (3-tuple), matching flexible/
+        # grid regions — dropping it left coordinates.csv "z (mm)" blank (L3).
+        assert scan_coords.region_fov_coordinates["R1"][0] == pytest.approx((20.0, 20.0, 0.0), abs=0.1)
 
     def test_remove_nonexistent_region_noop(self, scan_coords):
         # Should not crash

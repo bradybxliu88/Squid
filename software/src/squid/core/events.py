@@ -1413,6 +1413,12 @@ class AutofocusMode(str, Enum):
     CONTRAST = "contrast"
     LASER_REFLECTION = "laser_reflection"
     FOCUS_LOCK = "focus_lock"
+    # FOCUS_LOCK_PER_FOV: lock is stopped during fluidics (no laser on, no
+    # piezo corrections). Before each FOV's imaging, the piezo is restored to
+    # that FOV's last known good Z (or a global seed on round 1), lock is
+    # engaged via acquire_lock_reference(), imaged, new Z saved. This
+    # avoids lock-loss from fluidics flow disturbing the sample.
+    FOCUS_LOCK_PER_FOV = "focus_lock_per_fov"
 
 
 @dataclass(frozen=True)
@@ -1426,6 +1432,9 @@ class FocusLockSettings:
     maintain_threshold_um: float = 0.5
     auto_search_enabled: bool = False
     lock_timeout_s: float = 5.0
+    # Used by FOCUS_LOCK_PER_FOV mode (PerFOVFocusLockStrategy)
+    per_fov_max_attempts: int = 2
+    per_fov_settle_s: float = 0.2
 
 
 @dataclass
@@ -1767,6 +1776,18 @@ class SetLaserAFCharacterizationModeCommand(Event):
 @dataclass
 class UpdateLaserAFThresholdCommand(Event):
     """Command to update threshold properties."""
+
+    updates: dict
+
+
+@dataclass
+class UpdateLaserAFLiveParamsCommand(Event):
+    """Update laser AF parameters live without invalidating initialization.
+
+    Use for camera exposure/gain, spot detection params, and tolerance settings
+    that the running spot detector reads each frame. Does NOT clear is_initialized,
+    so the continuous focus lock keeps running while parameters are tuned.
+    """
 
     updates: dict
 

@@ -859,7 +859,10 @@ class ScanCoordinates:
             )
 
         self.region_centers[region_id] = [clamped_x, clamped_y, center_z]
-        self.region_fov_coordinates[region_id] = [(clamped_x, clamped_y)]
+        # Store the focal Z in the per-FOV coordinate too (3-tuple), matching
+        # flexible/grid regions and what the orchestrator expects. Dropping it
+        # left the top-level coordinates.csv "z (mm)" column blank for single FOVs.
+        self.region_fov_coordinates[region_id] = [(clamped_x, clamped_y, center_z)]
         fov_width_mm, fov_height_mm = self._get_current_fov_dimensions()
         self._publish_update(
             AddScanCoordinateRegion(
