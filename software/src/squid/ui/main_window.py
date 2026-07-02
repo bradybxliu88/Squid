@@ -274,7 +274,6 @@ class HighContentScreeningGui(QMainWindow):
         self.piezoWidget: Optional[widgets.PiezoWidget] = None
         self.objectivesWidget: Optional[widgets.ObjectivesWidget] = None
         self.filterControllerWidget: Optional[widgets.FilterControllerWidget] = None
-        self.squidFilterWidget: Optional[widgets.SquidFilterWidget] = None
         self.wellplateFormatWidget: Optional[widgets.WellplateFormatWidget] = None
         self.wellSelectionWidget: Optional[widgets.WellSelectionWidget] = None
         self.focusMapWidget: Optional[widgets.FocusMapWidget] = None
@@ -293,9 +292,6 @@ class HighContentScreeningGui(QMainWindow):
             None
         )
         self.templateMultiPointWidget: Optional[TemplateMultiPointWidget] = None
-        self.multiPointWithFluidicsWidget: Optional[
-            widgets.MultiPointWithFluidicsWidget
-        ] = None
         self.acquisitionSetupWidget: Optional[widgets.AcquisitionSetupWidget] = None
         self.sampleSettingsWidget: Optional[widgets.SampleSettingsWidget] = None
         self.trackingControlWidget: Optional[widgets.TrackingControllerWidget] = None
@@ -758,7 +754,9 @@ class HighContentScreeningGui(QMainWindow):
         dock_workflow.addWidget(self.orchestratorWorkflowTree)
         dock_workflow.setStretch(x=100, y=100)
 
-        dock_controls = dock.Dock("Controls", autoOrientation=False)
+        # "Run Controls" (not just "Controls") to disambiguate from the main
+        # window's right-hand "Controls" dock.
+        dock_controls = dock.Dock("Run Controls", autoOrientation=False)
         dock_controls.showTitleBar()
         dock_controls.addWidget(self.orchestratorControlPanel)
         dock_controls.setStretch(x=100, y=100)
@@ -773,6 +771,21 @@ class HighContentScreeningGui(QMainWindow):
         dock_warnings.addWidget(self.orchestratorWarningPanel)
         dock_warnings.setStretch(x=100, y=50)
 
+        # Onboarding tooltips on the nested dock title bars (the whole run happens
+        # in these unlabeled nested tabs).
+        for _dk, _tip in (
+            (dock_workflow, "Rounds -> steps -> FOVs for the loaded protocol. "
+                            "Pick a round to inspect it or set the resume point."),
+            (dock_controls, "Load -> Validate -> Start the run; pause / resume / abort; "
+                            "live status, progress, and resume-from-round."),
+            (dock_params, "Read-only details of the round / step / FOV selected in the Workflow tree."),
+            (dock_warnings, "Warnings raised during a run; click one to jump to its FOV."),
+        ):
+            try:
+                _dk.label.setToolTip(_tip)
+            except Exception:
+                pass
+
         # Create dock area and arrange docks
         # Layout: Workflow (left) | Controls (top-right) / Parameters (mid-right) / Warnings (bottom-right)
         orchestrator_dockArea = dock.DockArea()
@@ -781,7 +794,213 @@ class HighContentScreeningGui(QMainWindow):
         orchestrator_dockArea.addDock(dock_params, "bottom", relativeTo=dock_controls)
         orchestrator_dockArea.addDock(dock_warnings, "bottom", relativeTo=dock_params)
 
+        # --- Additive: in-app pre-run checklist + protocol/config file editor ---
+        # Wrapped so a failure here can NEVER prevent the Orchestrator tab or the
+        # app from loading. These panels only render state and write files; they
+        # do not touch the acquisition execution path.
+        try:
+            from squid.ui.widgets.orchestrator.prerun_checklist_panel import (
+                PreRunChecklistPanel,
+            )
+            from squid.ui.widgets.orchestrator.protocol_editor_panel import (
+                ProtocolEditorPanel,
+            )
+
+            self.preRunChecklistPanel = PreRunChecklistPanel(
+                event_bus=self._ui_event_bus, parent=self
+            )
+            self.protocolEditorPanel = ProtocolEditorPanel(
+                event_bus=self._ui_event_bus,
+                control_panel=self.orchestratorControlPanel,
+                parent=self,
+            )
+
+            # "protocol loaded" / "fov positions" are Qt signals (not bus events),
+            # so wire them from the control panel into the new panels here.
+            self.orchestratorControlPanel.protocol_loaded.connect(
+                self.preRunChecklistPanel.on_protocol_loaded
+            )
+            self.orchestratorControlPanel.fov_positions_changed.connect(
+                self.preRunChecklistPanel.on_fov_positions_changed
+            )
+            self.orchestratorControlPanel.protocol_loaded.connect(
+                self.protocolEditorPanel.on_protocol_loaded
+            )
+            # Keep the informational checklist in sync with the authoritative Start
+            # gate: an in-app edit invalidates validation.
+            self.orchestratorControlPanel.validation_invalidated.connect(
+                self.preRunChecklistPanel.on_validation_invalidated
+            )
+            # EventBus does not replay, so seed the current objective (no
+            # ObjectiveChanged is emitted for the default objective at startup).
+            try:
+                self.preRunChecklistPanel.seed_objective(
+                    getattr(self.objectiveStore, "current_objective", None)
+                )
+            except Exception:
+                pass
+
+            dock_checklist = dock.Dock("Pre-Run Checklist", autoOrientation=False)
+            dock_checklist.showTitleBar()
+            dock_checklist.addWidget(self.preRunChecklistPanel)
+            dock_checklist.setStretch(x=100, y=100)
+
+            dock_editor = dock.Dock("File Editor", autoOrientation=False)
+            dock_editor.showTitleBar()
+            dock_editor.addWidget(self.protocolEditorPanel)
+            dock_editor.setStretch(x=100, y=100)
+
+            # Stack as tabs on the runtime-info docks using "below" so the
+            # safety-relevant Warnings/Parameters docks stay foreground by
+            # default; the operator clicks the new tabs during setup.
+            orchestrator_dockArea.addDock(
+                dock_checklist, "below", relativeTo=dock_warnings
+            )
+            orchestrator_dockArea.addDock(
+                dock_editor, "below", relativeTo=dock_params
+            )
+            for _dk, _tip in (
+                (dock_checklist, "Pre-run readiness: software items auto-check; tick the "
+                                 "physical setup items (oil, coverslip, reagents, waste, "
+                                 "primed, piezo)."),
+                (dock_editor, "Edit the loaded protocol / fluidics / imaging / config "
+                              "files in-app (atomic save + .bak). Disabled during a run."),
+            ):
+                try:
+                    _dk.label.setToolTip(_tip)
+                except Exception:
+                    pass
+            # Foreground the checklist so the operator actually sees it during
+            # setup (it was previously hidden behind Warnings).
+            try:
+                dock_checklist.raiseDock()
+            except Exception:
+                pass
+            self.log.info(
+                "Orchestrator: Pre-Run Checklist + File Editor panels created OK"
+            )
+        except Exception:
+            self.log.warning(
+                "Pre-run checklist / file editor panels not created", exc_info=True
+            )
+
+        # --- Run visibility + safety wiring (guarded; never blocks tab load) ---
+        try:
+            self._orchestrator_dockArea = orchestrator_dockArea
+            self._orchestrator_warning_dock = dock_warnings
+            # Snapshot the default arrangement so a dragged-away / closed dock can
+            # be restored from the Settings menu.
+            try:
+                self._orchestrator_dock_state = orchestrator_dockArea.saveState()
+            except Exception:
+                self._orchestrator_dock_state = None
+
+            # Persistent run-state indicator in the main status bar, visible from
+            # any tab so an unattended run's state / intervention isn't buried in
+            # a background dock.
+            from qtpy.QtWidgets import QLabel as _QLabel
+
+            self._orch_status_label = _QLabel("Orchestrator: idle")
+            self._orch_status_label.setStyleSheet("color: #888; font-size: 11px;")
+            self._orch_status_label.setToolTip(
+                "Current automated-run state (see the Orchestrator tab)."
+            )
+            try:
+                self.statusBar().addPermanentWidget(self._orch_status_label)
+            except Exception:
+                pass
+
+            self.orchestratorControlPanel.state_changed.connect(
+                self._on_orch_state_changed
+            )
+            self.orchestratorControlPanel.intervention_required.connect(
+                self._on_orch_intervention
+            )
+
+            # Soft-gate Start on the Pre-Run Checklist (advisory reminder only).
+            if hasattr(self, "preRunChecklistPanel"):
+                self.orchestratorControlPanel.set_readiness_provider(
+                    self.preRunChecklistPanel.readiness
+                )
+
+            # Keep the resume spinbox in sync with tree round selection.
+            self.orchestratorWorkflowTree.start_position_changed.connect(
+                lambda r, s, f: self.orchestratorControlPanel.set_start_position_from_ui(r)
+            )
+
+            # "Reset Orchestrator Panels" action (recover a hidden / moved dock).
+            menu = getattr(self, "settings_menu", None)
+            if menu is not None:
+                menu.addSeparator()
+                reset_action = QAction("Reset Orchestrator Panels", self)
+                reset_action.setMenuRole(QAction.NoRole)
+                reset_action.triggered.connect(self._reset_orchestrator_panels)
+                menu.addAction(reset_action)
+            self.log.info("Orchestrator: run-visibility + safety wiring OK")
+        except Exception:
+            self.log.warning(
+                "Orchestrator run-visibility wiring not created", exc_info=True
+            )
+
         self.imageDisplayTabs.addTab(orchestrator_dockArea, "Orchestrator")
+
+    def _on_orch_state_changed(self, old_state: str, new_state: str) -> None:
+        """Mirror the orchestrator run state into the always-visible status bar."""
+        _ = old_state
+        label = getattr(self, "_orch_status_label", None)
+        if label is None:
+            return
+        colors = {
+            "IDLE": "#888",
+            "RUNNING": "#66BB6A",
+            "PAUSED": "#FFA726",
+            "WAITING_INTERVENTION": "#EF5350",
+            "COMPLETED": "#66BB6A",
+            "FAILED": "#EF5350",
+            "ABORTED": "#EF5350",
+        }
+        pretty = (new_state or "").replace("_", " ").title() or "Idle"
+        try:
+            label.setText(f"Orchestrator: {pretty}")
+            label.setStyleSheet(
+                f"color: {colors.get(new_state, '#888')}; font-size: 11px;"
+            )
+        except Exception:
+            pass
+
+    def _on_orch_intervention(self, _event=None) -> None:
+        """Bring the Orchestrator tab + Warnings dock forward when a run needs an
+        operator, so the request isn't buried in a background dock of another tab."""
+        try:
+            area = getattr(self, "_orchestrator_dockArea", None)
+            if area is not None and hasattr(self, "imageDisplayTabs"):
+                self.imageDisplayTabs.setCurrentWidget(area)
+            wdock = getattr(self, "_orchestrator_warning_dock", None)
+            if wdock is not None:
+                wdock.raiseDock()
+        except Exception:
+            self.log.debug("intervention auto-raise failed", exc_info=True)
+        label = getattr(self, "_orch_status_label", None)
+        if label is not None:
+            try:
+                label.setText("Orchestrator: NEEDS ATTENTION")
+                label.setStyleSheet(
+                    "color: #EF5350; font-weight: bold; font-size: 11px;"
+                )
+            except Exception:
+                pass
+
+    def _reset_orchestrator_panels(self) -> None:
+        """Restore the default Orchestrator dock arrangement (recovery action)."""
+        area = getattr(self, "_orchestrator_dockArea", None)
+        state = getattr(self, "_orchestrator_dock_state", None)
+        if area is None or state is None:
+            return
+        try:
+            area.restoreState(state)
+            self.log.info("Orchestrator panels reset to default layout")
+        except Exception:
+            self.log.warning("Failed to reset orchestrator panels", exc_info=True)
 
     def _on_workflow_item_clicked(self, item, column) -> None:
         """Handle workflow tree item click to show parameters."""
@@ -855,10 +1074,6 @@ class HighContentScreeningGui(QMainWindow):
             self.recordTabWidget.addTab(
                 self.templateMultiPointWidget, "Template Multipoint"
             )
-        if RUN_FLUIDICS:
-            self.recordTabWidget.addTab(
-                self.multiPointWithFluidicsWidget, "Multipoint with Fluidics"
-            )
         if self._feature_flags.is_enabled("ENABLE_TRACKING"):
             self.recordTabWidget.addTab(self.trackingControlWidget, "Tracking")
         self.recordTabWidget.currentChanged.connect(
@@ -913,11 +1128,6 @@ class HighContentScreeningGui(QMainWindow):
             "Acquire a repeating position template. Use for regular, template-defined "
             "layouts."
         ),
-        "Multipoint with Fluidics": (
-            "Multi-round acquisition interleaved with fluidics. Load a coordinate CSV "
-            "and specify rounds (e.g. 1-3,5,7-10). Use for sequential fluidics + "
-            "imaging cycles."
-        ),
         "Tracking": (
             "Acquire while tracking a moving object. Use for live object-tracking "
             "experiments."
@@ -934,15 +1144,20 @@ class HighContentScreeningGui(QMainWindow):
         "Camera": "Camera settings: exposure time, gain, binning, ROI, and pixel format.",
         "Contrast AF": (
             "Software (contrast-based) autofocus — finds focus by maximizing image "
-            "sharpness. Good general-purpose autofocus; slower than laser AF."
+            "sharpness. Good general-purpose autofocus; slower than laser AF. "
+            "(Focus family: Contrast AF = sharpness, Laser AF = fast reflective, "
+            "Focus Map = surface, Focus Lock dock = maintain focus during a run.)"
         ),
         "Laser AF": (
             "Laser reflection autofocus — uses a reflected laser spot to find focus "
-            "fast and reproducibly. Requires laser-AF hardware; calibrate before use."
+            "fast and reproducibly. Requires laser-AF hardware; calibrate before use. "
+            "This is the autofocus an unattended Orchestrator run relies on; the "
+            "Focus Lock dock keeps it locked during the run."
         ),
         "Focus Map": (
             "Define a focus surface across the sample so each position uses an "
-            "interpolated focus. Use for large, tilted, or uneven samples."
+            "interpolated focus. Use for large, tilted, or uneven samples. "
+            "(Not the same as Laser/Contrast AF, which focus one position at a time.)"
         ),
         # Main view tabs (imageDisplayTabs)
         "Live View": (
@@ -955,7 +1170,11 @@ class HighContentScreeningGui(QMainWindow):
         "NDViewer": "Browse an acquired N-dimensional dataset (channels, Z, time, positions).",
         "Plots": "Focus / Z surface and diagnostic plots.",
         "Laser-Based Focus": "Live view from the laser-autofocus camera and its settings.",
-        "Fluidics": "Fluidics system control and status.",
+        "Fluidics": (
+            "Manual fluidics control & status — prime lines, run a pump/valve by hand. "
+            "For fluidics interleaved with imaging across multiple rounds, use the "
+            "Orchestrator (automated runs)."
+        ),
         "Orchestrator": (
             "Automated multi-round experiments: load a protocol, validate, then run "
             "unattended imaging + fluidics with progress, retries, and operator "
@@ -1263,11 +1482,6 @@ class HighContentScreeningGui(QMainWindow):
             if ENABLE_WELLPLATE_MULTIPOINT
             else False
         )
-        is_fluidics_acquisition = (
-            (index == self.recordTabWidget.indexOf(self.multiPointWithFluidicsWidget))
-            if RUN_FLUIDICS
-            else False
-        )
         self.toggleWellSelector(
             is_wellplate_acquisition
             and self.wellSelectionWidget.format != "glass slide"
@@ -1279,8 +1493,6 @@ class HighContentScreeningGui(QMainWindow):
             if is_wellplate_acquisition
             else "flexible"
             if is_flexible_acquisition
-            else "fluidics"
-            if is_fluidics_acquisition
             else "other"
         )
         self._ui_event_bus.publish(ActiveAcquisitionTabChanged(active_tab=active_tab))

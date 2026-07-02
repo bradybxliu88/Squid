@@ -32,10 +32,8 @@ __all__ = [
     # acquisition
     "FlexibleMultiPointWidget",
     "WellplateMultiPointWidget",
-    "MultiPointWithFluidicsWidget",
     "AcquisitionSetupWidget",
     # display
-    "StatsDisplayWidget",
     "FocusMapWidget",
     "NapariLiveWidget",
     "NapariMultiChannelWidget",
@@ -67,8 +65,6 @@ __all__ = [
     "FluidicsWidget",
     # tracking
     "TrackingControllerWidget",
-    "PlateReaderAcquisitionWidget",
-    "PlateReaderNavigationWidget",
     "DisplacementMeasurementWidget",
     "Joystick",
     # nl5
@@ -76,9 +72,6 @@ __all__ = [
     "NL5SettingsDialog",
     # custom_multipoint
     "TemplateMultiPointWidget",
-    # spectrometer
-    "SpectrometerControlWidget",
-    "SpectrumDisplay",
 ]
 
 _LAZY_IMPORTS: Final[dict[str, tuple[str, str]]] = {
@@ -103,10 +96,8 @@ _LAZY_IMPORTS: Final[dict[str, tuple[str, str]]] = {
     # acquisition
     "FlexibleMultiPointWidget": ("squid.ui.widgets.acquisition", "FlexibleMultiPointWidget"),
     "WellplateMultiPointWidget": ("squid.ui.widgets.acquisition", "WellplateMultiPointWidget"),
-    "MultiPointWithFluidicsWidget": ("squid.ui.widgets.acquisition", "MultiPointWithFluidicsWidget"),
     "AcquisitionSetupWidget": ("squid.ui.widgets.acquisition", "AcquisitionSetupWidget"),
     # display
-    "StatsDisplayWidget": ("squid.ui.widgets.display", "StatsDisplayWidget"),
     "FocusMapWidget": ("squid.ui.widgets.display", "FocusMapWidget"),
     "NapariLiveWidget": ("squid.ui.widgets.display", "NapariLiveWidget"),
     "NapariMultiChannelWidget": ("squid.ui.widgets.display", "NapariMultiChannelWidget"),
@@ -138,8 +129,6 @@ _LAZY_IMPORTS: Final[dict[str, tuple[str, str]]] = {
     "FluidicsWidget": ("squid.ui.widgets.fluidics", "FluidicsWidget"),
     # tracking
     "TrackingControllerWidget": ("squid.ui.widgets.tracking", "TrackingControllerWidget"),
-    "PlateReaderAcquisitionWidget": ("squid.ui.widgets.tracking", "PlateReaderAcquisitionWidget"),
-    "PlateReaderNavigationWidget": ("squid.ui.widgets.tracking", "PlateReaderNavigationWidget"),
     "DisplacementMeasurementWidget": ("squid.ui.widgets.tracking", "DisplacementMeasurementWidget"),
     "Joystick": ("squid.ui.widgets.tracking", "Joystick"),
     # nl5
@@ -147,9 +136,6 @@ _LAZY_IMPORTS: Final[dict[str, tuple[str, str]]] = {
     "NL5SettingsDialog": ("squid.ui.widgets.nl5", "NL5SettingsDialog"),
     # custom multipoint
     "TemplateMultiPointWidget": ("squid.ui.widgets.custom_multipoint", "TemplateMultiPointWidget"),
-    # spectrometer
-    "SpectrometerControlWidget": ("squid.ui.widgets.spectrometer", "SpectrometerControlWidget"),
-    "SpectrumDisplay": ("squid.ui.widgets.spectrometer", "SpectrumDisplay"),
 }
 
 

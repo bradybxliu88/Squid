@@ -20,6 +20,7 @@ from squid.core.events import (
     StagePositionChanged,
     handles,
 )
+from squid.backend.controllers.orchestrator.state import OrchestratorStateChanged
 from squid.ui.user_preferences import load_preferences, save_preferences
 from squid.ui.widgets.base import EventBusWidget
 
@@ -33,6 +34,7 @@ _CHECKLIST_ITEMS = [
     ("move", "Move the Stage", "Use the X/Y/Z navigation controls to move to a position"),
     ("exposure", "Adjust Exposure", "Change the exposure time to control image brightness"),
     ("acquisition", "Run an Acquisition", "Configure channels and positions, then start an acquisition"),
+    ("orchestrator", "Run an Automated Experiment", "Open the Orchestrator tab to run a multi-round experiment (imaging + fluidics) unattended"),
 ]
 
 
@@ -112,6 +114,11 @@ class GettingStartedWidget(EventBusWidget):
     def _on_acquisition(self, event: AcquisitionStateChanged) -> None:
         if event.in_progress:
             self._mark_completed("acquisition")
+
+    @handles(OrchestratorStateChanged)
+    def _on_orchestrator_state(self, event: OrchestratorStateChanged) -> None:
+        if getattr(event, "new_state", "") == "RUNNING":
+            self._mark_completed("orchestrator")
 
     def _dismiss(self) -> None:
         """Hide the Getting Started panel permanently."""

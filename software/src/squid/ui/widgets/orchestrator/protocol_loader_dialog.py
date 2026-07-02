@@ -2,6 +2,7 @@
 Protocol Loader Dialog for selecting and validating experiment protocols.
 """
 
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QComboBox,
     QFileDialog,
     QGroupBox,
     QTextEdit,
@@ -27,6 +29,52 @@ from squid.core.protocol import ExperimentProtocol, ProtocolLoader, ProtocolVali
 import squid.core.logging
 
 _log = squid.core.logging.get_logger(__name__)
+
+_RECENTS_MAX = 8
+
+
+def _recents_path() -> Path:
+    """Location of the recent-protocols list (next to user preferences)."""
+    try:
+        from squid.ui.user_preferences import _get_cache_path
+
+        return _get_cache_path().parent / "recent_protocols.json"
+    except Exception:
+        return Path.home() / ".squid" / "recent_protocols.json"
+
+
+def _load_recents() -> List[str]:
+    """Return recent protocol paths that still exist (most-recent first). Fail-safe."""
+    try:
+        p = _recents_path()
+        if not p.exists():
+            return []
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            out: List[str] = []
+            for x in data:
+                if isinstance(x, str) and x and Path(x).exists() and x not in out:
+                    out.append(x)
+            return out[:_RECENTS_MAX]
+    except Exception:
+        _log.debug("failed to load recent protocols", exc_info=True)
+    return []
+
+
+def _save_recent(path: str) -> None:
+    """Record a protocol path at the top of the recents list. Fail-safe (never raises)."""
+    try:
+        if not path:
+            return
+        path = str(Path(path))
+        recents = [r for r in _load_recents() if r != path]
+        recents.insert(0, path)
+        recents = recents[:_RECENTS_MAX]
+        p = _recents_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(recents, indent=2), encoding="utf-8")
+    except Exception:
+        _log.debug("failed to save recent protocol", exc_info=True)
 
 
 class ProtocolLoaderDialog(QDialog):
@@ -64,6 +112,16 @@ class ProtocolLoaderDialog(QDialog):
     def _setup_ui(self) -> None:
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
+
+        # Recent protocols (quick re-load of a frequently used protocol).
+        recent_layout = QHBoxLayout()
+        recent_layout.addWidget(QLabel("Recent:"))
+        self._recent_combo = QComboBox()
+        self._recent_combo.setToolTip("Re-select a recently loaded protocol.")
+        self._recent_combo.activated.connect(self._on_recent_selected)
+        recent_layout.addWidget(self._recent_combo, 1)
+        layout.addLayout(recent_layout)
+        self._populate_recents()
 
         # Protocol file selection
         file_group = QGroupBox("Protocol File")
@@ -147,12 +205,46 @@ class ProtocolLoaderDialog(QDialog):
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
-        self._start_btn = QPushButton("Start Experiment")
+        # This dialog only LOADS the protocol into the Orchestrator; the run is
+        # started later from the control panel's Start button. Label it "Load"
+        # so operators don't think clicking here launches the acquisition.
+        self._start_btn = QPushButton("Load Protocol")
         self._start_btn.setEnabled(False)
         self._start_btn.clicked.connect(self._on_start_clicked)
+        self._start_btn.setToolTip(
+            "Load this protocol, its FOV file, and output folder into the "
+            "Orchestrator. You then Validate and Start from the control panel."
+        )
         button_layout.addWidget(self._start_btn)
 
         layout.addLayout(button_layout)
+
+    def _populate_recents(self) -> None:
+        """Fill the recent-protocols combo from the persisted list. Fail-safe."""
+        try:
+            self._recent_combo.blockSignals(True)
+            self._recent_combo.clear()
+            self._recent_combo.addItem("(recent protocols…)", "")
+            for pth in _load_recents():
+                self._recent_combo.addItem(f"{Path(pth).name}  —  {pth}", pth)
+            self._recent_combo.setCurrentIndex(0)
+        except Exception:
+            _log.debug("failed to populate recents", exc_info=True)
+        finally:
+            try:
+                self._recent_combo.blockSignals(False)
+            except Exception:
+                pass
+
+    def _on_recent_selected(self, index: int) -> None:
+        """Load the protocol chosen from the recent list."""
+        try:
+            path = self._recent_combo.itemData(index)
+        except Exception:
+            path = None
+        if path:
+            self._path_edit.setText(path)
+            self._load_protocol(path)
 
     def _on_browse_clicked(self) -> None:
         """Handle browse button click."""
@@ -487,6 +579,9 @@ class ProtocolLoaderDialog(QDialog):
             self._id_edit.text().strip()
             or self._current_protocol.name
         )
+
+        # Remember this protocol for the "Recent" list next time.
+        _save_recent(self._path_edit.text().strip())
 
         self.accept()
 

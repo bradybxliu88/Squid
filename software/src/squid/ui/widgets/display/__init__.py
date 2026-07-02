@@ -1,5 +1,4 @@
 # Display widgets package
-from squid.ui.widgets.display.stats import StatsDisplayWidget
 from squid.ui.widgets.display.focus_map import FocusMapWidget
 from squid.ui.widgets.display.napari_live import NapariLiveWidget
 from squid.ui.widgets.display.napari_multichannel import NapariMultiChannelWidget
@@ -10,14 +9,9 @@ from squid.ui.widgets.display.plotting import (
     PlotWidget,
     SurfacePlotWidget,
 )
-from squid.ui.widgets.display.monitoring import (
-    RAMMonitorWidget,
-    BackpressureMonitorWidget,
-)
 from squid.ui.widgets.display.ndviewer_tab import NDViewerTab
 
 __all__ = [
-    "StatsDisplayWidget",
     "FocusMapWidget",
     "NapariLiveWidget",
     "NapariMultiChannelWidget",
@@ -26,7 +20,5 @@ __all__ = [
     "WaveformDisplay",
     "PlotWidget",
     "SurfacePlotWidget",
-    "RAMMonitorWidget",
-    "BackpressureMonitorWidget",
     "NDViewerTab",
 ]

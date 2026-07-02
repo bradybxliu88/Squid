@@ -400,11 +400,6 @@ def create_acquisition_widgets(gui: "HighContentScreeningGui") -> None:
             z_ustep_per_mm=z_ustep_per_mm,
             initial_z_mm=initial_z_mm,
         )
-    gui.multiPointWithFluidicsWidget = widgets.MultiPointWithFluidicsWidget(
-        gui._ui_event_bus,
-        initial_channel_configs=initial_channel_names,
-        z_ustep_per_mm=z_ustep_per_mm,
-    )
     gui.acquisitionSetupWidget = widgets.AcquisitionSetupWidget(
         event_bus=gui._ui_event_bus,
         initial_channel_configs=initial_channel_names,

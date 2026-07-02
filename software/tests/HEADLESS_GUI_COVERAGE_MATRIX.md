@@ -130,14 +130,6 @@ Columns: Widget -> UI actions -> EventBus commands -> Handler to assert -> Featu
   - Handler/state: MultiPointController
   - Flags: USE_TEMPLATE_MULTIPOINT
 
-- MultiPointWithFluidicsWidget (squid.ui.widgets.acquisition.fluidics_multipoint)
-  - Actions: set rounds/params, start/stop acquisition
-  - Commands: SetFluidicsRoundsCommand, SetAcquisitionParametersCommand,
-    SetAcquisitionPathCommand, SetAcquisitionChannelsCommand,
-    StartNewExperimentCommand, StartAcquisitionCommand, StopAcquisitionCommand
-  - Handler/state: MultiPointController + FluidicsService
-  - Flags: RUN_FLUIDICS
-
 ## Autofocus + focus lock
 - AutoFocusWidget (squid.ui.widgets.stage.autofocus)
   - Actions: set params, start/stop autofocus

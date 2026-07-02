@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (
     QAction,
     QSizePolicy,
     QMessageBox,
+    QSpinBox,
 )
 from PyQt5.QtGui import QFont, QColor, QBrush, QPainter, QPen, QPainterPath
 import pyqtgraph as pg
@@ -296,6 +297,7 @@ class OrchestratorControlPanel(EventBusWidget):
     fov_positions_changed = pyqtSignal(dict)  # FOV positions dict
     protocol_loaded = pyqtSignal(dict)  # protocol data
     validation_complete = pyqtSignal(object)  # ValidationSummary
+    validation_invalidated = pyqtSignal()  # protocol/resource edited in-app -> must re-validate
 
     def __init__(
         self,
@@ -317,6 +319,9 @@ class OrchestratorControlPanel(EventBusWidget):
         self._start_fov_index: int = 0
         self._run_single_round: bool = False
         self._last_progress: Optional[OrchestratorProgress] = None
+        # Optional callable returning (is_ready: bool, unchecked_titles: list[str])
+        # from the Pre-Run Checklist. Used to soft-gate Start (never hard-blocks).
+        self._readiness_provider = None
         self._history: Dict[str, deque[float]] = {
             "progress": deque(maxlen=120),
             "eta": deque(maxlen=120),
@@ -326,6 +331,7 @@ class OrchestratorControlPanel(EventBusWidget):
         self._setup_ui()
         self._connect_signals()
         self._update_button_states(OrchestratorState.IDLE)
+        self._update_stepper()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -484,6 +490,51 @@ class OrchestratorControlPanel(EventBusWidget):
         self._abort_btn.clicked.connect(self._on_abort_clicked)
         row2.addWidget(self._abort_btn)
         layout.addLayout(row2)
+
+        # Stepper state line: at-a-glance Load -> Validate -> Start readiness.
+        self._stepper_label = QLabel()
+        self._stepper_label.setStyleSheet("font-size: 10px; color: #b8c1cc;")
+        self._stepper_label.setWordWrap(True)
+        layout.addWidget(self._stepper_label)
+
+        # Row 3: resume-from-round controls (surfaces what was previously only
+        # reachable via the workflow tree's right-click menu).
+        row3 = QHBoxLayout()
+        row3.setSpacing(6)
+        resume_lbl = QLabel("Resume from round:")
+        resume_lbl.setStyleSheet("font-size: 11px; color: #b8c1cc;")
+        row3.addWidget(resume_lbl)
+
+        self._round_spin = QSpinBox()
+        self._round_spin.setMinimum(1)
+        self._round_spin.setMaximum(1)
+        self._round_spin.setToolTip(
+            "Round number (1-based) to resume from. Set by loading a protocol; "
+            "also updated when you pick a round in the Workflow tree."
+        )
+        row3.addWidget(self._round_spin)
+
+        self._start_from_btn = QPushButton("Start from round")
+        self._start_from_btn.setStyleSheet(BTN_STYLES["secondary"])
+        self._start_from_btn.setEnabled(False)
+        self._start_from_btn.clicked.connect(self._on_start_from_round_clicked)
+        self._start_from_btn.setToolTip(
+            "Start the run at the selected round (e.g. resume after round 3 failed). "
+            "Enabled once the protocol is validated."
+        )
+        row3.addWidget(self._start_from_btn)
+
+        self._run_only_btn = QPushButton("Run only this round")
+        self._run_only_btn.setStyleSheet(BTN_STYLES["secondary"])
+        self._run_only_btn.setEnabled(False)
+        self._run_only_btn.clicked.connect(self._on_run_single_round_clicked)
+        self._run_only_btn.setToolTip(
+            "Run just the selected round once, then stop. Useful for re-running a "
+            "single failed round. Enabled once the protocol is validated."
+        )
+        row3.addWidget(self._run_only_btn)
+        row3.addStretch()
+        layout.addLayout(row3)
 
         return widget
 
@@ -876,6 +927,10 @@ class OrchestratorControlPanel(EventBusWidget):
         if summary.valid:
             self._validated = True
             self._start_btn.setEnabled(True)
+            if hasattr(self, "_start_from_btn"):
+                self._start_from_btn.setEnabled(True)
+                self._run_only_btn.setEnabled(True)
+            self._update_stepper()
 
     # ========================================================================
     # Button Handlers
@@ -956,6 +1011,12 @@ class OrchestratorControlPanel(EventBusWidget):
             self._run_single_round = False
             self._start_btn.setEnabled(False)
             self._validate_btn.setEnabled(True)
+            if hasattr(self, "_round_spin"):
+                self._round_spin.setMaximum(max(1, len(rounds)))
+                self._round_spin.setValue(1)
+                self._start_from_btn.setEnabled(False)
+                self._run_only_btn.setEnabled(False)
+            self._update_stepper()
             _log.info(f"Protocol loaded: {protocol_path}")
 
             # Add focus threshold reference lines if protocol uses focus lock
@@ -987,6 +1048,44 @@ class OrchestratorControlPanel(EventBusWidget):
             self._run_single_round = False
             self._start_btn.setEnabled(False)
             self._validate_btn.setEnabled(False)
+            if hasattr(self, "_start_from_btn"):
+                self._start_from_btn.setEnabled(False)
+                self._run_only_btn.setEnabled(False)
+            self._update_stepper()
+
+    def get_loaded_protocol_bundle(self) -> Optional[dict]:
+        """Return the currently loaded protocol's path + parsed data, or None.
+
+        Read-only accessor used by the in-app file editor to discover which
+        files belong to the loaded run. Does not affect run state.
+        """
+        if self._protocol_data is None:
+            return None
+        return {"protocol_path": self._protocol_path, "protocol_data": self._protocol_data}
+
+    def invalidate_validation(self, reason: str = "") -> None:
+        """Clear the 'validated' flag and disable Start.
+
+        Called after a protocol/resource file is edited in-app so a stale
+        'valid' state can never start an acquisition against changed files. The
+        operator must re-run Validate (which re-parses from disk) before Start.
+        Mirrors the reset the loader performs on a fresh load.
+        """
+        self._validated = False
+        try:
+            self._start_btn.setEnabled(False)
+            if hasattr(self, "_start_from_btn"):
+                self._start_from_btn.setEnabled(False)
+                self._run_only_btn.setEnabled(False)
+            self._update_stepper()
+        except Exception:
+            pass
+        try:
+            self.validation_invalidated.emit()
+        except Exception:
+            pass
+        if reason:
+            _log.info(f"Protocol validation invalidated: {reason}")
 
     def _on_start_clicked(self) -> None:
         if self._orchestrator is None:
@@ -1041,6 +1140,12 @@ class OrchestratorControlPanel(EventBusWidget):
             )
             return
 
+        # Soft-gate on the Pre-Run Checklist: if physical-setup items are unticked,
+        # remind the operator but let them proceed. NEVER hard-blocks (the checklist
+        # is advisory); a missing provider or any error is ignored.
+        if not self._confirm_checklist_ready():
+            return
+
         success = self._orchestrator.start_experiment(
             protocol_path=self._protocol_path,
             base_path=self._base_path,
@@ -1081,7 +1186,21 @@ class OrchestratorControlPanel(EventBusWidget):
             self._orchestrator.resume()
 
     def _on_abort_clicked(self) -> None:
-        if self._orchestrator is not None:
+        if self._orchestrator is None:
+            return
+        reply = QMessageBox.question(
+            self,
+            self.tr("Abort run?"),
+            self.tr(
+                "Abort the current run?\n\n"
+                "Acquisition stops immediately and this cannot be undone. Images "
+                "already saved are kept, but the remaining rounds and FOVs will "
+                "not be acquired."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
             self._orchestrator.abort()
 
     def _on_acknowledge_clicked(self) -> None:
@@ -1132,6 +1251,85 @@ class OrchestratorControlPanel(EventBusWidget):
         self._run_single_round = True
         self._on_start_clicked()
 
+    def set_start_position_from_ui(self, round_index: int) -> None:
+        """Reflect a tree-selected round in the resume spinbox (1-based)."""
+        try:
+            self._round_spin.setValue(int(round_index) + 1)
+        except Exception:
+            pass
+
+    def _on_start_from_round_clicked(self) -> None:
+        """Resume the full run starting at the spinbox's round."""
+        idx = max(0, self._round_spin.value() - 1)
+        self.set_start_position(idx, 0, 0)
+        self._on_start_clicked()
+
+    def _on_run_single_round_clicked(self) -> None:
+        """Run only the spinbox's round, then stop."""
+        idx = max(0, self._round_spin.value() - 1)
+        self.run_single_round(idx, 0, 0)
+
+    # ========================================================================
+    # Readiness soft-gate (Pre-Run Checklist)
+    # ========================================================================
+
+    def set_readiness_provider(self, provider) -> None:
+        """Register a callable returning (is_ready, unchecked_titles) for Start.
+
+        Wired by main_window to the Pre-Run Checklist. Purely advisory: Start
+        shows a reminder when items are unticked but never blocks.
+        """
+        self._readiness_provider = provider
+
+    def _confirm_checklist_ready(self) -> bool:
+        """Return True to proceed with Start. Shows a soft reminder if the
+        checklist has unticked items; returns False only if the operator cancels.
+        """
+        provider = self._readiness_provider
+        if provider is None:
+            return True
+        try:
+            ready, unchecked = provider()
+        except Exception:
+            _log.debug("readiness provider failed; not gating Start", exc_info=True)
+            return True
+        if ready:
+            return True
+        items = unchecked or []
+        bullet = "\n".join(f"  • {t}" for t in items) if items else "  • (see the Pre-Run Checklist)"
+        reply = QMessageBox.question(
+            self,
+            self.tr("Pre-run checklist incomplete"),
+            self.tr(
+                "These pre-run items are not checked off:\n\n{items}\n\n"
+                "Start the run anyway?"
+            ).format(items=bullet),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _update_stepper(self) -> None:
+        """Refresh the at-a-glance Load -> Validate -> Start state line."""
+        if not hasattr(self, "_stepper_label"):
+            return
+        loaded = self._protocol_data is not None
+        validated = bool(self._validated)
+
+        def mark(ok: bool) -> str:
+            return "✓" if ok else "—"
+
+        if loaded and validated:
+            tail = "ready to Start"
+        elif loaded:
+            tail = "click Validate"
+        else:
+            tail = "load a protocol"
+        self._stepper_label.setText(
+            f"① Load {mark(loaded)}    ② Validate {mark(validated)}    "
+            f"③ Start ({tail})"
+        )
+
     # ========================================================================
     # Helper Methods
     # ========================================================================
@@ -1156,6 +1354,10 @@ class OrchestratorControlPanel(EventBusWidget):
         self._pause_btn.setEnabled(bool(is_running))
         self._resume_btn.setEnabled(bool(is_paused))
         self._abort_btn.setEnabled(bool(is_running or is_paused))
+        if hasattr(self, "_start_from_btn"):
+            self._start_from_btn.setEnabled(bool(can_start))
+            self._run_only_btn.setEnabled(bool(can_start))
+        self._update_stepper()
 
     @staticmethod
     def _format_time_remaining(seconds: float) -> str:
@@ -1251,7 +1453,7 @@ class OrchestratorWorkflowTree(EventBusWidget):
         layout.setContentsMargins(5, 5, 5, 5)
 
         self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["Operation", "Status", "Est. Time", "Details"])
+        self._tree.setHeaderLabels(["Round / Step", "Status", "Est. Time", "Details"])
         self._tree.setAlternatingRowColors(False)
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(16)

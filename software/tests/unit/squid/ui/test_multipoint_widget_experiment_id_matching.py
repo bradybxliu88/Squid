@@ -8,14 +8,12 @@ import pytest
 
 from squid.core.events import AcquisitionStateChanged
 from squid.ui.widgets.acquisition.flexible_multipoint import FlexibleMultiPointWidget
-from squid.ui.widgets.acquisition.fluidics_multipoint import MultiPointWithFluidicsWidget
 from squid.ui.widgets.acquisition.wellplate_multipoint import WellplateMultiPointWidget
 
 
 WIDGET_CLASSES = (
     WellplateMultiPointWidget,
     FlexibleMultiPointWidget,
-    MultiPointWithFluidicsWidget,
 )
 
 
