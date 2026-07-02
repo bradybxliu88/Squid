@@ -9,7 +9,6 @@ from squid.ui.widgets.stage._common import (
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
-    Signal,
     handles,
     squid,
 )
@@ -23,8 +22,6 @@ from squid.core.events import (
 
 
 class AutoFocusWidget(EventBusFrame):
-    signal_autoLevelSetting: Signal = Signal(bool)
-
     def __init__(self, event_bus: "UIEventBus", *args: Any, **kwargs: Any) -> None:
         super().__init__(event_bus, *args, **kwargs)
         self.log = squid.core.logging.get_logger(self.__class__.__name__)
@@ -33,7 +30,6 @@ class AutoFocusWidget(EventBusFrame):
         self.entry_delta: QDoubleSpinBox
         self.entry_N: QSpinBox
         self.btn_autofocus: QPushButton
-        self.btn_autolevel: QPushButton
         self.grid: QVBoxLayout
 
         self.add_components()
@@ -65,11 +61,6 @@ class AutoFocusWidget(EventBusFrame):
         self.btn_autofocus.setCheckable(True)
         self.btn_autofocus.setChecked(False)
 
-        self.btn_autolevel = QPushButton("Autolevel")
-        self.btn_autolevel.setCheckable(True)
-        self.btn_autolevel.setChecked(False)
-        self.btn_autolevel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         # layout
         self.grid = QVBoxLayout()
         grid_line0 = QHBoxLayout()
@@ -78,8 +69,6 @@ class AutoFocusWidget(EventBusFrame):
         grid_line0.addSpacing(20)
         grid_line0.addWidget(QLabel("# of Z-Planes"))
         grid_line0.addWidget(self.entry_N)
-        grid_line0.addSpacing(20)
-        grid_line0.addWidget(self.btn_autolevel)
 
         self.grid.addLayout(grid_line0)
         self.grid.addWidget(self.btn_autofocus)
@@ -87,7 +76,6 @@ class AutoFocusWidget(EventBusFrame):
 
         # connections
         self.btn_autofocus.toggled.connect(self._on_autofocus_toggled)
-        self.btn_autolevel.toggled.connect(self.signal_autoLevelSetting.emit)
         self.entry_delta.valueChanged.connect(self._publish_params)
         self.entry_N.valueChanged.connect(self._publish_params)
 
