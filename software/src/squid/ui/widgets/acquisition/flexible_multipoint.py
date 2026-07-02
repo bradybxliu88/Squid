@@ -378,17 +378,11 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
             autofocus_mode=autofocus_mode
         ))
 
-        self.checkbox_genAFMap = QCheckBox("Generate Focus Map")
-        self.checkbox_genAFMap.setChecked(False)
-
         self.checkbox_useFocusMap = QCheckBox("Use Focus Map")
         self.checkbox_useFocusMap.setChecked(False)
 
         self.checkbox_usePiezo = QCheckBox("Piezo Z-Stack")
         self.checkbox_usePiezo.setChecked(MULTIPOINT_USE_PIEZO_FOR_ZSTACKS)
-
-        self.checkbox_stitchOutput = QCheckBox("Stitch Scans")
-        self.checkbox_stitchOutput.setChecked(False)
 
         self.checkbox_skipSaving = QCheckBox("Skip Saving")
         self.checkbox_skipSaving.setChecked(False)
@@ -445,11 +439,6 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         # self.entry_maxZ.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.set_maxZ_button = QPushButton("Set")
         self.set_maxZ_button.clicked.connect(self.set_z_max)
-
-        self.combobox_z_stack = QComboBox()
-        self.combobox_z_stack.addItems(
-            ["From Bottom (Z-min)", "From Center", "From Top (Z-max)"]
-        )
 
         self.btn_startAcquisition = QPushButton("Start\n Acquisition ")
         self.btn_startAcquisition.setStyleSheet("background-color: #C2C2FF")
@@ -601,7 +590,6 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         af_interval_layout.addWidget(self.spinbox_af_interval)
         af_interval_layout.addStretch()
         grid_af.addLayout(af_interval_layout)
-        # grid_af.addWidget(self.checkbox_genAFMap)  # we are not using auto-focus map for now
         grid_af.addWidget(self.checkbox_useFocusMap)
         if HAS_OBJECTIVE_PIEZO:
             grid_af.addWidget(self.checkbox_usePiezo)
@@ -669,15 +657,12 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
             self.entry_deltaY.valueChanged.connect(self.update_fov_positions)
         self.entry_NX.valueChanged.connect(self.update_fov_positions)
         self.entry_NY.valueChanged.connect(self.update_fov_positions)
-        # self.btn_add.clicked.connect(self.update_fov_positions) #TODO: this is handled in the add_location method - to be removed
-        # self.btn_remove.clicked.connect(self.update_fov_positions) #TODO: this is handled in the remove_location method - to be removed
         self.entry_deltaZ.valueChanged.connect(self.set_deltaZ)
         self.entry_dt.valueChanged.connect(self._on_dt_changed)
         self.entry_NX.valueChanged.connect(self._on_nx_changed)
         self.entry_NY.valueChanged.connect(self._on_ny_changed)
         self.entry_NZ.valueChanged.connect(self._on_nz_changed)
         self.entry_Nt.valueChanged.connect(self._on_nt_changed)
-        self.checkbox_genAFMap.toggled.connect(self._on_gen_af_map_toggled)
         self.checkbox_useFocusMap.toggled.connect(self.focusMapWidget.setEnabled)
         self.checkbox_withAutofocus.toggled.connect(self._on_autofocus_toggled)
         self.checkbox_withReflectionAutofocus.toggled.connect(self._on_reflection_af_toggled)
@@ -693,7 +678,6 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         self.list_configurations.itemSelectionChanged.connect(
             self.emit_selected_channels
         )
-        # self.combobox_z_stack.currentIndexChanged.connect(self.signal_z_stacking.emit)
 
         self.eta_timer.timeout.connect(self.update_eta_display)
 
@@ -1574,11 +1558,9 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         else:
             self.entry_overlap.setEnabled(enabled)
         self.list_configurations.setEnabled(enabled)
-        self.checkbox_genAFMap.setEnabled(enabled)
         self.checkbox_useFocusMap.setEnabled(enabled)
         self.checkbox_withAutofocus.setEnabled(enabled)
         self.checkbox_withReflectionAutofocus.setEnabled(enabled)
-        self.checkbox_stitchOutput.setEnabled(enabled)
         self.checkbox_skipSaving.setEnabled(enabled)
         self.checkbox_set_z_range.setEnabled(enabled)
 
@@ -1721,10 +1703,6 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         """Handle Nt spinbox change - publish event."""
         self._publish(SetAcquisitionParametersCommand(n_t=value))
 
-    def _on_gen_af_map_toggled(self, checked: bool) -> None:
-        """Handle generate AF map checkbox toggle - publish event."""
-        self._publish(SetAcquisitionParametersCommand(gen_focus_map=checked))
-
     def _on_autofocus_toggled(self, checked: bool) -> None:
         """Handle autofocus checkbox toggle - publish event."""
         if checked:
@@ -1865,7 +1843,9 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
                 z_stack_settings={
                     "nz": self.entry_NZ.value(),
                     "delta_z_um": self.entry_deltaZ.value(),
-                    "config": self.combobox_z_stack.currentText(),
+                    # z-stack direction has no visible control in this widget; preserve
+                    # the historical default that the (removed) combobox always produced
+                    "config": "From Bottom (Z-min)",
                     "use_piezo": self.checkbox_usePiezo.isChecked(),
                 },
                 time_series_settings={

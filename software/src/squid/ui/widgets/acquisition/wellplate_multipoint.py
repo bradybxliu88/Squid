@@ -477,12 +477,6 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         self.entry_Nt.setSingleStep(1)
         self.entry_Nt.setValue(1)
 
-        self.combobox_z_stack = QComboBox()
-        self.combobox_z_stack.addItems(
-            ["From Bottom (Z-min)", "From Center", "From Top (Z-max)"]
-        )
-        self.combobox_z_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         # Channel configurations (populated from initial_channel_configs)
         self.list_configurations = QListWidget()
         self.list_configurations.addItems(self._channel_configs)
@@ -500,9 +494,6 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         self.text_loaded_coordinates = QLineEdit()
         self.text_loaded_coordinates.setReadOnly(True)
         self.text_loaded_coordinates.setPlaceholderText("No file loaded")
-
-        self.checkbox_genAFMap = QCheckBox("Generate Focus Map")
-        self.checkbox_genAFMap.setChecked(False)
 
         self.checkbox_useFocusMap = QCheckBox("Use Focus Map")
         self.checkbox_useFocusMap.setChecked(False)
@@ -529,9 +520,6 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
 
         self.checkbox_usePiezo = QCheckBox("Piezo Z-Stack")
         self.checkbox_usePiezo.setChecked(MULTIPOINT_USE_PIEZO_FOR_ZSTACKS)
-
-        self.checkbox_stitchOutput = QCheckBox("Stitch Scans")
-        self.checkbox_stitchOutput.setChecked(False)
 
         self.checkbox_skipSaving = QCheckBox("Skip Saving")
         self.checkbox_skipSaving.setChecked(False)
@@ -847,7 +835,6 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         options_layout.addWidget(self.checkbox_withAutofocus)
         if _FEATURE_FLAGS.is_enabled("SUPPORT_LASER_AUTOFOCUS"):
             options_layout.addWidget(self.checkbox_withReflectionAutofocus)
-        # options_layout.addWidget(self.checkbox_genAFMap)  # We are not using AF map now
         options_layout.addWidget(self.checkbox_useFocusMap)
         if HAS_OBJECTIVE_PIEZO:
             options_layout.addWidget(self.checkbox_usePiezo)
@@ -921,7 +908,6 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
         self.combobox_shape.currentTextChanged.connect(self.on_shape_changed)
         self.checkbox_withAutofocus.toggled.connect(self._on_autofocus_toggled)
         self.checkbox_withReflectionAutofocus.toggled.connect(self._on_reflection_af_toggled)
-        self.checkbox_genAFMap.toggled.connect(self._on_gen_af_map_toggled)
         self.checkbox_useFocusMap.toggled.connect(self.focusMapWidget.setEnabled)
         self.checkbox_useFocusMap.toggled.connect(self._on_use_focus_map_toggled)
         self.checkbox_usePiezo.toggled.connect(self._on_use_piezo_toggled)
@@ -2933,10 +2919,6 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
                 focus_lock_settings=self._current_focus_lock_settings(),
             )
         )
-
-    def _on_gen_af_map_toggled(self, checked: bool) -> None:
-        """Handle generate AF map checkbox toggle - publish event."""
-        self._publish(SetAcquisitionParametersCommand(gen_focus_map=checked))
 
     def _on_use_focus_map_toggled(self, checked: bool) -> None:
         """Handle use focus map checkbox toggle - publish event."""
