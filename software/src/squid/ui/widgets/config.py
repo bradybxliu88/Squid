@@ -5,7 +5,6 @@ import squid.core.logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TYPE_CHECKING
 from configparser import ConfigParser
-from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -38,8 +37,6 @@ if TYPE_CHECKING:
 
 
 class ProfileWidget(QFrame):
-    signal_profile_changed: Signal = Signal()
-
     configurationManager: "ConfigurationManager"
     dropdown_profiles: QComboBox
     btn_newProfile: QPushButton
@@ -86,7 +83,6 @@ class ProfileWidget(QFrame):
         profile_name = self.dropdown_profiles.currentText()
         # Load the profile
         self.configurationManager.load_profile(profile_name)
-        self.signal_profile_changed.emit()
         if self._event_bus is not None:
             self._event_bus.publish(ProfileChanged(profile_name=profile_name))
 
@@ -106,10 +102,6 @@ class ProfileWidget(QFrame):
             except ValueError as e:
                 QMessageBox.warning(self, "Error", str(e))
 
-    def get_current_profile(self) -> str:
-        """Return the currently selected profile name."""
-        return self.dropdown_profiles.currentText()
-
 
 class PreferencesDialog(QDialog):
     """User-friendly preferences dialog with tabbed interface for common settings.
@@ -123,8 +115,6 @@ class PreferencesDialog(QDialog):
 
     Settings marked with (*) require a software restart to take effect.
     """
-
-    signal_config_changed: Signal = Signal()
 
     def __init__(
         self,
@@ -1104,8 +1094,6 @@ class PreferencesDialog(QDialog):
             self._apply_live_settings()
         except Exception:
             self._log.exception("Failed to apply live settings")
-
-        self.signal_config_changed.emit()
 
     def _apply_live_settings(self) -> None:
         """Apply settings that can take effect without restart."""

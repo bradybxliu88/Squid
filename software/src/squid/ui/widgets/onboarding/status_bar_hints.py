@@ -96,9 +96,3 @@ class StatusBarHintWidget(QWidget):
             save_preferences(self._prefs)
         except Exception:
             _log.debug("Failed to save hint dismissal preference", exc_info=True)
-
-    def check_visibility(self) -> None:
-        """Called externally to re-check if hints should show (e.g., after warnings clear)."""
-        if not self._prefs.show_status_hints:
-            return
-        self._show_current_hint()

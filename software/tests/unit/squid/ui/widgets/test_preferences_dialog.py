@@ -271,12 +271,6 @@ class TestApplySettings:
         finally:
             os.chmod(temp_config_file, 0o644)
 
-    def test_apply_settings_emits_signal(self, qtbot, preferences_dialog):
-        """Verify signal_config_changed is emitted when settings are saved."""
-        with qtbot.waitSignal(preferences_dialog.signal_config_changed, timeout=1000):
-            preferences_dialog._apply_settings()
-
-
 class TestSaveAndCloseWorkflow:
     """Test the complete save workflow via _save_and_close method."""
 
