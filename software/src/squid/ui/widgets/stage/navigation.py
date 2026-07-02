@@ -3,11 +3,9 @@ from squid.ui.widgets.stage._common import (
     ENABLE_CLICK_TO_MOVE_BY_DEFAULT,
     EventBusFrame,
     Optional,
-    QCheckBox,
     QDoubleSpinBox,
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -63,7 +61,6 @@ class NavigationWidget(EventBusFrame):
         self.btn_moveY_backward: QPushButton
         self.btn_moveZ_forward: QPushButton
         self.btn_moveZ_backward: QPushButton
-        self.checkbox_clickToMove: QCheckBox
         self.grid: QVBoxLayout
 
         # Cached position for copy button
@@ -112,12 +109,6 @@ class NavigationWidget(EventBusFrame):
         self.btn_moveX_forward.setDefault(False)
         self.btn_moveX_backward = QPushButton("Backward")
         self.btn_moveX_backward.setDefault(False)
-
-        self.checkbox_clickToMove = QCheckBox("Click to Move")
-        self.checkbox_clickToMove.setChecked(False)
-        self.checkbox_clickToMove.setSizePolicy(
-            QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        )
 
         y_label = QLabel("Y :")
         y_label.setFixedWidth(20)
@@ -175,9 +166,6 @@ class NavigationWidget(EventBusFrame):
         self.btn_moveY_backward.setToolTip("Move stage backward along Y axis by step size")
         self.btn_moveZ_forward.setToolTip("Move stage up (increase Z) by step size")
         self.btn_moveZ_backward.setToolTip("Move stage down (decrease Z) by step size")
-        self.checkbox_clickToMove.setToolTip(
-            "When enabled, click on the live image to move the stage to that position"
-        )
 
         grid_line0 = QGridLayout()
         grid_line0.addWidget(x_label, 0, 0)
@@ -202,10 +190,6 @@ class NavigationWidget(EventBusFrame):
         self.grid = QVBoxLayout()
         self.grid.addLayout(grid_line0)
         self.set_click_to_move(ENABLE_CLICK_TO_MOVE_BY_DEFAULT)
-        if not ENABLE_CLICK_TO_MOVE_BY_DEFAULT:
-            grid_line3 = QHBoxLayout()
-            grid_line3.addWidget(self.checkbox_clickToMove, 1)
-            self.grid.addLayout(grid_line3)
         self.setLayout(self.grid)
 
         self.entry_dX.valueChanged.connect(self.set_deltaX)
@@ -222,13 +206,8 @@ class NavigationWidget(EventBusFrame):
     def set_click_to_move(self, enabled: bool) -> None:
         self.log.info(f"Click to move enabled={enabled}")
         self.setEnabled_all(enabled)
-        self.checkbox_clickToMove.setChecked(enabled)
-
-    def get_click_to_move_enabled(self) -> bool:
-        return self.checkbox_clickToMove.isChecked()
 
     def setEnabled_all(self, enabled: bool) -> None:
-        self.checkbox_clickToMove.setEnabled(enabled)
         self.btn_moveX_forward.setEnabled(enabled)
         self.btn_moveX_backward.setEnabled(enabled)
         self.btn_moveY_forward.setEnabled(enabled)
