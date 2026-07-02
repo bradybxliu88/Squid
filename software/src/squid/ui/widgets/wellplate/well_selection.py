@@ -261,19 +261,6 @@ class WellSelectionWidget(EventBusSubscriptionMixin, QTableWidget):
         else:
             self._publish_selection()
 
-    def onSingleClick(self, row: int, col: int) -> None:
-        print("single click well", row, col)
-        if (
-            row >= 0 + self.number_of_skip
-            and row <= self.rows - 1 - self.number_of_skip
-        ) and (
-            col >= 0 + self.number_of_skip
-            and col <= self.columns - 1 - self.number_of_skip
-        ):
-            self._publish_selection()
-        else:
-            self._publish_selection()
-
     def onSelectionChanged(self) -> None:
         self._publish_selection()
 

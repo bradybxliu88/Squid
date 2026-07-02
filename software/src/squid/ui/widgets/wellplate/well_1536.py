@@ -510,9 +510,6 @@ class Well1536SelectionWidget(EventBusWidget):
             index = index * 26 + (ord(char.upper()) - ord("A") + 1)
         return index - 1
 
-    def onSelectionChanged(self):
-        self._publish_selection()
-
     def get_selected_cells(self):
         list_of_selected_cells = list(self.selected_cells.keys())
         return list_of_selected_cells
