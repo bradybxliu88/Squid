@@ -1,3 +1,5 @@
+import math
+
 from squid.ui.widgets.tracking._common import (
     Optional,
     QColor,
