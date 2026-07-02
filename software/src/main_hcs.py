@@ -127,7 +127,7 @@ if __name__ == "__main__":
     settings_menu.addSeparator()
 
     # MCP Control Server state (using dict for mutable state in closures)
-    mcp_state = {"process": None, "python_exec_enabled": False}
+    mcp_state = {"process": None}
 
     def on_toggle_mcp_server(checked):
         if checked:
@@ -153,24 +153,6 @@ if __name__ == "__main__":
                     mcp_state["process"].kill()
                 log.info("MCP server stopped")
                 mcp_state["process"] = None
-
-    def on_toggle_python_exec(checked):
-        if checked:
-            reply = QMessageBox.warning(
-                win,
-                "Security Warning",
-                "Enabling Python exec allows Claude to run arbitrary code.\n\n"
-                "Only enable this if you trust the AI agent completely.\n\n"
-                "Continue?",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
-                action_enable_python_exec.setChecked(False)
-                return
-        mcp_state["python_exec_enabled"] = checked
-        # Note: This sets a local flag. The MCP server would need to be restarted
-        # or communicate via IPC to actually toggle this. For now, this is a placeholder.
-        log.info(f"MCP Python exec {'enabled' if checked else 'disabled'}")
 
     def on_launch_claude_code():
         # Ensure MCP server is running
@@ -230,10 +212,6 @@ if __name__ == "__main__":
     action_enable_mcp = QAction("Enable MCP Control Server", win, checkable=True)
     action_enable_mcp.triggered.connect(on_toggle_mcp_server)
     settings_menu.addAction(action_enable_mcp)
-
-    action_enable_python_exec = QAction("Enable MCP Python Exec", win, checkable=True)
-    action_enable_python_exec.triggered.connect(on_toggle_python_exec)
-    settings_menu.addAction(action_enable_python_exec)
 
     settings_menu.addSeparator()
 
