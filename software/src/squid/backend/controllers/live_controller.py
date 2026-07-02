@@ -675,15 +675,20 @@ class LiveController(StateMachine[LiveControllerState]):
 
     @staticmethod
     def _str_to_trigger_mode(mode_str: str) -> TriggerMode:
-        """Convert string to TriggerMode enum."""
-        mode_str_lower = mode_str.lower()
-        if mode_str_lower == "software":
+        """Convert a trigger-mode string to its canonical TriggerMode value.
+
+        Delegates to TriggerMode.convert_to_var, which accepts BOTH the full
+        value published by the UI dropdowns ("Hardware Trigger") AND the short
+        name ("Hardware"/"hardware") used by the backend/tests. Previously this
+        only matched the lowercased short names, so full values like
+        "Hardware Trigger"/"Continuous Acquisition" from the live-view dropdowns
+        silently fell through to SOFTWARE. Falls back to SOFTWARE for anything
+        unrecognized (preserving the prior defensive default).
+        """
+        try:
+            return TriggerMode.convert_to_var(mode_str)
+        except (ValueError, AttributeError):
             return TriggerMode.SOFTWARE
-        elif mode_str_lower == "hardware":
-            return TriggerMode.HARDWARE
-        elif mode_str_lower == "continuous":
-            return TriggerMode.CONTINUOUS
-        return TriggerMode.SOFTWARE
 
     @property
     def observable_state(self) -> LiveStateData:
