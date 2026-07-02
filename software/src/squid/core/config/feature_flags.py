@@ -85,7 +85,6 @@ class FeatureFlags:
         self._register("USE_NAPARI_WELL_SELECTION", self.UI, False, "Use napari for well selection")
         self._register("SHOW_DAC_CONTROL", self.UI, False, "Show DAC control panel")
         self._register("SHOW_AUTOLEVEL_BTN", self.UI, False, "Show auto-level button")
-        self._register("SHOW_LEGACY_DISPLACEMENT_MEASUREMENT_WINDOWS", self.UI, False, "Show legacy displacement windows")
         self._register("LASER_AF_DISPLAY_SPOT_IMAGE", self.UI, True, "Display laser AF spot image")
 
         # Acquisition flags

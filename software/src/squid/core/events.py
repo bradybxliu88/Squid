@@ -2202,37 +2202,6 @@ class PlateReaderLocationChanged(Event):
 
 
 # ============================================================================
-# Displacement Measurement Commands
-# ============================================================================
-
-
-@dataclass
-class SetDisplacementMeasurementSettingsCommand(Event):
-    """Command to update displacement measurement settings."""
-
-    x_offset: float
-    y_offset: float
-    x_scaling: float
-    y_scaling: float
-    n_average: int
-    n: int
-
-
-@dataclass
-class SetWaveformDisplayNCommand(Event):
-    """Command to update waveform display N parameter."""
-
-    n: int
-
-
-@dataclass
-class DisplacementReadingsChanged(Event):
-    """Notification that displacement readings have changed."""
-
-    readings: List[float]
-
-
-# ============================================================================
 # Global Mode Events
 # ============================================================================
 

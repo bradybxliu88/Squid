@@ -4,11 +4,7 @@ from squid.ui.widgets.display.napari_live import NapariLiveWidget
 from squid.ui.widgets.display.napari_multichannel import NapariMultiChannelWidget
 from squid.ui.widgets.display.napari_mosaic import NapariMosaicDisplayWidget
 from squid.ui.widgets.display.napari_plate_view import NapariPlateViewWidget
-from squid.ui.widgets.display.plotting import (
-    WaveformDisplay,
-    PlotWidget,
-    SurfacePlotWidget,
-)
+from squid.ui.widgets.display.plotting import SurfacePlotWidget
 from squid.ui.widgets.display.ndviewer_tab import NDViewerTab
 
 __all__ = [
@@ -17,8 +13,6 @@ __all__ = [
     "NapariMultiChannelWidget",
     "NapariMosaicDisplayWidget",
     "NapariPlateViewWidget",
-    "WaveformDisplay",
-    "PlotWidget",
     "SurfacePlotWidget",
     "NDViewerTab",
 ]

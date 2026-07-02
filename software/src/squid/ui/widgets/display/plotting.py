@@ -1,98 +1,16 @@
-# Plotting widgets (waveform, generic plot, 3D surface)
-from typing import Any, Optional, List
+# Plotting widgets (3D surface)
+from typing import Any
 
 import numpy as np
 from mpl_toolkits.mplot3d import proj3d
 from scipy.interpolate import griddata
 
 import squid.core.logging
-import pyqtgraph as pg
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from qtpy.QtCore import Signal
-from qtpy.QtWidgets import QFrame, QWidget, QVBoxLayout, QGridLayout
-
-
-class WaveformDisplay(QFrame):
-    def __init__(
-        self,
-        N: int = 1000,
-        include_x: bool = True,
-        include_y: bool = True,
-        main: QWidget = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.N = N
-        self.include_x = include_x
-        self.include_y = include_y
-        self.add_components()
-        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
-
-    def add_components(self) -> None:
-        self.plotWidget = {}
-        self.plotWidget["X"] = PlotWidget("X", N=self.N, add_legend=True)
-        self.plotWidget["Y"] = PlotWidget("X", N=self.N, add_legend=True)
-
-        layout = QGridLayout()
-        if self.include_x:
-            layout.addWidget(self.plotWidget["X"], 0, 0)
-        if self.include_y:
-            layout.addWidget(self.plotWidget["Y"], 1, 0)
-        self.setLayout(layout)
-
-    def plot(self, time: np.ndarray, data: np.ndarray) -> None:
-        if self.include_x:
-            self.plotWidget["X"].plot(
-                time, data[0, :], "X", color=(255, 255, 255), clear=True
-            )
-        if self.include_y:
-            self.plotWidget["Y"].plot(
-                time, data[1, :], "Y", color=(255, 255, 255), clear=True
-            )
-
-    def update_N(self, N: int) -> None:
-        self.N = N
-        self.plotWidget["X"].update_N(N)
-        self.plotWidget["Y"].update_N(N)
-
-
-class PlotWidget(pg.GraphicsLayoutWidget):
-    def __init__(
-        self,
-        title: str = "",
-        N: int = 1000,
-        parent: QWidget = None,
-        add_legend: bool = False,
-    ) -> None:
-        super().__init__(parent)
-        self.plotWidget = self.addPlot(
-            title="", axisItems={"bottom": pg.DateAxisItem()}
-        )
-        if add_legend:
-            self.plotWidget.addLegend()
-        self.N = N
-
-    def plot(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        label: str,
-        color: tuple,
-        clear: bool = False,
-    ) -> None:
-        self.plotWidget.plot(
-            x[-self.N :],
-            y[-self.N :],
-            pen=pg.mkPen(color=color, width=4),
-            name=label,
-            clear=clear,
-        )
-
-    def update_N(self, N: int) -> None:
-        self.N = N
+from qtpy.QtWidgets import QWidget, QVBoxLayout
 
 
 class SurfacePlotWidget(QWidget):

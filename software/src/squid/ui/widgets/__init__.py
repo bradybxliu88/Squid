@@ -39,8 +39,6 @@ __all__ = [
     "NapariMultiChannelWidget",
     "NapariMosaicDisplayWidget",
     "NapariPlateViewWidget",
-    "WaveformDisplay",
-    "PlotWidget",
     "SurfacePlotWidget",
     "NDViewerTab",
     # hardware
@@ -65,7 +63,6 @@ __all__ = [
     "FluidicsWidget",
     # tracking
     "TrackingControllerWidget",
-    "DisplacementMeasurementWidget",
     "Joystick",
     # nl5
     "NL5Widget",
@@ -103,8 +100,6 @@ _LAZY_IMPORTS: Final[dict[str, tuple[str, str]]] = {
     "NapariMultiChannelWidget": ("squid.ui.widgets.display", "NapariMultiChannelWidget"),
     "NapariMosaicDisplayWidget": ("squid.ui.widgets.display", "NapariMosaicDisplayWidget"),
     "NapariPlateViewWidget": ("squid.ui.widgets.display", "NapariPlateViewWidget"),
-    "WaveformDisplay": ("squid.ui.widgets.display", "WaveformDisplay"),
-    "PlotWidget": ("squid.ui.widgets.display", "PlotWidget"),
     "SurfacePlotWidget": ("squid.ui.widgets.display", "SurfacePlotWidget"),
     "NDViewerTab": ("squid.ui.widgets.display", "NDViewerTab"),
     # hardware
@@ -129,7 +124,6 @@ _LAZY_IMPORTS: Final[dict[str, tuple[str, str]]] = {
     "FluidicsWidget": ("squid.ui.widgets.fluidics", "FluidicsWidget"),
     # tracking
     "TrackingControllerWidget": ("squid.ui.widgets.tracking", "TrackingControllerWidget"),
-    "DisplacementMeasurementWidget": ("squid.ui.widgets.tracking", "DisplacementMeasurementWidget"),
     "Joystick": ("squid.ui.widgets.tracking", "Joystick"),
     # nl5
     "NL5Widget": ("squid.ui.widgets.nl5", "NL5Widget"),

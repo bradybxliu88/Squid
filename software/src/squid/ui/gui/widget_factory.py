@@ -305,12 +305,6 @@ def create_laser_autofocus_widgets(gui: "HighContentScreeningGui") -> None:
         exposure_limits=focus_camera_exposure_limits,
         stretch=False,
     )
-    gui.waveformDisplay = widgets.WaveformDisplay(
-        N=1000, include_x=True, include_y=False
-    )
-    gui.displacementMeasurementWidget = widgets.DisplacementMeasurementWidget(
-        event_bus=gui._ui_event_bus,
-    )
     gui.laserAutofocusControlWidget = widgets.LaserAutofocusControlWidget(
         event_bus=gui._ui_event_bus,
         initial_is_initialized=gui.laserAutofocusController.is_initialized,
