@@ -390,10 +390,6 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
         return self._config.zstack.stacking_direction
 
     @property
-    def use_fluidics(self) -> bool:  # legacy attribute
-        return self._config.use_fluidics
-
-    @property
     def skip_saving(self) -> bool:  # legacy attribute
         return self._config.skip_saving
 
@@ -485,9 +481,6 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
 
     def set_base_path(self, path: str) -> None:
         self.base_path = path
-
-    def set_use_fluidics(self, use_fluidics: bool) -> None:
-        self.update_config(**{"use_fluidics": use_fluidics})
 
     def set_skip_saving(self, skip_saving: bool) -> None:
         self.update_config(**{"skip_saving": skip_saving})
@@ -1205,7 +1198,6 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             display_resolution_scaling=self._config.display_resolution_scaling,
             z_stacking_config=self._config.zstack.stacking_direction,
             z_range=self._config.zstack.z_range,
-            use_fluidics=self._config.use_fluidics,
             skip_saving=self._config.skip_saving,
             acquisition_order=self._config.acquisition_order,
             # Downsampled view generation parameters
@@ -1461,8 +1453,6 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             self.set_z_range(cmd.z_range[0], cmd.z_range[1])
         if cmd.focus_map is not None:
             self.set_focus_map(cmd.focus_map)
-        if cmd.use_fluidics is not None:
-            self.set_use_fluidics(cmd.use_fluidics)
         if cmd.skip_saving is not None:
             self.set_skip_saving(cmd.skip_saving)
         if cmd.z_stacking_config is not None:

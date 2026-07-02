@@ -126,7 +126,6 @@ def test_set_acquisition_parameters_command_applies_fields(bus_only_sim: Acquisi
             gen_focus_map=False,
             use_manual_focus_map=True,
             focus_map=focus_map,
-            use_fluidics=True,
             z_stacking_config=2,
         )
     )
@@ -141,7 +140,6 @@ def test_set_acquisition_parameters_command_applies_fields(bus_only_sim: Acquisi
     assert controller.gen_focus_map is False
     assert controller.use_manual_focus_map is True
     assert controller.focus_map == focus_map
-    assert controller.use_fluidics is True
     assert controller.z_stacking_config == _def.Z_STACKING_CONFIG_MAP[2]
 
 

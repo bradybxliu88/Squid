@@ -465,9 +465,6 @@ def save_acquisition_yaml(
         "num_rows": params.plate_num_rows,
         "num_cols": params.plate_num_cols,
     }
-    yaml_dict["fluidics"] = {
-        "enabled": params.use_fluidics,
-    }
 
     yaml_path = os.path.join(experiment_path, "acquisition.yaml")
     try:

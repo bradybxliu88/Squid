@@ -55,7 +55,6 @@ class AcquisitionParameters:
     z_stacking_config: str
     z_range: Tuple[float, float]
 
-    use_fluidics: bool
     skip_saving: bool = False
     acquisition_order: str = "channel_first"  # "channel_first" or "z_first"
 

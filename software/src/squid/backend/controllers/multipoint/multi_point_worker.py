@@ -215,7 +215,6 @@ class MultiPointWorker:
         self.channelConfigurationManager: ChannelConfigService = (
             channel_configuration_mananger
         )
-        self.use_fluidics = acquisition_parameters.use_fluidics
         self._aborted: bool = False
         self._abort_requested = ThreadSafeFlag(initial=False)
         self._pause_requested = ThreadSafeFlag(initial=False)

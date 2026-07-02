@@ -105,7 +105,6 @@ def test_abort_during_acquisition_startup(simulated_application_context, tmp_pat
             n_t=1,
             autofocus_mode=AutofocusMode.NONE,
             use_piezo=False,
-            use_fluidics=False,
         )
     )
 
@@ -152,7 +151,6 @@ def test_back_to_back_acquisitions(simulated_application_context, tmp_path):
             n_t=1,
             autofocus_mode=AutofocusMode.NONE,
             use_piezo=False,
-            use_fluidics=False,
         )
     )
     event_bus.drain(timeout_s=0.5)
@@ -234,7 +232,6 @@ def test_move_stage_command_blocked_during_acquisition(simulated_application_con
             n_t=1,
             autofocus_mode=AutofocusMode.NONE,
             use_piezo=False,
-            use_fluidics=False,
         )
     )
 

@@ -1487,7 +1487,6 @@ class SetAcquisitionParametersCommand(Event):
     use_manual_focus_map: Optional[bool] = None
     z_range: Optional[Tuple[float, float]] = None
     focus_map: Optional[Any] = None
-    use_fluidics: Optional[bool] = None
     skip_saving: Optional[bool] = None
     z_stacking_config: Optional[int] = None  # 0=FROM BOTTOM, 1=FROM CENTER, 2=FROM TOP
 

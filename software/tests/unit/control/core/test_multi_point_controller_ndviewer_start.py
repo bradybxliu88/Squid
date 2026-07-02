@@ -167,7 +167,6 @@ def _build_acquisition_params(experiment_id: str) -> AcquisitionParameters:
         display_resolution_scaling=1.0,
         z_stacking_config="FROM CENTER",
         z_range=(0.0, 0.0),
-        use_fluidics=False,
         skip_saving=True,
     )
 

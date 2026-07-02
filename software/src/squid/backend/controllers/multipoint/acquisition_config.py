@@ -181,7 +181,6 @@ class AcquisitionConfig:
         selected_channels: Tuple of channel names to acquire.
         display_resolution_scaling: Scaling factor for display images.
         skip_saving: Whether to skip saving images to disk.
-        use_fluidics: Whether to use fluidics for buffer changes.
         xy_mode: Position mode ("Current Position", "Select Wells", etc.).
     """
 
@@ -192,7 +191,6 @@ class AcquisitionConfig:
     selected_channels: Tuple[str, ...] = ()
     display_resolution_scaling: float = _def.Acquisition.IMAGE_DISPLAY_SCALING_FACTOR
     skip_saving: bool = False
-    use_fluidics: bool = False
     xy_mode: str = "Current Position"
     acquisition_order: str = "channel_first"  # "channel_first" or "z_first"
 

@@ -1024,7 +1024,6 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
                 autofocus_mode=self._current_autofocus_mode(),
                 autofocus_interval_fovs=self.spinbox_af_interval.value(),
                 focus_lock_settings=self._current_focus_lock_settings(),
-                use_fluidics=False,
                 skip_saving=self.checkbox_skipSaving.isChecked(),
                 z_range=z_range,
                 focus_map=focus_map,
@@ -1487,7 +1486,6 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
             use_piezo=False,
             autofocus_mode=AutofocusMode.NONE,
             autofocus_interval_fovs=1,
-            use_fluidics=False,
             z_range=(z, z),
         ))
 

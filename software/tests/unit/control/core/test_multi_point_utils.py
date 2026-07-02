@@ -38,7 +38,6 @@ def _make_params() -> AcquisitionParameters:
         display_resolution_scaling=1.0,
         z_stacking_config="FROM BOTTOM",
         z_range=(0.0, 0.0),
-        use_fluidics=False,
     )
 
 
