@@ -39,6 +39,7 @@ from squid.core.events import (
     StartLiveCommand,
     StopLiveCommand,
     LiveStateChanged,
+    SetTriggerModeCommand,
     SetTriggerFPSCommand,
     SetMicroscopeModeCommand,
     UpdateIlluminationCommand,
@@ -638,11 +639,10 @@ class NapariLiveWidget(EventBusWidget):
         self._publish(SetDisplayResolutionScalingCommand(scaling=value))
 
     def on_trigger_mode_changed(self, index: int) -> None:
-        # Get the actual value using user data
-        actual_value = self.dropdown_triggerMode.itemData(index)
-        print(
-            f"Selected: {self.dropdown_triggerMode.currentText()} (actual value: {actual_value})"
-        )
+        # Apply the selected trigger mode via the backend (mirrors LiveControlWidget).
+        mode = self.dropdown_triggerMode.itemData(index)
+        if mode is not None:
+            self._publish(SetTriggerModeCommand(mode=mode))
 
     def addNapariGrayclipColormap(self) -> None:
         if hasattr(napari.utils.colormaps.AVAILABLE_COLORMAPS, "grayclip"):
