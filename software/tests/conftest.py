@@ -359,6 +359,42 @@ def qtbot(request):
                     return
                 pytest.fail("waitUntil timed out")
 
+            def waitSignal(self, signal, timeout: int = 1000, raising: bool = True):
+                # Real pytest-qt returns a context manager that fails on __exit__
+                # if the signal did not fire within timeout. Reproduce that here,
+                # pumping the event loop so a queued emission is delivered.
+                app = self._app
+
+                class _SignalWaiter:
+                    def __init__(self):
+                        self.signal_triggered = False
+                        self.args = None
+
+                    def _slot(self, *a):
+                        self.signal_triggered = True
+                        self.args = list(a)
+
+                    def __enter__(self):
+                        signal.connect(self._slot)
+                        return self
+
+                    def __exit__(self, exc_type, exc, tb):
+                        deadline = time.time() + timeout / 1000.0
+                        while not self.signal_triggered and time.time() < deadline:
+                            app.processEvents()
+                            time.sleep(0.005)
+                        try:
+                            signal.disconnect(self._slot)
+                        except Exception:
+                            pass
+                        if exc_type is not None:
+                            return False
+                        if raising and not self.signal_triggered:
+                            pytest.fail("waitSignal: signal was not emitted within timeout")
+                        return False
+
+                return _SignalWaiter()
+
             def waitExposed(self, widget, timeout: int = 1000):
                 # Real pytest-qt returns a context manager that waits for the
                 # widget to be exposed. Tests here call it both bare

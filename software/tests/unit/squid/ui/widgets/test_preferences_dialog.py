@@ -66,6 +66,27 @@ def preferences_dialog(qtbot, sample_config, temp_config_file):
     return dialog
 
 
+@pytest.fixture(autouse=True)
+def _no_blocking_modals(monkeypatch):
+    """Neutralize blocking modal dialogs for every test in this module.
+
+    A real QMessageBox.question/.information/... or QDialog.exec_() opens a
+    modal event loop with no display under the headless test stub, which
+    hangs or SEGFAULTs the run. Patch them to safe, non-blocking returns so
+    the save/apply code paths run to completion. QMessageBox.question returns
+    ``No`` so the restart prompt never triggers _restart_application(), which
+    would otherwise re-exec the interpreter mid-test. Individual tests that
+    assert on a specific dialog call override these with their own patch
+    (the nested patch wins inside its ``with`` block).
+    """
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.No))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: QMessageBox.Ok))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: QMessageBox.Ok))
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *a, **k: QMessageBox.Ok))
+    # Guard against _restart_application ever running even if a test forces Yes.
+    monkeypatch.setattr(PreferencesDialog, "_restart_application", lambda self: None)
+
+
 class TestConfigHelpers:
     """Test config value retrieval helper methods."""
 
@@ -282,16 +303,18 @@ class TestSaveAndCloseWorkflow:
         assert saved_config.get("GENERAL", "file_saving_option") == "MULTI_PAGE_TIFF"
 
     def test_save_and_close_single_change_requires_restart(self, qtbot, preferences_dialog, temp_config_file):
-        """Single change requiring restart should show restart message."""
+        """Single change requiring restart should show the restart prompt."""
         preferences_dialog.binning_spinbox.setValue(4)
 
-        with patch.object(QMessageBox, "information") as mock_info:
+        # _prompt_restart() uses QMessageBox.question (Yes/No); return No so the
+        # (patched) _restart_application is not invoked and the dialog just closes.
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.No) as mock_question:
             preferences_dialog.accept = MagicMock()
             preferences_dialog._save_and_close()
 
-            # Should show restart message
-            mock_info.assert_called_once()
-            assert "restart" in str(mock_info.call_args)
+            # Should prompt about the required restart, then close.
+            mock_question.assert_called_once()
+            assert "restart" in str(mock_question.call_args).lower()
             preferences_dialog.accept.assert_called_once()
 
     def test_save_and_close_multiple_changes_accepted(self, qtbot, preferences_dialog, temp_config_file):

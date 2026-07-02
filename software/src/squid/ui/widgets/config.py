@@ -148,6 +148,16 @@ class PreferencesDialog(QDialog):
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
 
+        # Create the action buttons BEFORE building the tabs: _create_help_tab()
+        # wires self.save_button.clicked -> self._save_help_preferences, so the
+        # button must already exist or opening the dialog raises AttributeError.
+        # (Widgets are created here; they are placed into the layout below so the
+        # button row still renders at the bottom.)
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self._save_and_close)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+
         # Create tabs
         self._create_general_tab()
         self._create_acquisition_tab()
@@ -158,11 +168,6 @@ class PreferencesDialog(QDialog):
 
         # Buttons
         button_layout = QHBoxLayout()
-        self.save_button = QPushButton("Save")
-        self.save_button.clicked.connect(self._save_and_close)
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-
         button_layout.addStretch()
         button_layout.addWidget(self.save_button)
         button_layout.addWidget(self.cancel_button)
@@ -1499,7 +1504,10 @@ class PreferencesDialog(QDialog):
             changes.append(("Simulate Camera *", str(old_val_bool), str(new_val_bool), True))
 
         old_val_bool = self._get_config_bool("SIMULATION", "simulate_microcontroller", False)
-        new_val_bool = self.sim_microcontroller_checkbox.isChecked()
+        # The checkbox is created as self.sim_mcu_checkbox (see _create_advanced_tab)
+        # and saved under that name too; this change-detection path used a stale
+        # alias (sim_microcontroller_checkbox) that raised AttributeError.
+        new_val_bool = self.sim_mcu_checkbox.isChecked()
         if old_val_bool != new_val_bool:
             changes.append(("Simulate Microcontroller *", str(old_val_bool), str(new_val_bool), True))
 
