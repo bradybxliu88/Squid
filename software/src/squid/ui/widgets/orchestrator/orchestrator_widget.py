@@ -437,18 +437,31 @@ class OrchestratorControlPanel(EventBusWidget):
         self._load_btn = QPushButton("Load Protocol")
         self._load_btn.setStyleSheet(BTN_STYLES["secondary"])
         self._load_btn.clicked.connect(self._on_load_clicked)
+        self._load_btn.setToolTip(
+            "Step 1 of 3. Load an experiment protocol (.yaml), its FOV positions "
+            "(.csv), and choose the output folder."
+        )
         row1.addWidget(self._load_btn)
 
         self._validate_btn = QPushButton("Validate")
         self._validate_btn.setStyleSheet(BTN_STYLES["secondary"])
         self._validate_btn.clicked.connect(self._on_validate_clicked)
         self._validate_btn.setEnabled(False)
+        self._validate_btn.setToolTip(
+            "Step 2 of 3. Check the loaded protocol (channels, FOV file, resources) "
+            "and estimate run time before committing. Enabled once a protocol is loaded."
+        )
         row1.addWidget(self._validate_btn)
 
         self._start_btn = QPushButton("Start Acquisition")
         self._start_btn.setStyleSheet(BTN_STYLES["primary"])
         self._start_btn.clicked.connect(self._on_start_clicked)
         self._start_btn.setEnabled(False)
+        self._start_btn.setToolTip(
+            "Step 3 of 3. Run the full multi-round experiment unattended. Enabled only "
+            "after a successful Validate. For a single capture at the current stage "
+            "position instead, use 'Run Current FOV' in the Acquisition Setup tab."
+        )
         row1.addWidget(self._start_btn)
 
         layout.addLayout(row1)

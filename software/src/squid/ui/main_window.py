@@ -505,6 +505,8 @@ class HighContentScreeningGui(QMainWindow):
 
         self.setupRecordTabWidget()
         self.setupCameraTabWidget()
+        # Onboarding: explain what each tab is for / when to use it on hover.
+        self._apply_onboarding_tab_tooltips()
 
     def setupImageDisplayTabs(self) -> None:
         if self._feature_flags.is_enabled("USE_NAPARI_FOR_LIVE_VIEW"):
@@ -884,6 +886,104 @@ class HighContentScreeningGui(QMainWindow):
             lambda: self.resizeCurrentTab(self.cameraTabWidget)
         )
         self.resizeCurrentTab(self.cameraTabWidget)
+
+    # Onboarding tab tooltips: short "what is this / when do I use it" hints keyed
+    # by the exact tab title, so they attach to whichever tabs a given microscope
+    # configuration actually shows (many tabs are feature-flag gated).
+    _ONBOARDING_TAB_TOOLTIPS = {
+        # Acquisition mode tabs (recordTabWidget)
+        "Acquisition Setup": (
+            "Standard acquisition setup. Pick imaging channels, optional Z-stack and "
+            "autofocus, then choose how field-of-view (FOV) positions are defined "
+            "(whole wells, drawn ROIs, a manual point list, or a CSV) and press Start. "
+            "Also hosts Quick Scan (fast unsaved preview) and Run Current FOV (single "
+            "field). Best starting point for most acquisitions."
+        ),
+        "Wellplate Multipoint": (
+            "Scan a multi-well plate. Select wells on the plate map and set scan "
+            "size/overlap; each selected well is tiled automatically. Use when imaging "
+            "defined wells of a plate."
+        ),
+        "Flexible Multipoint": (
+            "Build a manual list of exact stage positions (add the current XYZ with "
+            "'Add' or the ';' key). Use to image specific, arbitrary points rather "
+            "than whole wells."
+        ),
+        "Template Multipoint": (
+            "Acquire a repeating position template. Use for regular, template-defined "
+            "layouts."
+        ),
+        "Multipoint with Fluidics": (
+            "Multi-round acquisition interleaved with fluidics. Load a coordinate CSV "
+            "and specify rounds (e.g. 1-3,5,7-10). Use for sequential fluidics + "
+            "imaging cycles."
+        ),
+        "Tracking": (
+            "Acquire while tracking a moving object. Use for live object-tracking "
+            "experiments."
+        ),
+        # Camera / hardware / focus tabs (cameraTabWidget)
+        "Stages": "Move the XY stage and Z, navigate to positions, and click-to-move on the image.",
+        "Piezo": (
+            "Fine objective-piezo Z control (sub-micron). On piezo-equipped systems, "
+            "Z-stacks are captured with the piezo."
+        ),
+        "NL5": "NL5 confocal unit control.",
+        "Confocal": "Spinning-disk confocal control.",
+        "Emission Filter": "Select the emission filter-wheel position.",
+        "Camera": "Camera settings: exposure time, gain, binning, ROI, and pixel format.",
+        "Contrast AF": (
+            "Software (contrast-based) autofocus — finds focus by maximizing image "
+            "sharpness. Good general-purpose autofocus; slower than laser AF."
+        ),
+        "Laser AF": (
+            "Laser reflection autofocus — uses a reflected laser spot to find focus "
+            "fast and reproducibly. Requires laser-AF hardware; calibrate before use."
+        ),
+        "Focus Map": (
+            "Define a focus surface across the sample so each position uses an "
+            "interpolated focus. Use for large, tilted, or uneven samples."
+        ),
+        # Main view tabs (imageDisplayTabs)
+        "Live View": (
+            "Real-time camera feed. Use to find your sample, set exposure, and choose "
+            "channels before acquiring."
+        ),
+        "Multichannel Acquisition": "Per-channel images from the most recent acquisition.",
+        "Mosaic View": "Stitched mosaic of acquired fields, assembled as the scan runs.",
+        "Plate View": "Whole-plate overview of acquired wells.",
+        "NDViewer": "Browse an acquired N-dimensional dataset (channels, Z, time, positions).",
+        "Plots": "Focus / Z surface and diagnostic plots.",
+        "Laser-Based Focus": "Live view from the laser-autofocus camera and its settings.",
+        "Fluidics": "Fluidics system control and status.",
+        "Orchestrator": (
+            "Automated multi-round experiments: load a protocol, validate, then run "
+            "unattended imaging + fluidics with progress, retries, and operator "
+            "interventions."
+        ),
+    }
+
+    def _apply_onboarding_tab_tooltips(self) -> None:
+        """Attach 'what is this tab / when to use it' tooltips to tab strips.
+
+        Matches by visible tab title so only the tabs a given configuration shows
+        get tooltips, and never fails startup if a display is not a tab widget
+        (e.g. live-only mode replaces imageDisplayTabs with a plain widget).
+        """
+        for tab_widget in (
+            getattr(self, "recordTabWidget", None),
+            getattr(self, "cameraTabWidget", None),
+            getattr(self, "imageDisplayTabs", None),
+        ):
+            if tab_widget is None or not hasattr(tab_widget, "setTabToolTip") or not hasattr(tab_widget, "count"):
+                continue
+            try:
+                for i in range(tab_widget.count()):
+                    tip = self._ONBOARDING_TAB_TOOLTIPS.get(tab_widget.tabText(i))
+                    if tip:
+                        tab_widget.setTabToolTip(i, tip)
+            except Exception:
+                self.log.debug("Could not apply onboarding tab tooltips", exc_info=True)
 
     def setup_layout(self):
         # Setup the control panel layout

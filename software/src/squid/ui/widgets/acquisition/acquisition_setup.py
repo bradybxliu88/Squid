@@ -220,8 +220,31 @@ class AcquisitionSetupWidget(EventBusWidget):
         self._xy_mode_combo.addItems(["Multiwell Tiled", "ROI Tiling", "Multipoint + Scan", "Load Coordinates"])
         # Disable ROI Tiling until mosaic has coordinate system
         self._xy_mode_combo.model().item(_MODE_ROI_TILING).setEnabled(False)
+        # Per-mode tooltips explain how FOV positions are chosen in each mode.
         self._xy_mode_combo.setItemData(
-            _MODE_ROI_TILING, "Requires tile scan for coordinate reference", Qt.ToolTipRole
+            _MODE_MULTIWELL,
+            "Tile the wells you select on the plate map. Each selected well is filled "
+            "with a grid of fields at your scan size/overlap. Use for standard "
+            "well-plate scans.",
+            Qt.ToolTipRole,
+        )
+        self._xy_mode_combo.setItemData(
+            _MODE_ROI_TILING,
+            "Tile the regions you draw on the mosaic (Draw ROIs, then Generate FOVs). "
+            "Requires a tile/mosaic scan first for a coordinate reference.",
+            Qt.ToolTipRole,
+        )
+        self._xy_mode_combo.setItemData(
+            _MODE_MULTIPOINT,
+            "Add region centers from the stage; each center is expanded into a small "
+            "tiled grid (Nx x Ny with overlap). Use for a few arbitrary areas you want tiled.",
+            Qt.ToolTipRole,
+        )
+        self._xy_mode_combo.setItemData(
+            _MODE_LOAD_CSV,
+            "Load FOV positions from a CSV (columns: region, x (mm), y (mm); optional z). "
+            "Use to reuse a saved or externally generated position list.",
+            Qt.ToolTipRole,
         )
         lay.addWidget(self._xy_checkbox)
         lay.addWidget(self._xy_mode_combo)
