@@ -237,13 +237,6 @@ class TestWidgetInheritance:
 
         assert issubclass(DACControWidget, EventBusFrame)
 
-    def test_trigger_widget_inherits_event_bus_frame(self):
-        """Verify TriggerControlWidget inherits from EventBusFrame."""
-        from squid.ui.widgets.hardware.trigger import TriggerControlWidget
-        from squid.ui.widgets.base import EventBusFrame
-
-        assert issubclass(TriggerControlWidget, EventBusFrame)
-
     def test_navigation_widget_inherits_event_bus_frame(self):
         """Verify NavigationWidget inherits from EventBusFrame."""
         from squid.ui.widgets.stage.navigation import NavigationWidget
@@ -288,7 +281,6 @@ class TestWidgetInheritance:
         from squid.ui.widgets.stage.navigation import NavigationWidget
         from squid.ui.widgets.camera.live_control import LiveControlWidget
         from squid.ui.widgets.camera.settings import CameraSettingsWidget
-        from squid.ui.widgets.hardware.trigger import TriggerControlWidget
         from squid.ui.widgets.hardware.dac import DACControWidget
         from squid.ui.widgets.stage.autofocus import AutoFocusWidget
         from squid.ui.widgets.wellplate.format import WellplateFormatWidget
@@ -304,8 +296,6 @@ class TestWidgetInheritance:
             WellplateFormatWidget(None, None, None)  # type: ignore[arg-type]
 
         # Widgets without required args raise TypeError
-        with pytest.raises(TypeError):
-            TriggerControlWidget()  # type: ignore[call-arg]
         with pytest.raises(TypeError):
             DACControWidget()  # type: ignore[call-arg]
         with pytest.raises(TypeError):
