@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+import _def
 from _def import ILLUMINATION_CODE
 from squid.backend.microcontroller import Microcontroller
 import squid.core.logging
@@ -120,6 +121,40 @@ class IlluminationController:
             return self._source_code_to_channel[channel]
         return None
 
+    @staticmethod
+    def _is_led_matrix_source(channel) -> bool:
+        """Return True if ``channel`` is an LED-array pattern source code (0-9).
+
+        LED-array patterns (brightfield/darkfield) are driven directly by the
+        microcontroller's LED-matrix command rather than the fluorescence D-code
+        DAC mapping held in channel_mappings_TTL.
+        """
+        return isinstance(channel, int) and not isinstance(channel, bool) and 0 <= channel < 10
+
+    def _set_led_matrix_intensity(self, illumination_source: int, intensity: float) -> None:
+        """Select the LED-matrix pattern and set its intensity (brightfield/darkfield).
+
+        RGB channel weights come from LED_MATRIX_{R,G,B}_FACTOR so a monochrome LED
+        matrix (default: blue only) is lit with the correct color at the requested
+        fraction of full scale.
+
+        Mirrors the DAC/fluorescence set_intensity path: it only *selects* the source
+        and does NOT wait for a command ack here. Synchronization happens in
+        turn_on_illumination() (which waits after the global TURN_ON). Waiting on the
+        SET_ILLUMINATION_LED_MATRIX ack here would stall for the full command timeout
+        on any device (e.g. the simulator) that does not acknowledge that command.
+        """
+        # Read the RGB channel weights LIVE from _def (not import-time constants):
+        # the Config dialog can mutate _def.LED_MATRIX_*_FACTOR at runtime with
+        # needs_restart=False, so the driver must pick up the current values.
+        factor = max(0.0, min(float(intensity), 100.0)) / 100.0
+        self.microcontroller.set_illumination_led_matrix(
+            illumination_source,
+            r=factor * _def.LED_MATRIX_R_FACTOR,
+            g=factor * _def.LED_MATRIX_G_FACTOR,
+            b=factor * _def.LED_MATRIX_B_FACTOR,
+        )
+
     def _load_channel_mappings(self, default_mappings):
         """Load channel mappings from JSON file, fallback to default if file not found."""
         try:
@@ -169,6 +204,15 @@ class IlluminationController:
         if channel is None:
             channel = self.current_channel
 
+        # LED-array patterns (0-9) and the external FET (20) are driven directly by
+        # the microcontroller; turn_on_illumination() enables whichever source was
+        # selected by the preceding set_intensity() call.
+        if self._is_led_matrix_source(channel) or channel == ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_EXTERNAL_FET:
+            self.microcontroller.turn_on_illumination()
+            self.microcontroller.wait_till_operation_is_completed()
+            self.is_on[channel] = True
+            return
+
         resolved = self._resolve_channel(channel)
         if resolved is None:
             _log.warning("turn_on_illumination: channel %s could not be resolved, skipping", channel)
@@ -188,6 +232,14 @@ class IlluminationController:
     def turn_off_illumination(self, channel=None):
         if channel is None:
             channel = self.current_channel
+
+        # LED-array patterns (0-9) and the external FET (20) are driven directly by
+        # the microcontroller (not via channel_mappings_TTL).
+        if self._is_led_matrix_source(channel) or channel == ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_EXTERNAL_FET:
+            self.microcontroller.turn_off_illumination()
+            self.microcontroller.wait_till_operation_is_completed()
+            self.is_on[channel] = False
+            return
 
         # Resolve channel (accepts wavelength or illumination source code)
         resolved = self._resolve_channel(channel)
@@ -257,6 +309,21 @@ class IlluminationController:
         return np.clip(dac_percent, 0, 100)
 
     def set_intensity(self, channel, intensity):
+        # LED-array patterns (0-9) drive the LED matrix; the external FET (20) uses the
+        # plain DAC command. Neither is a key in channel_mappings_TTL (fluorescence
+        # D-codes only), so route them here before wavelength-based resolution.
+        if self._is_led_matrix_source(channel):
+            self._set_led_matrix_intensity(channel, intensity)
+            self.intensity_settings[channel] = intensity
+            return
+        if channel == ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_EXTERNAL_FET:
+            # Clamp to [0,100] (like the LED-matrix path) so an out-of-range
+            # caller/config cannot overflow the single intensity byte in
+            # microcontroller.set_illumination (int((intensity/100)*65535) >> 8).
+            self.microcontroller.set_illumination(channel, max(0.0, min(float(intensity), 100.0)))
+            self.intensity_settings[channel] = intensity
+            return
+
         resolved = self._resolve_channel(channel)
         if resolved is None:
             _log.warning("set_intensity: channel %s could not be resolved, skipping", channel)

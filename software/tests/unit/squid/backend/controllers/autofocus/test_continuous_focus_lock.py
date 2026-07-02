@@ -1922,8 +1922,182 @@ def test_search_timeout_transitions_to_lost():
     # Move piezo away to verify it gets restored
     piezo.move_to(180.0)
 
-    # search_timeout_s=0.0 means immediate timeout on next _search_step
+    # Force the search start well into the past so the elapsed-time check is
+    # robust against Windows' coarse (~15.6 ms) monotonic resolution; otherwise
+    # back-to-back monotonic() reads yield elapsed == 0 and the 1e-9 s timeout
+    # would not fire.
+    controller._search_start_time = time.monotonic() - 1.0
     controller._search_step()
 
     assert controller.status == "lost"
     assert piezo.get_position() == pytest.approx(150.0, abs=0.1)
+
+
+# ============================================================================
+# Synchronous pause() handshake tests (L1)
+#
+# pause() is synchronous: it sets _paused / clears _pause_ack_event under
+# _lock, then blocks (bounded max(0.15, 5/loop_rate_hz)s) until the control
+# loop sets _pause_ack_event once it has observed _paused=True and is
+# guaranteed to issue no further piezo correction this cycle. Fast-path guards
+# skip the wait when no loop thread is live or when called from the loop
+# thread; the loop's finally sets the ack so stop()/crash releases a waiter.
+#
+# Every test below is self-terminating: finite loops, bounded waits, and a
+# finally that stops the controller / releases any helper threads.
+# ============================================================================
+
+
+def test_pause_freezes_piezo_corrections_synchronously():
+    """After a synchronous pause() returns, no further move_to_fast() fires.
+
+    Integration test: run a real locked control loop against a piezo-coupled
+    laser-AF simulator so the loop genuinely calls move_to_fast() every locked
+    iteration (it is called each cycle even when error==0). Snapshot the call
+    count the instant pause() returns and assert it does not increase over
+    several loop periods (the fix), while sanity-checking that it WAS
+    increasing before the pause.
+    """
+    bus = EventBus()
+    piezo = _DummyPiezoService()
+    laser_af = _CoupledLaserAF(piezo, disturbance_um=1.0)
+    controller = ContinuousFocusLockController(
+        laser_af=laser_af,
+        piezo_service=piezo,
+        event_bus=bus,
+        config=FocusLockConfig(
+            loop_rate_hz=60,
+            metrics_rate_hz=20,
+            buffer_length=3,
+            acquire_threshold_um=2.0,
+            maintain_threshold_um=3.0,
+        ),
+    )
+
+    # Instrument move_to_fast without breaking the piezo<->displacement
+    # coupling (the wrapper still forwards to the real setter).
+    calls = {"n": 0}
+    orig_move_to_fast = piezo.move_to_fast
+
+    def counting_move_to_fast(position_um):
+        calls["n"] += 1
+        orig_move_to_fast(position_um)
+
+    piezo.move_to_fast = counting_move_to_fast
+
+    controller.start(target_um=0.0)
+    try:
+        controller.set_lock_reference()
+        assert controller.wait_for_lock(timeout_s=1.0)
+
+        # Probe the pause race window several times.
+        for _ in range(15):
+            controller.resume()  # ensure corrections are running again
+
+            # Sanity: while running (not paused) the loop actively corrects.
+            time.sleep(0.05)
+            before = calls["n"]
+            time.sleep(0.05)  # ~3 loop periods at 60 Hz
+            assert calls["n"] > before, "loop was not actively correcting before pause()"
+
+            # Synchronous pause: the count must be frozen the instant it
+            # returns (any in-flight correction has already completed).
+            controller.pause()
+            n_at_pause = calls["n"]
+            time.sleep(0.05)  # ~3 loop periods
+            assert calls["n"] == n_at_pause, "move_to_fast fired after pause() returned"
+    finally:
+        controller.stop()
+
+
+def test_pause_blocks_until_control_loop_acknowledges():
+    """pause() blocks until the loop sets the ack, then returns promptly.
+
+    Deterministic: a fake loop thread mimics the real ack protocol under the
+    controller lock but only sets _pause_ack_event once we permit it via
+    allow_ack. This isolates the synchronous handshake from any camera/loop
+    timing.
+    """
+    import threading
+
+    controller = ContinuousFocusLockController(
+        laser_af=_DummyLaserAF(),
+        piezo_service=_DummyPiezoService(),
+        event_bus=EventBus(),
+        config=FocusLockConfig(loop_rate_hz=30),
+    )
+    controller._should_run = True
+    controller._running = True
+
+    allow_ack = threading.Event()
+    release = threading.Event()
+
+    def fake_loop():
+        # Mimic the real loop: observe _paused under the controller lock and
+        # acknowledge (also under the lock) only once allow_ack is set.
+        while not release.is_set():
+            with controller._lock:
+                paused = controller._paused
+            if paused and allow_ack.wait(0.01):
+                with controller._lock:
+                    controller._pause_ack_event.set()
+                release.wait(0.01)
+            else:
+                time.sleep(0.005)
+
+    loop_thread = threading.Thread(target=fake_loop, name="FakeFocusLoop", daemon=True)
+    controller._thread = loop_thread
+    loop_thread.start()
+
+    pause_returned = threading.Event()
+
+    def do_pause():
+        controller.pause()
+        pause_returned.set()
+
+    pauser = threading.Thread(target=do_pause, name="Pauser", daemon=True)
+    try:
+        pauser.start()
+
+        # 0.08s < bounded ack timeout (max(0.15, 5/30)=0.1667s): pause() must
+        # still be blocked because the loop has not acknowledged yet.
+        assert not pause_returned.wait(0.08), "pause() returned before loop acknowledged"
+
+        # Permit the fake loop to acknowledge; pause() must then return promptly.
+        allow_ack.set()
+        assert pause_returned.wait(0.5), "pause() did not return after acknowledgement"
+        assert controller._pause_ack_event.is_set()
+        assert controller.status == "paused"
+    finally:
+        release.set()
+        allow_ack.set()
+        pauser.join(timeout=1.0)
+        loop_thread.join(timeout=1.0)
+        controller.stop()
+
+
+def test_pause_does_not_block_when_loop_not_running():
+    """Fast-path/deadlock guard: pause() returns immediately when there is no
+    live control-loop thread (_running False, _thread None) and still
+    transitions state to 'paused'. Inherently non-hanging (no threads)."""
+    controller = ContinuousFocusLockController(
+        laser_af=_DummyLaserAF(),
+        piezo_service=_DummyPiezoService(),
+        event_bus=EventBus(),
+        config=FocusLockConfig(buffer_length=3),
+    )
+    # Active (should_run) but no live loop: _running stays False, _thread None.
+    controller._should_run = True
+    controller._set_status("locked")
+
+    try:
+        start = time.monotonic()
+        controller.pause()
+        elapsed = time.monotonic() - start
+
+        # Returned via the fast path, well under the >=0.15s bounded wait.
+        assert elapsed < 0.1, f"pause() blocked {elapsed:.3f}s despite no live loop"
+        assert controller.status == "paused"
+        assert controller._paused is True
+    finally:
+        controller.stop()

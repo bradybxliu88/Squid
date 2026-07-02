@@ -399,6 +399,16 @@ class ImagingExecutor:
         )
     """
 
+    # --- Acquisition completion watchdog (bug H3) ---
+    # Maximum wall-clock time with NO acquisition progress before the imaging
+    # wait loop concludes the acquisition has hung (AcquisitionFinished never
+    # arriving) and aborts it. Deliberately generous so it never trips on
+    # legitimate gaps (autofocus, long exposures, z-stacks, fluidics, job
+    # draining/teardown); it is a *stall* bound, refreshed on every progress
+    # event, not a total-duration bound.
+    _WATCHDOG_STALL_FLOOR_S = 600.0
+    _WATCHDOG_SECONDS_PER_IMAGE = 30.0
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -426,6 +436,14 @@ class ImagingExecutor:
         self._acquisition_success = False
         self._acquisition_error: Optional[str] = None
         self._current_experiment_id: Optional[str] = None
+
+        # Acquisition completion watchdog (bug H3). Guards against
+        # AcquisitionFinished never arriving (e.g. an exception during
+        # MultiPointWorker teardown that skips ProgressTracker.finish()).
+        self._watchdog_lock = threading.Lock()
+        self._last_progress_monotonic: float = 0.0
+        # Test/operator override for the stall bound (seconds); None => computed.
+        self._watchdog_stall_timeout_override_s: Optional[float] = None
 
         # FOV progress tracking
         self._images_per_fov: int = 1
@@ -462,6 +480,28 @@ class ImagingExecutor:
         """Abort a running acquisition immediately."""
         if hasattr(self._multipoint, "request_abort_aquisition"):
             self._multipoint.request_abort_aquisition()
+
+    def _watchdog_stall_timeout_s(self) -> float:
+        """Return max seconds with no progress before the wait loop aborts.
+
+        Refreshed on every AcquisitionProgress event, so this is a *stall*
+        bound, not a total-duration bound: it never trips on a legitimately
+        long acquisition, only on a genuine hang.
+        """
+        if self._watchdog_stall_timeout_override_s is not None:
+            return max(0.0, float(self._watchdog_stall_timeout_override_s))
+        env = os.environ.get("SQUID_ACQUISITION_WATCHDOG_STALL_S")
+        if env:
+            try:
+                value = float(env)
+                if value > 0:
+                    return value
+            except ValueError:
+                _log.warning("Ignoring invalid SQUID_ACQUISITION_WATCHDOG_STALL_S=%r", env)
+        return max(
+            self._WATCHDOG_STALL_FLOOR_S,
+            self._images_per_fov * self._WATCHDOG_SECONDS_PER_IMAGE,
+        )
 
     @property
     def last_error(self) -> Optional[str]:
@@ -595,11 +635,50 @@ class ImagingExecutor:
                 _log.error("run_acquisition() returned False — acquisition did not start")
                 return False
 
-            # Wait for acquisition to complete, checking cancel token
+            # Wait for acquisition to complete, checking cancel token.
+            #
+            # A stall watchdog guards against AcquisitionFinished never arriving
+            # (e.g. an exception during MultiPointWorker teardown that skips
+            # ProgressTracker.finish()). Without it this loop would block forever
+            # with no operator present (bug H3). The deadline is refreshed on
+            # every AcquisitionProgress event and whenever a pause blocks
+            # check_point(), so it never trips on a legitimately long or paused
+            # acquisition -- only on a genuine hang.
             wait_timeout_s = scale_duration(0.5, min_seconds=0.01)
+            stall_timeout_s = self._watchdog_stall_timeout_s()
+            with self._watchdog_lock:
+                self._last_progress_monotonic = time.monotonic()
             while not self._acquisition_complete.is_set():
-                cancel_token.check_point()  # Raises CancellationError if cancelled
-                self._acquisition_complete.wait(timeout=wait_timeout_s)
+                iteration_start = time.monotonic()
+                cancel_token.check_point()  # Raises CancellationError if cancelled; blocks while paused
+                # A pause blocks inside check_point(); that time is not a stall.
+                if time.monotonic() - iteration_start > wait_timeout_s:
+                    with self._watchdog_lock:
+                        self._last_progress_monotonic = time.monotonic()
+                if self._acquisition_complete.wait(timeout=wait_timeout_s):
+                    break
+                with self._watchdog_lock:
+                    stalled_for = time.monotonic() - self._last_progress_monotonic
+                # Re-check completion: if the acquisition finished in the tiny window
+                # between wait() returning False and here, honor the completion
+                # instead of spuriously aborting a run that actually succeeded.
+                if stalled_for > stall_timeout_s and not self._acquisition_complete.is_set():
+                    _log.error(
+                        "ACQUISITION WATCHDOG TRIPPED: no progress for %.0f s "
+                        "(limit %.0f s) and AcquisitionFinished never received for "
+                        "experiment_id=%s. Aborting multipoint acquisition and "
+                        "failing the imaging step.",
+                        stalled_for,
+                        stall_timeout_s,
+                        self._current_experiment_id,
+                    )
+                    self.abort()
+                    self._acquisition_success = False
+                    self._acquisition_error = (
+                        f"Acquisition watchdog timeout: no progress for "
+                        f"{stalled_for:.0f}s (AcquisitionFinished never received)"
+                    )
+                    return False
 
             if not self._acquisition_success:
                 _log.error(f"Imaging failed: {self._acquisition_error}")
@@ -700,6 +779,10 @@ class ImagingExecutor:
             return
         if event.experiment_id != self._current_experiment_id:
             return
+
+        # Refresh the acquisition watchdog: progress proves the run is alive.
+        with self._watchdog_lock:
+            self._last_progress_monotonic = time.monotonic()
 
         images_per_fov = max(self._images_per_fov, 1)
         current_image = max(event.current_fov, 1)

@@ -4,6 +4,7 @@ import tempfile
 import os
 import time
 import queue
+import threading
 
 import numpy as np
 import pytest
@@ -209,6 +210,9 @@ class TestDrainAllIssue:
             runner = JobRunner()
             runner.daemon = True
             runner.start()
+            # Child startup under Windows "spawn" imports the whole stack and can
+            # take several seconds; wait for readiness instead of a fixed sleep.
+            assert runner.wait_ready(timeout_s=20.0), "worker did not become ready"
 
             num_wells = 2
             fovs_per_well = 4
@@ -246,8 +250,14 @@ class TestDrainAllIssue:
 
                 print(f"\n=== Submitted {total_jobs_submitted} jobs ({num_wells} wells x {fovs_per_well} FOVs) ===")
 
-                # Wait for all jobs to complete
-                time.sleep(2.0)
+                # Wait for all jobs to complete (deterministic: poll the pending
+                # counter rather than assuming a fixed processing time).
+                deadline = time.time() + 30.0
+                while runner.has_pending() and time.time() < deadline:
+                    time.sleep(0.05)
+                assert not runner.has_pending(), "jobs did not complete in time"
+                # Let the worker's output-queue feeder flush the last result to the pipe.
+                time.sleep(0.5)
 
                 # Count results in queue
                 out_queue = runner.output_queue()
@@ -277,6 +287,131 @@ class TestDrainAllIssue:
 
             finally:
                 runner.shutdown(timeout_s=5.0)
+
+    def test_shutdown_returns_when_input_feeder_wedged(self):
+        """Regression: shutdown() must return even when the input-queue feeder is
+        wedged in send_bytes (worker gone, more jobs queued than the OS pipe buffer).
+
+        Before the cancel_join_thread() fix this deadlocked forever in
+        join_thread(), hanging acquisition teardown and the whole unit suite.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = os.path.join(tmpdir, "downsampled")
+            os.makedirs(os.path.join(output_dir, "wells"), exist_ok=True)
+
+            runner = JobRunner()
+            runner.daemon = True
+            runner.start()
+            assert runner.wait_ready(timeout_s=20.0), "worker did not become ready"
+
+            # Stop the consumer so nothing drains the input pipe. The main process
+            # still holds the input pipe's read end open, so the feeder will block
+            # on a full pipe with no reader.
+            runner.terminate()
+            runner.join(timeout=5.0)
+
+            # Overflow the OS pipe buffer with large jobs (~2 MB each). dispatch()
+            # uses put_nowait and never blocks; the background feeder wedges once the
+            # buffer fills.
+            big = np.zeros((1024, 1024), dtype=np.uint16)
+            for i in range(64):
+                job = DownsampledViewJob(
+                    capture_info=make_test_capture_info(region_id="A1", fov=i),
+                    capture_image=JobImage(image_array=big.copy()),
+                    well_id="A1",
+                    well_row=0,
+                    well_col=0,
+                    fov_index=i,
+                    total_fovs_in_well=64,
+                    channel_idx=0,
+                    total_channels=1,
+                    channel_name="BF",
+                    fov_position_in_well=(0.0, 0.0),
+                    overlap_pixels=(0, 0, 0, 0),
+                    pixel_size_um=1.0,
+                    target_resolutions_um=[10.0],
+                    plate_resolution_um=10.0,
+                    output_dir=output_dir,
+                    channel_names=["BF"],
+                )
+                runner.dispatch(job)
+
+            # Run shutdown() on a daemon thread so that a regression FAILS the
+            # assertion within the timeout instead of hanging pytest forever.
+            done = threading.Event()
+            box = {}
+
+            def _do():
+                try:
+                    runner.shutdown(timeout_s=1.0)
+                except BaseException as e:  # noqa: BLE001 - report any failure
+                    box["e"] = e
+                finally:
+                    done.set()
+
+            threading.Thread(target=_do, daemon=True).start()
+            assert done.wait(timeout=15.0), "shutdown() deadlocked on wedged feeder join_thread()"
+            assert "e" not in box, f"shutdown raised: {box.get('e')}"
+
+    def test_shutdown_clean_drain_still_flushes(self):
+        """Edge: the clean path (worker drains all jobs) still returns promptly and
+        delivers results after adding the unconditional cancel_join_thread()."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = os.path.join(tmpdir, "downsampled")
+            os.makedirs(os.path.join(output_dir, "wells"), exist_ok=True)
+
+            runner = JobRunner()
+            runner.daemon = True
+            runner.start()
+            assert runner.wait_ready(timeout_s=20.0), "worker did not become ready"
+
+            for well_idx in range(3):
+                well_id = f"{chr(ord('A') + well_idx)}1"
+                tile = np.random.randint(0, 65535, (64, 64), dtype=np.uint16)
+                job = DownsampledViewJob(
+                    capture_info=make_test_capture_info(region_id=well_id, fov=0),
+                    capture_image=JobImage(image_array=tile),
+                    well_id=well_id,
+                    well_row=well_idx,
+                    well_col=0,
+                    fov_index=0,
+                    total_fovs_in_well=1,
+                    channel_idx=0,
+                    total_channels=1,
+                    channel_name="BF",
+                    fov_position_in_well=(0.0, 0.0),
+                    overlap_pixels=(0, 0, 0, 0),
+                    pixel_size_um=1.0,
+                    target_resolutions_um=[10.0],
+                    plate_resolution_um=10.0,
+                    output_dir=output_dir,
+                    channel_names=["BF"],
+                )
+                runner.dispatch(job)
+
+            out_queue = runner.output_queue()
+            received = []
+            for _ in range(3):
+                result = out_queue.get(timeout=20.0)
+                assert result.exception is None
+                assert result.result is not None
+                received.append(result)
+            assert len(received) == 3
+
+            done = threading.Event()
+            box = {}
+
+            def _do():
+                try:
+                    runner.shutdown(timeout_s=5.0)
+                except BaseException as e:  # noqa: BLE001
+                    box["e"] = e
+                finally:
+                    done.set()
+
+            threading.Thread(target=_do, daemon=True).start()
+            assert done.wait(timeout=15.0), "clean shutdown() did not return"
+            assert "e" not in box, f"shutdown raised: {box.get('e')}"
 
 
 if __name__ == "__main__":

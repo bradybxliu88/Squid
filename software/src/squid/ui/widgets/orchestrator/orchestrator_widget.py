@@ -482,9 +482,9 @@ class OrchestratorControlPanel(EventBusWidget):
         # Round progress
         round_layout = QHBoxLayout()
         round_layout.addWidget(QLabel("Round:"))
-        self._round_label = QLabel("- / -")
-        self._round_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        round_layout.addWidget(self._round_label)
+        self._progress_round_label = QLabel("- / -")
+        self._progress_round_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        round_layout.addWidget(self._progress_round_label)
         layout.addLayout(round_layout)
 
         # Current round name + step type
@@ -724,8 +724,8 @@ class OrchestratorControlPanel(EventBusWidget):
         self._last_progress = event
         self._history["progress"].append(float(event.progress_percent))
         # Update progress section widgets (round label, progress bar, time remaining)
-        self._round_label.setText(
-            f"Round: {event.current_round} / {event.total_rounds}  ({event.current_round_name})"
+        self._progress_round_label.setText(
+            f"{event.current_round} / {event.total_rounds}  ({event.current_round_name})"
         )
         self._round_name_label.setText(event.current_round_name)
         self._progress_bar.setValue(int(event.progress_percent))
@@ -984,7 +984,11 @@ class OrchestratorControlPanel(EventBusWidget):
             return
         if not self._validated:
             _log.warning("Protocol must be validated before starting")
-            from qtpy.QtWidgets import QMessageBox
+            # NOTE: QMessageBox is imported module-level (see top of file). A
+            # function-local `import QMessageBox` here would make the name a
+            # local for the WHOLE method, so the later QMessageBox.warning()
+            # calls on the already-validated path (missing FOV file / no FOV
+            # positions) would raise UnboundLocalError instead of warning.
             QMessageBox.information(
                 self,
                 "Validation Required",

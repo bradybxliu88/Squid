@@ -1246,11 +1246,25 @@ class JobRunner(multiprocessing.Process):
             self.terminate()
             self.join(timeout=0.5)
 
-        # Close queues and wait for feeder threads to finish
+        # Close queues and release their feeder threads.
+        #
+        # A multiprocessing.Queue runs a background "feeder" thread in THIS
+        # (producer) process that pushes buffered objects into the underlying pipe.
+        # By the time we reach this point the worker has already been joined or
+        # terminated above, so nothing is draining the input pipe. If more input
+        # jobs were queued than fit in the OS pipe buffer, the feeder is blocked in
+        # send_bytes and join_thread() would deadlock forever (hanging acquisition
+        # teardown and the whole unit suite). Any jobs still buffered at shutdown are
+        # unprocessed by design (the worker is gone), so cancel_join_thread() lets us
+        # abandon the feeder before closing. It makes join_thread() a no-op; the
+        # feeder is a daemon thread so an abandoned one never blocks process exit,
+        # and close() still releases the queue's semaphores.
         if self._input_queue is not None:
+            self._input_queue.cancel_join_thread()
             self._input_queue.close()
             self._input_queue.join_thread()
         if self._output_queue is not None:
+            self._output_queue.cancel_join_thread()
             self._output_queue.close()
             self._output_queue.join_thread()
 

@@ -362,6 +362,42 @@ class LiveController(StateMachine[LiveControllerState]):
                 )
         except Exception:
             self._log.exception("Failed to start live; cleaning up")
+            # Best-effort undo of the partial startup. Without this, is_live stays
+            # True (set above before the hardware calls), which makes a later
+            # stop_live() return early (state != LIVE) and leaves streaming,
+            # callbacks, illumination and the AF laser running. is_live is cleared
+            # first so any in-flight trigger-timer callback observes the stop and
+            # does not re-arm. Every step is guarded so cleanup cannot itself raise.
+            with self._lock:
+                self.is_live = False
+                try:
+                    self._stop_triggerred_acquisition()
+                except Exception:
+                    self._log.exception("Cleanup: failed to stop triggered acquisition")
+                try:
+                    self._camera_service.stop_streaming()
+                except Exception:
+                    self._log.exception("Cleanup: failed to stop camera streaming")
+                try:
+                    self._camera_service.enable_callbacks(False)
+                except Exception:
+                    self._log.exception("Cleanup: failed to disable camera callbacks")
+                if self.control_illumination:
+                    try:
+                        self.turn_off_illumination()
+                    except Exception:
+                        self._log.exception("Cleanup: failed to turn off illumination")
+                self._illumination_off_pending = False
+                if self.for_displacement_measurement and self._peripheral_service:
+                    try:
+                        self._peripheral_service.turn_off_af_laser()
+                    except Exception:
+                        self._log.exception("Cleanup: failed to turn off AF laser")
+                self._observable_state = replace(
+                    self._observable_state,
+                    is_live=False,
+                    illumination_on=False,
+                )
             if self._mode_gate and previous_mode is not None:
                 self._mode_gate.restore_mode(previous_mode, reason="live start failed")
             self._transition_to(LiveControllerState.STOPPED)

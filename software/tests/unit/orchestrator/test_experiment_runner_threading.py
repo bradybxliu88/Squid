@@ -90,6 +90,19 @@ def _make_runner(
     )
 
 
+def _scan_coordinates(n: int = 1):
+    """Minimal run-level FOV plan with ``n`` FOVs in a single region.
+
+    Any test that drives ``runner.run()`` through an imaging step must supply a
+    scan plan; otherwise the imaging step fails the missing-FOV-plan guard and,
+    under the default ``on_fail="pause"`` policy, blocks forever waiting on an
+    operator intervention that never arrives.
+    """
+    sc = MagicMock()
+    sc.region_fov_coordinates = {"region_1": [(float(i), 0.0, 0.0) for i in range(n)]}
+    return sc
+
+
 # ---------------------------------------------------------------------------
 # 1. compute_eta consistency under concurrent step completion
 # ---------------------------------------------------------------------------
@@ -672,6 +685,8 @@ class TestResumeLogic:
             imaging_executor=imaging_executor,
             start_from_step=0,
             start_from_fov=5,
+            # 6-FOV plan so start_from_fov=5 is in bounds for the resume step.
+            scan_coordinates=_scan_coordinates(6),
             step_time_estimates={(0, 0): 5.0, (0, 1): 5.0},
             total_estimated_seconds=10.0,
         )
@@ -708,6 +723,7 @@ class TestResumeLogic:
             protocol=protocol,
             imaging_executor=imaging_executor,
             start_from_step=1,
+            scan_coordinates=_scan_coordinates(),
             step_time_estimates={(0, 0): 5.0, (0, 1): 5.0},
             total_estimated_seconds=10.0,
         )
@@ -734,6 +750,7 @@ class TestResumeLogic:
             protocol=protocol,
             imaging_executor=imaging_executor,
             start_from_round=1,
+            scan_coordinates=_scan_coordinates(),
             step_time_estimates={(0, 0): 5.0, (1, 0): 5.0},
             total_estimated_seconds=10.0,
         )
@@ -761,6 +778,8 @@ class TestResumeLogic:
             imaging_executor=imaging_executor,
             start_from_round=0,
             start_from_fov=10,
+            # 11-FOV plan so start_from_fov=10 is in bounds for the resume step.
+            scan_coordinates=_scan_coordinates(11),
             step_time_estimates={(0, 0): 5.0, (1, 0): 5.0},
             total_estimated_seconds=10.0,
         )
@@ -812,6 +831,7 @@ class TestMixedStepProtocol:
             protocol=protocol,
             fluidics_controller=fluidics,
             imaging_executor=imaging,
+            scan_coordinates=_scan_coordinates(),
             on_operation_change=lambda op: operations.append(op),
             step_time_estimates={(0, 0): 2.0, (0, 1): 5.0},
             total_estimated_seconds=7.0,
@@ -846,6 +866,9 @@ class TestMixedStepProtocol:
         runner = _make_runner(
             protocol=protocol,
             imaging_executor=imaging,
+            # FOV plan present so the failure comes from the executor (the
+            # skip_step path under test), not the missing-FOV-plan guard.
+            scan_coordinates=_scan_coordinates(),
             step_time_estimates={(0, 0): 5.0},
             total_estimated_seconds=5.0,
         )
@@ -888,6 +911,10 @@ class TestInterventionFlow:
         runner = _make_runner(
             protocol=protocol,
             imaging_executor=imaging,
+            # FOV plan present so attempt 1 actually reaches the executor
+            # (returns False -> "Focus lost"), triggering the failure
+            # intervention this test exercises; the retry then succeeds.
+            scan_coordinates=_scan_coordinates(),
             intervention_resolved=intervention_resolved,
             consume_intervention_action=consume_action,
             step_time_estimates={(0, 0): 5.0},
@@ -929,6 +956,9 @@ class TestInterventionFlow:
         runner = _make_runner(
             protocol=protocol,
             imaging_executor=imaging,
+            # FOV plan present so the executor is reached and fails ("Focus
+            # lost"), driving the skip-intervention path under test.
+            scan_coordinates=_scan_coordinates(),
             intervention_resolved=intervention_resolved,
             consume_intervention_action=consume_action,
             step_time_estimates={(0, 0): 5.0},
@@ -983,6 +1013,7 @@ class TestSkipRound:
         runner = _make_runner(
             protocol=protocol,
             imaging_executor=imaging,
+            scan_coordinates=_scan_coordinates(),
             step_time_estimates={(0, 0): 5.0, (1, 0): 5.0, (2, 0): 5.0},
             total_estimated_seconds=15.0,
         )

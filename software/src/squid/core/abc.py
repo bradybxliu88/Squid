@@ -537,10 +537,10 @@ class AbstractCamera(metaclass=abc.ABCMeta):
             return int(round(num))
 
         return (
-            old_roi[0] * old_binning[0] / new_binning[0],
-            old_roi[1] * old_binning[1] / new_binning[1],
-            old_roi[2] * old_binning[0] / new_binning[0],
-            old_roi[3] * old_binning[1] / new_binning[1],
+            rounded_int(old_roi[0] * old_binning[0] / new_binning[0]),
+            rounded_int(old_roi[1] * old_binning[1] / new_binning[1]),
+            rounded_int(old_roi[2] * old_binning[0] / new_binning[0]),
+            rounded_int(old_roi[3] * old_binning[1] / new_binning[1]),
         )
 
     def __init__(

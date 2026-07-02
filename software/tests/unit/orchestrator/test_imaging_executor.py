@@ -3,6 +3,7 @@
 import csv
 import json
 import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -12,6 +13,7 @@ from squid.backend.controllers.orchestrator.imaging_executor import (
 )
 from squid.backend.controllers.orchestrator.state import AddWarningCommand
 from squid.core.events import (
+    AcquisitionFinished,
     AutofocusMode,
     EventBus,
     FocusLockMetricsUpdated,
@@ -293,3 +295,139 @@ def test_readback_ignores_stale_request_id():
     finally:
         executor.shutdown()
         event_bus.stop()
+
+
+# ---------------------------------------------------------------------------
+# Acquisition completion watchdog (bug H3)
+#
+# NOTE: pytest-timeout is not installed. Each watchdog test that could hang
+# (if the fix regressed) injects a tiny stall bound and arms an in-test
+# threading.Timer that cancels the CancelToken as a self-terminating safety
+# limit, so check_point() raises and the loop cannot block CI forever. The
+# whole file should still be run under an OS-level `timeout` wrapper as an
+# outer guard.
+# ---------------------------------------------------------------------------
+
+
+def _make_stalling_executor():
+    """Build an executor whose acquisition starts but never publishes finished.
+
+    event_bus is a MagicMock, so no events are dispatched to
+    _on_acquisition_finished -- the acquisition_complete event is never set,
+    producing a permanent stall that only the watchdog can break.
+    """
+    event_bus = MagicMock()
+    multipoint = MagicMock()
+    multipoint._autofocus_executor = None
+    multipoint.run_acquisition = MagicMock(return_value=True)
+
+    executor = ImagingExecutor(
+        event_bus=event_bus,
+        multipoint_controller=multipoint,
+        channel_config_manager=None,
+    )
+    return executor, multipoint
+
+
+def test_execute_with_config_watchdog_aborts_when_finished_never_published(tmp_path):
+    """Watchdog trips when AcquisitionFinished never arrives: aborts + returns False."""
+    executor, multipoint = _make_stalling_executor()
+    executor._watchdog_stall_timeout_override_s = 0.2
+
+    token = CancelToken()
+    # Self-terminating guard: if the watchdog is broken, this cancels the token
+    # so check_point() raises and the test terminates instead of hanging.
+    safety = threading.Timer(10.0, lambda: token.cancel("test safety"))
+    safety.start()
+    try:
+        t0 = time.monotonic()
+        result = executor.execute_with_config(
+            imaging_config=ImagingProtocol(channels=["DAPI"]),
+            output_path=str(tmp_path),
+            cancel_token=token,
+            round_index=0,
+            experiment_id="round_000",
+        )
+        elapsed = time.monotonic() - t0
+    finally:
+        safety.cancel()
+
+    assert result is False
+    assert elapsed < 5.0
+    multipoint.request_abort_aquisition.assert_called_once()
+    assert "watchdog" in (executor.last_error or "").lower()
+
+
+def test_execute_with_config_returns_true_when_finished_published(tmp_path):
+    """Happy path over a REAL EventBus: watchdog does NOT fire; returns True."""
+    event_bus = EventBus()
+    event_bus.start()
+    try:
+        multipoint = MagicMock()
+        multipoint._autofocus_executor = None
+
+        def _run(**kwargs):
+            event_bus.publish(
+                AcquisitionFinished(
+                    success=True,
+                    experiment_id="round_000",
+                    error=None,
+                )
+            )
+            return True
+
+        multipoint.run_acquisition = MagicMock(side_effect=_run)
+
+        executor = ImagingExecutor(
+            event_bus=event_bus,
+            multipoint_controller=multipoint,
+            channel_config_manager=None,
+        )
+
+        try:
+            result = executor.execute_with_config(
+                imaging_config=ImagingProtocol(channels=["DAPI"]),
+                output_path=str(tmp_path),
+                cancel_token=CancelToken(),
+                round_index=0,
+                experiment_id="round_000",
+            )
+        finally:
+            executor.shutdown()
+
+        assert result is True
+        multipoint.request_abort_aquisition.assert_not_called()
+    finally:
+        event_bus.stop()
+
+
+def test_watchdog_no_flakiness_under_repetition(tmp_path):
+    """Stress: repeatedly trip the watchdog; every run aborts once within bound."""
+    N = 50
+    overall_start = time.monotonic()
+    for i in range(N):
+        executor, multipoint = _make_stalling_executor()
+        executor._watchdog_stall_timeout_override_s = 0.05
+
+        token = CancelToken()
+        safety = threading.Timer(5.0, lambda: token.cancel("test safety"))
+        safety.start()
+        try:
+            t0 = time.monotonic()
+            result = executor.execute_with_config(
+                imaging_config=ImagingProtocol(channels=["DAPI"]),
+                output_path=str(tmp_path),
+                cancel_token=token,
+                round_index=0,
+                experiment_id="round_000",
+            )
+            elapsed = time.monotonic() - t0
+        finally:
+            safety.cancel()
+
+        assert result is False, f"iteration {i} did not return False"
+        multipoint.request_abort_aquisition.assert_called_once()
+        assert elapsed < 2.0, f"iteration {i} took {elapsed:.2f}s"
+
+    total = time.monotonic() - overall_start
+    assert total < 60.0

@@ -718,6 +718,9 @@ class HighContentScreeningGui(QMainWindow):
             parent=self,
         )
 
+        # Wire the parameter panel into the workflow tree so live protocol pushes work
+        self.orchestratorWorkflowTree.set_param_panel(self.orchestratorParameterPanel)
+
         # Connect control panel to workflow tree
         self.orchestratorControlPanel.fov_positions_changed.connect(
             self.orchestratorWorkflowTree.set_fov_positions

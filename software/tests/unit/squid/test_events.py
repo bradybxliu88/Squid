@@ -236,7 +236,7 @@ class TestEventBusQueued:
         assert received[0].message == "queued"
 
     def test_drain_processes_pending_events(self):
-        """drain() should process all pending events synchronously."""
+        """drain() should process all pending events before returning."""
         bus = EventBus()
         received = []
 
@@ -245,17 +245,52 @@ class TestEventBusQueued:
 
         bus.subscribe(TestEvent, handler)
 
-        # Publish without starting
+        # publish() auto-starts the dispatch thread; no explicit start() needed.
         bus.publish(TestEvent(message="one"))
         bus.publish(TestEvent(message="two"))
         bus.publish(TestEvent(message="three"))
 
-        # Drain synchronously
-        count = bus.drain()
+        bus.drain()
 
-        assert count == 3
-        assert len(received) == 3
+        # Assert on observed handler side effects, not on drain()'s return value.
         assert [e.message for e in received] == ["one", "two", "three"]
+
+        bus.stop()
+
+    def test_drain_waits_for_in_flight_handler(self):
+        """drain() must not return while a handler is still executing.
+
+        Regression test for the race where _dispatch_loop pops the event off the
+        queue before running handlers, so a queue-empty check could report the
+        bus idle while a handler was mid-execution.
+        """
+        bus = EventBus()
+        handler_started = threading.Event()
+        handler_finished = threading.Event()
+        handler_sleep_s = 0.3
+
+        def slow_handler(event):
+            handler_started.set()
+            time.sleep(handler_sleep_s)
+            handler_finished.set()
+
+        bus.subscribe(TestEvent, slow_handler)
+        bus.publish(TestEvent(message="slow"))
+
+        # Wait until the handler is actually running (event popped, queue empty)
+        # so the drain() call below exercises the mid-dispatch race window.
+        assert handler_started.wait(timeout=2.0), "handler never started"
+        assert not handler_finished.is_set()
+
+        start = time.time()
+        bus.drain(timeout_s=5.0)  # bounded: fix returns in ~handler_sleep_s
+        elapsed = time.time() - start
+
+        # drain() must have blocked until the handler completed.
+        assert handler_finished.is_set(), "drain() returned before handler finished"
+        assert elapsed >= handler_sleep_s * 0.5
+
+        bus.stop()
 
 
 def test_trigger_events_are_dataclasses():

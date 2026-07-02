@@ -79,6 +79,10 @@ class ContinuousFocusLockController(BaseController):
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+        # Set by the control loop when it observes _paused=True and is guaranteed
+        # to issue no further correction this cycle; awaited by pause() so that
+        # call is synchronous (no stray piezo move fires after pause() returns).
+        self._pause_ack_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
         self._lock_buffer_fill = 0
@@ -245,6 +249,13 @@ class ContinuousFocusLockController(BaseController):
         The control loop continues running to monitor focus state, but no
         piezo corrections are applied. The laser stays on for sensing.
         Use this during image capture to prevent piezo jitter.
+
+        Synchronous: blocks (bounded) until the control loop has observed the
+        pause and is guaranteed to issue no further piezo correction this cycle.
+        Without this handshake an in-flight loop iteration that already passed
+        the is_paused check could still fire one move_to_fast() up to ~one loop
+        period after pause() returned, perturbing a piezo position the caller
+        reads immediately afterwards (e.g. MultiPointWorker's pre-z-stack seed).
         """
         with self._lock:
             if not self._should_run:
@@ -254,7 +265,33 @@ class ContinuousFocusLockController(BaseController):
                 # Already paused
                 return
             self._paused = True
+            # Clear the ack under the same lock the loop uses to read _paused so
+            # the loop can only re-set it AFTER observing paused=True (no stale
+            # or lost wakeup).
+            self._pause_ack_event.clear()
+            loop_thread = self._thread
+            loop_running = self._running
         self._set_status("paused")
+
+        # Fast path / deadlock guard: nothing to wait for if the loop is not
+        # running, or if we are (unexpectedly) called from the loop thread.
+        if (
+            not loop_running
+            or loop_thread is None
+            or not loop_thread.is_alive()
+            or loop_thread is threading.current_thread()
+        ):
+            return
+
+        # Bounded wait: a few loop periods so an unusually slow or stalled loop
+        # can never hang the caller. On timeout we degrade to best-effort.
+        ack_timeout_s = max(0.15, 5.0 / self._config.loop_rate_hz)
+        if not self._pause_ack_event.wait(ack_timeout_s):
+            self._log.warning(
+                "pause(): focus-lock control loop did not acknowledge pause "
+                "within %.3fs; a stray piezo correction may still be in flight",
+                ack_timeout_s,
+            )
 
     def resume(self) -> None:
         """Resume focus corrections after a pause.
@@ -585,9 +622,16 @@ class ContinuousFocusLockController(BaseController):
             while not self._stop_event.is_set():
                 start = time.monotonic()
 
-                # Check if paused - skip corrections but keep monitoring
+                # Check if paused - skip corrections but keep monitoring.
+                # Acknowledge the pause under the same lock pause() uses so a
+                # synchronous pause() caller can only return once we've observed
+                # paused=True here and are guaranteed to issue no correction this
+                # cycle. Setting the ack under the lock keeps it strictly ordered
+                # against pause()'s clear (no lost or stale wakeup).
                 with self._lock:
                     is_paused = self._paused
+                    if is_paused:
+                        self._pause_ack_event.set()
 
                 if is_paused:
                     # When paused: still measure and publish metrics for monitoring,
@@ -698,6 +742,9 @@ class ContinuousFocusLockController(BaseController):
             with self._lock:
                 self._running = False
                 self._should_run = False
+            # Release any pause() waiter: the loop has exited and will issue no
+            # further corrections, so an unacknowledged pause is now satisfied.
+            self._pause_ack_event.set()
             self._cleanup()
             self._set_status("disabled")
 

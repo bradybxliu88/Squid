@@ -525,8 +525,10 @@ class DefaultCamera(AbstractCamera):
         self._last_trigger_timestamp = time.time()
         if current_acquisition_mode == CameraAcquisitionMode.HARDWARE_TRIGGER:
             self._hw_trigger_fn(illumination_time)
+            self._in_trigger = True
         elif current_acquisition_mode == CameraAcquisitionMode.SOFTWARE_TRIGGER:
             self._camera.TriggerSoftware.send_command()
+            self._in_trigger = True
         else:
             self._log.warning(
                 f"Current acquisition mode {current_acquisition_mode=} not triggerable."

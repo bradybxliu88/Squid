@@ -284,15 +284,30 @@ if __name__ == "__main__":
     # - aboutToQuit signal fires before app.exec_() returns
     # All hardware cleanup (camera, stage, microcontroller) happens in closeEvent,
     # which completes before os._exit() is called.
+    exit_code = 0
     try:
         exit_code = app.exec_()
     finally:
         # Stop TCP server if running
-        if tcp_server is not None:
-            tcp_server.stop()
-            log.info("TCP control server stopped")
+        try:
+            if tcp_server is not None:
+                tcp_server.stop()
+                log.info("TCP control server stopped")
+        except Exception:
+            log.exception("Error stopping TCP control server during shutdown")
 
         # Clean shutdown of application context
-        context.shutdown()
-    logging.shutdown()  # Flush log handlers before os._exit() bypasses Python cleanup
-    os._exit(exit_code)
+        try:
+            context.shutdown()
+        except Exception:
+            log.exception("Error during application context shutdown")
+
+        # Flush log handlers before os._exit() bypasses Python cleanup.
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
+
+        # Use os._exit() to prevent segfault during Python/PyQt5 teardown. This
+        # MUST always run, even if the cleanup above raised.
+        os._exit(exit_code)

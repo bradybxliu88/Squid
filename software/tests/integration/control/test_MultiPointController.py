@@ -11,6 +11,7 @@ from squid.core.events import (
     AcquisitionWorkerFinished,
     CurrentFOVRegistered,
     AcquisitionCoordinates,
+    AutofocusMode,
 )
 
 import tests.control.test_stubs as ts
@@ -237,7 +238,7 @@ def test_multi_point_with_laser_af():
 
     add_some_coordinates(mpc)
     select_some_configs(mpc, scope.objective_store.current_objective)
-    mpc.set_reflection_af_flag(True)
+    mpc.set_autofocus_mode(AutofocusMode.LASER_REFLECTION)
     scope.addons.camera_focus.send_trigger()
     laser_af_ref_image = scope.addons.camera_focus.read_frame()
     assert laser_af_ref_image is not None
@@ -269,7 +270,7 @@ def test_multi_point_with_contrast_af():
 
     add_some_coordinates(mpc)
     select_some_configs(mpc, scope.objective_store.current_objective)
-    mpc.set_af_flag(True)
+    mpc.set_autofocus_mode(AutofocusMode.CONTRAST)
     mpc.run_acquisition()
 
     timeout_s = 10

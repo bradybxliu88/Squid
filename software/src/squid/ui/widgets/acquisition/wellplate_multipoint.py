@@ -14,7 +14,7 @@ from squid.core.utils.geometry_utils import get_effective_well_size, calculate_w
 from squid.core.events import (
     AutofocusMode,
     StagePositionChanged,
-    MoveStageCommand,
+    MoveStageToCommand,
     ObjectiveChanged,
     ChannelConfigurationsChanged,
     LiveStateChanged,
@@ -2049,7 +2049,7 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
 
     def _move_z_to(self, z_mm: float) -> None:
         """Move Z axis via EventBus."""
-        self._publish(MoveStageCommand(z_mm=z_mm))
+        self._publish(MoveStageToCommand(z_mm=z_mm))
 
     def update_z_min(self, z_pos_um):
         if z_pos_um < self.entry_minZ.value():

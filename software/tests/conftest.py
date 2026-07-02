@@ -314,23 +314,75 @@ def qtbot(request):
     except Exception:
         import time
         import pytest
+        from qtpy.QtWidgets import QApplication
+
+        # Real pytest-qt is unavailable. Provide a minimal stand-in that still
+        # guarantees a QApplication exists; otherwise constructing real QWidgets
+        # (NavigationViewer, OrchestratorControlPanel, ...) aborts the process
+        # natively and kills the whole test run.
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication([])
 
         class _QtBot:
+            def __init__(self, app):
+                # Keep a reference so the QApplication outlives the fixture.
+                self._app = app
+
             def add_widget(self, widget):
                 return widget
 
+            # pytest-qt spells this addWidget; support both spellings.
+            addWidget = add_widget
+
             def wait(self, ms: int):
-                time.sleep(ms / 1000.0)
+                # Pump the Qt event loop while waiting so queued cross-thread
+                # signals (emit() from a worker thread -> QueuedConnection) are
+                # actually delivered to main-thread slots. A bare time.sleep()
+                # never processes posted events, so such handlers would never
+                # run -- real pytest-qt spins the loop here, so we must too.
+                deadline = time.time() + ms / 1000.0
+                while time.time() < deadline:
+                    self._app.processEvents()
+                    time.sleep(0.005)
+                self._app.processEvents()
 
             def waitUntil(self, predicate, timeout: int = 1000, interval: int = 10):
                 deadline = time.time() + timeout / 1000.0
                 while time.time() < deadline:
+                    self._app.processEvents()
                     if predicate():
                         return
                     time.sleep(interval / 1000.0)
+                self._app.processEvents()
+                if predicate():
+                    return
                 pytest.fail("waitUntil timed out")
 
-        return _QtBot()
+            def waitExposed(self, widget, timeout: int = 1000):
+                # Real pytest-qt returns a context manager that waits for the
+                # widget to be exposed. Tests here call it both bare
+                # (`qtbot.waitExposed(w)`) and could use `with`; return a
+                # context manager that pumps the event loop so show()/expose
+                # events are delivered under the headless stub either way.
+                app = self._app
+
+                class _Exposed:
+                    def __enter__(self):
+                        app.processEvents()
+                        return self
+
+                    def __exit__(self, *exc):
+                        app.processEvents()
+                        return False
+
+                app.processEvents()
+                return _Exposed()
+
+            # pytest-qt also exposes the snake_case spelling.
+            wait_exposed = waitExposed
+
+        return _QtBot(app)
 
 
 # ============================================================================

@@ -9,7 +9,7 @@ import pandas as pd
 from squid.core.events import (
     AutofocusMode,
     StagePositionChanged,
-    MoveStageCommand,
+    MoveStageToCommand,
     ObjectiveChanged,
     SetLaserAFReferenceCommand,
     SetAcquisitionParametersCommand,
@@ -1282,7 +1282,7 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
 
     def _move_stage_to(self, x: float, y: float, z: float) -> None:
         """Move stage to position via EventBus."""
-        self._publish(MoveStageCommand(x_mm=x, y_mm=y, z_mm=z))
+        self._publish(MoveStageToCommand(x_mm=x, y_mm=y, z_mm=z))
 
     def cell_was_clicked(self, row, column):
         self.dropdown_location_list.setCurrentIndex(row)
@@ -2069,12 +2069,12 @@ class FlexibleMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
             self._publish(
                 AddFlexibleRegionCommand(
                     region_id=name,
-                    center_x=x,
-                    center_y=y,
-                    center_z=z,
-                    nx=self.entry_NX.value(),
-                    ny=self.entry_NY.value(),
-                    overlap=self.entry_overlap.value() if self.use_overlap else 0.0,
+                    center_x_mm=x,
+                    center_y_mm=y,
+                    center_z_mm=z,
+                    n_x=self.entry_NX.value(),
+                    n_y=self.entry_NY.value(),
+                    overlap_percent=self.entry_overlap.value() if self.use_overlap else 0.0,
                 )
             )
 

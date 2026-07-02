@@ -228,6 +228,22 @@ class ExperimentRunner:
                 self._total_paused_seconds += paused_duration
             self._paused_at = None
 
+    def _begin_step_timing(self) -> None:
+        """Reset per-step timing accumulators at the start of a step.
+
+        Runs under _progress_lock so a concurrent ``notify_pause`` /
+        ``notify_resume`` cannot interleave with these writes (L3). An active
+        pause (``_paused_at`` set) is deliberately preserved across the step
+        boundary so ``notify_resume`` still attributes its duration to
+        ``_total_paused_seconds`` (which backs the checkpoint's paused-seconds);
+        only the per-step pause tally is cleared.
+        """
+        with self._progress_lock:
+            self._step_paused_total = 0.0
+            self._step_start_time = time.monotonic()
+            # Intentionally do NOT clear self._paused_at: an active pause must
+            # survive the step boundary so notify_resume can still account for it.
+
     def _effective_step_elapsed(self) -> float:
         """Elapsed step time excluding pauses.
 
@@ -502,12 +518,19 @@ class ExperimentRunner:
 
             self._cancel_token.check_point()
 
-            # Update step progress
+            # Update step progress. Pin imaging_fov_index to the FOV this step will
+            # actually start from so the start-of-step checkpoint (below) pairs
+            # step_idx with the correct FOV instead of a stale FOV carried over from a
+            # previous imaging step (H2). Only the resume-target imaging step keeps a
+            # non-zero resume FOV; every other step starts at FOV 0.
+            resume_target = step_idx == resume_step_index and isinstance(step, ImagingStep)
+            fov_for_step = max(resume_imaging_fov, 0) if resume_target else 0
             with self._progress_lock:
                 self._progress.current_step_index = step_idx
                 if self._progress.current_round is not None:
                     self._progress.current_round.current_step_index = step_idx
                     self._progress.current_round.total_steps = len(round_.steps)
+                    self._progress.current_round.imaging_fov_index = fov_for_step
             self._on_checkpoint()
 
             # Determine step type
@@ -520,10 +543,8 @@ class ExperimentRunner:
             else:
                 step_type = "unknown"
 
-            # Record step start time for ETA computation
-            self._step_paused_total = 0.0
-            self._paused_at = None
-            self._step_start_time = time.monotonic()
+            # Reset per-step timing at the start of the step (see _begin_step_timing).
+            self._begin_step_timing()
 
             # Publish step started event
             step_estimate = self._step_time_estimates.get((round_idx, step_idx), 0.0)
@@ -623,11 +644,16 @@ class ExperimentRunner:
                 )
             )
 
-            # Advance step index past the completed step so progress reflects completion
+            # Advance step index past the completed step so progress reflects completion.
+            # Reset imaging_fov_index to 0 so the checkpoint written below (and the next
+            # step's start-of-step checkpoint) pairs step_idx + 1 with FOV 0, not a stale
+            # FOV from the step that just finished. Steps share _scan_coordinates, so a
+            # stale FOV would make a resume skip FOVs of the next step (H2, data loss).
             with self._progress_lock:
                 self._progress.current_step_index = step_idx + 1
                 if self._progress.current_round is not None:
                     self._progress.current_round.current_step_index = step_idx + 1
+                    self._progress.current_round.imaging_fov_index = 0
             if result.success:
                 self._on_checkpoint()
 
@@ -710,6 +736,12 @@ class ExperimentRunner:
 
             if attempt >= max_attempts:
                 return result
+
+            # Advance the resume FOV for the next attempt so a retry does not
+            # re-image FOVs already completed on this attempt (overwrite / re-expose).
+            # Mirrors the intervention-retry resume in _execute_round (L4).
+            if isinstance(step, ImagingStep) and self._progress.current_round is not None:
+                resume_fov = max(self._progress.current_round.imaging_fov_index, 0)
 
             self._retry_overhead_seconds += retry_delay
             self._publish_attempt_update(

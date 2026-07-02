@@ -135,7 +135,20 @@ class _FakeScanCoordinates:
 
 class _FakeObjectiveStore:
     current_objective = "10x"
-    objectives_dict = {}
+    objectives_dict = {
+        "10x": {
+            "magnification": 10,
+            "NA": 0.25,
+            "tube_lens_f_mm": 180.0,
+            "name": "10x",
+        }
+    }
+
+    def get_current_objective_info(self) -> dict:
+        # Mirror ObjectiveStore.get_current_objective_info(): return the dict of
+        # parameters for the current objective. MultiPointController.start_new_experiment()
+        # now calls this to attach objective metadata to acquisition parameters.
+        return self.objectives_dict[self.current_objective]
 
 
 class _FakeChannelConfigurationManager:
@@ -183,6 +196,13 @@ def test_gen_focus_map_invalid_bounds_publishes_failure(tmp_path: Path) -> None:
         peripheral_service = _FakePeripheralService()
         mode_gate = GlobalModeGate(bus)
 
+        scan_coordinates = _FakeScanCoordinates()
+        # Non-empty FOVs so validate_acquisition_settings() passes and the run reaches
+        # the gen_focus_map bounds check. get_scan_bounds() returns None (degenerate /
+        # invalid), which drives the "Invalid scan bounds" failure path that publishes
+        # AcquisitionWorkerFinished(success=False).
+        scan_coordinates.region_fov_coordinates = {"region_1": [(0.0, 0.0, 0.0)]}
+
         controller = MultiPointController(
             live_controller=live,
             autofocus_controller=af,
@@ -192,14 +212,14 @@ def test_gen_focus_map_invalid_bounds_publishes_failure(tmp_path: Path) -> None:
             stage_service=stage_service,
             peripheral_service=peripheral_service,
             event_bus=bus,
-            scan_coordinates=_FakeScanCoordinates(),
+            scan_coordinates=scan_coordinates,
             mode_gate=mode_gate,
         )
 
         controller.set_base_path(str(tmp_path))
         controller.start_new_experiment("unit_test")
         controller.set_gen_focus_map_flag(True)
-        controller.set_reflection_af_flag(False)
+        controller.set_autofocus_mode(AutofocusMode.NONE)
 
         controller.run_acquisition()
 
@@ -312,11 +332,17 @@ def test_acquire_current_fov_focus_map_does_not_mutate_global_scan_coordinates(
             self.objectiveStore = objectiveStore
             self.stage = stage
             self.camera = camera
+            self.region_fov_coordinates: dict[str, list[tuple[float, ...]]] = {}
             self.update_calls: list[tuple[str, int, float]] = []
             type(self).last_instance = self
 
-        def add_single_fov_region(self, *_args, **_kwargs) -> None:
-            return None
+        def add_single_fov_region(
+            self, region_id, center_x, center_y, center_z
+        ) -> None:
+            # Mirror ScanCoordinates.add_single_fov_region(): register one FOV so
+            # validate_acquisition_settings() sees a non-empty region and the
+            # acquire-current-fov path proceeds.
+            self.region_fov_coordinates[region_id] = [(center_x, center_y, center_z)]
 
         def update_fov_z_level(self, region_id: str, index: int, z_mm: float) -> None:
             self.update_calls.append((region_id, index, z_mm))

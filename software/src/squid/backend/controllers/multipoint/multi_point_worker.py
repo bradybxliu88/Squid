@@ -1096,28 +1096,75 @@ class MultiPointWorker:
             acquisition_error = e
             raise
         finally:
-            self._teardown_focus_lock_for_acquisition()
+            # Teardown must be resilient: an exception in ANY teardown step must
+            # not prevent ProgressTracker.finish() from publishing
+            # AcquisitionWorkerFinished, which the orchestrator's imaging wait
+            # loop blocks on. If finish() is skipped the orchestrator hangs
+            # forever with no operator present (bug H3). Capture the first
+            # teardown failure so the acquisition is reported failed rather than
+            # silently succeeding.
+            def _guard(step_name: str, action, fail_acquisition: bool = True) -> None:
+                """Run a teardown step so a raised exception cannot skip finish().
+
+                fail_acquisition=True marks a data-relevant step: if it raises, the
+                acquisition is reported failed (first failure wins). Pass
+                fail_acquisition=False for benign post-capture cleanup (streaming
+                stop, callback removal, timing logging) whose failure must be
+                logged but must NOT flip an otherwise-successful acquisition to
+                FAILED — a spurious failure here would trigger an orchestrator
+                retry/pause on an unattended overnight run despite all data being
+                saved.
+                """
+                nonlocal acquisition_error
+                try:
+                    action()
+                except Exception as teardown_error:  # noqa: BLE001 - teardown must never raise
+                    self._log.exception(
+                        f"Error during acquisition teardown step '{step_name}'; continuing teardown"
+                    )
+                    if fail_acquisition and acquisition_error is None:
+                        acquisition_error = teardown_error
+
+            _guard("teardown_focus_lock", self._teardown_focus_lock_for_acquisition, fail_acquisition=False)
             # We do this above, but there are some paths that skip the proper end of the acquisition so make
-            # sure to always wait for final images here before removing our callback.
-            self._wait_for_outstanding_callback_images()
-            self._log.debug(self._timing.get_report())
+            # sure to always wait for final images here before removing our callback. This is data-relevant:
+            # a failure here can mean dropped/uncommitted frames, so it flips the acquisition to failed.
+            _guard("wait_for_outstanding_callback_images", self._wait_for_outstanding_callback_images)
+            _guard(
+                "timing_report",
+                lambda: self._log.debug(self._timing.get_report()),
+                fail_acquisition=False,
+            )
 
             # Stop camera streaming before removing callback to ensure clean state.
             # Without this, the camera continues streaming after acquisition, causing
-            # issues on subsequent acquisitions (e.g., GUI freeze).
-            self._camera_service.stop_streaming()
+            # issues on subsequent acquisitions (e.g., GUI freeze). Benign cleanup:
+            # the images are already captured/saved, so a hiccup here must not fail
+            # the acquisition.
+            _guard("stop_streaming", self._camera_service.stop_streaming, fail_acquisition=False)
 
             if this_image_callback_id:
-                self._camera_service.remove_frame_callback(this_image_callback_id)
+                _guard(
+                    "remove_frame_callback",
+                    lambda: self._camera_service.remove_frame_callback(this_image_callback_id),
+                    fail_acquisition=False,
+                )
 
-            self._finish_jobs()
+            _guard("finish_jobs", self._finish_jobs)
             if acquisition_error is None and self._fatal_error is not None:
                 acquisition_error = self._fatal_error
-            # Publish acquisition finished event via ProgressTracker
-            self._progress_tracker.finish(
-                success=(acquisition_error is None and not self._aborted),
-                error=acquisition_error,
-            )
+            # Publish acquisition finished event via ProgressTracker. This MUST
+            # always run so the orchestrator's completion wait can return.
+            try:
+                self._progress_tracker.finish(
+                    success=(acquisition_error is None and not self._aborted),
+                    error=acquisition_error,
+                )
+            except Exception:  # noqa: BLE001 - last-resort guard; watchdog backstops
+                self._log.exception(
+                    "CRITICAL: ProgressTracker.finish() raised; AcquisitionFinished "
+                    "may not be published. Orchestrator watchdog will backstop this."
+                )
 
     def _wait_for_outstanding_callback_images(self) -> None:
         # If there are outstanding frames, wait for them to come in.

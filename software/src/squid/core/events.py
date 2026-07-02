@@ -79,6 +79,14 @@ class EventBus:
         self._queue: queue.Queue[Event] = queue.Queue()
         self._dispatch_thread: Optional[threading.Thread] = None
         self._running = False
+        # Count of events published but not yet fully dispatched. Incremented in
+        # publish() BEFORE the event is enqueued and decremented in
+        # _dispatch_loop only after all handlers for the event have returned.
+        # drain() waits on this reaching zero so it never returns while a handler
+        # is still running (the queue can be momentarily empty mid-dispatch
+        # because the loop pops the event before invoking its handlers).
+        self._pending = 0
+        self._idle = threading.Condition()
 
     def start(self) -> None:
         """Start the dispatch thread.
@@ -111,6 +119,13 @@ class EventBus:
             if self._dispatch_thread.is_alive():
                 _log.warning("EventBus dispatch thread did not stop cleanly")
         self._dispatch_thread = None
+        # The dispatch loop exits without draining any events still queued, so their
+        # publish-time _pending increments would never be decremented. Reset the
+        # counter and wake any drain() waiter so a later drain() on this bus cannot
+        # block for the full timeout on phantom pending events.
+        with self._idle:
+            self._pending = 0
+            self._idle.notify_all()
         _log.debug("EventBus dispatch thread stopped")
 
     @property
@@ -167,6 +182,10 @@ class EventBus:
             self.start()
         if self._debug:
             _log.debug(f"[EventBus] enqueue {type(event).__name__}: {event}")
+        # Mark the event in flight before enqueueing so there is never a window
+        # where the queue is empty but the event is unaccounted for by drain().
+        with self._idle:
+            self._pending += 1
         self._queue.put(event)
 
     def _dispatch_loop(self) -> None:
@@ -174,11 +193,19 @@ class EventBus:
         while self._running:
             try:
                 event = self._queue.get(timeout=0.1)
-                self._dispatch(event)
             except queue.Empty:
                 continue
+            try:
+                self._dispatch(event)
             except Exception as e:
                 _log.exception(f"Unexpected error in dispatch loop: {e}")
+            finally:
+                # Event fully processed (handlers ran); release drain() waiters.
+                with self._idle:
+                    self._pending -= 1
+                    if self._pending <= 0:
+                        self._pending = 0
+                        self._idle.notify_all()
 
     def _dispatch(self, event: Event) -> None:
         """Dispatch a single event to all subscribers."""
@@ -200,35 +227,38 @@ class EventBus:
             self._subscribers.clear()
 
     def drain(self, timeout_s: float = 1.0) -> int:
-        """Wait for the dispatch loop to process all pending events.
+        """Wait until all published events have been fully dispatched.
 
-        Useful for testing to ensure all events have been processed.
-        This method waits for the queue to become empty, allowing the
-        dispatch loop thread to process all events.
+        Blocks until every event published before this call has been pulled from
+        the queue AND had all of its handlers run to completion, or until
+        timeout_s elapses. Because _dispatch_loop removes an event from the queue
+        before running its handlers, an empty queue alone does not mean dispatch
+        is finished; this method also waits for the in-flight event count to
+        reach zero.
+
+        Useful in tests to deterministically wait for handler side effects.
 
         Args:
-            timeout_s: Maximum time to wait for queue to drain.
+            timeout_s: Maximum time to wait for pending events to drain.
 
         Returns:
-            Number of events observed as processed (approximate).
+            Always 0. Retained only for backward compatibility; callers must
+            observe handler side effects rather than rely on a processed count.
         """
+        # Guard against self-deadlock: if a handler (running on the dispatch
+        # thread) calls drain(), the current event's _pending is not decremented
+        # until that handler returns, so waiting here would just burn the whole
+        # timeout. Return immediately instead.
+        if self._dispatch_thread is not None and threading.current_thread() is self._dispatch_thread:
+            return 0
         deadline = time.time() + timeout_s
-        idle_start: Optional[float] = None
-        stable_duration = 0.05  # Queue must be empty for this long
-
-        while time.time() < deadline:
-            if self._queue.empty():
-                if idle_start is None:
-                    idle_start = time.time()
-                elif time.time() - idle_start >= stable_duration:
-                    # Queue has been empty long enough; dispatch loop has finished
+        with self._idle:
+            while self._pending > 0:
+                remaining = deadline - time.time()
+                if remaining <= 0:
                     break
-            else:
-                # Queue has items; reset idle timer
-                idle_start = None
-            time.sleep(0.005)
-
-        return 0  # We don't track count since dispatch loop processes events
+                self._idle.wait(remaining)
+        return 0
 
 
 # Global event bus instance

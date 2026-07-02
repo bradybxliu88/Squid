@@ -284,7 +284,10 @@ class TestGeometryUtils:
             [0, 0], [10, 0], [10, 10], [0, 10]
         ], dtype=float)
         assert point_in_polygon(5, 5, square) is True
-        assert point_in_polygon(0, 0, square) is False  # on edge
+        # Boundary points are intentionally treated as inside for scan-inclusion
+        # (see geometry._point_on_segment / point_in_polygon boundary loop); the
+        # corner (0, 0) lies on an edge and is therefore inclusive.
+        assert point_in_polygon(0, 0, square) is True  # on edge -> inclusive
         assert point_in_polygon(-1, -1, square) is False
 
     def test_point_in_polygon_triangle(self):

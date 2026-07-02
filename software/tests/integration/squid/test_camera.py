@@ -72,6 +72,17 @@ def test_new_roi_for_binning():
     )
 
 
+def test_new_roi_for_binning_returns_rounded_ints():
+    """L5: non-evenly-divisible binning rounds to nearest int (no leaked floats).
+
+    1001 * 2 / 3 = 667.33 -> 667 ; 3001 * 2 / 3 = 2000.67 -> 2001.
+    Pre-fix these were floats and both the equality and isinstance checks failed.
+    """
+    roi = AbstractCamera.calculate_new_roi_for_binning((2, 2), (0, 0, 1001, 3001), (3, 3))
+    assert roi == (0, 0, 667, 2001)
+    assert all(isinstance(v, int) for v in roi)
+
+
 class SimulatedWithTimeouts(SimulatedCamera):
     def __init__(self, timeout_ids: Sequence[int], *args, **kwargs):
         super().__init__(*args, **kwargs)

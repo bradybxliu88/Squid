@@ -171,3 +171,15 @@ def test_workflow_recording_start_stop(gui_factory):
 
     click_widget(gui.liveControlWidget.btn_live)
     collector.wait_for(LiveStateChanged, predicate=lambda evt: not evt.is_live)
+
+
+@pytest.mark.integration
+def test_full_gui_orchestrator_param_panel_connected(gui_factory):
+    """L9: _setup_orchestrator_tab wires the param panel into the workflow tree."""
+    context, gui = build_gui(gui_factory)
+    if not (
+        hasattr(gui, "orchestratorWorkflowTree")
+        and hasattr(gui, "orchestratorParameterPanel")
+    ):
+        pytest.skip("Orchestrator tab not built in this simulated config")
+    assert gui.orchestratorWorkflowTree._param_panel is gui.orchestratorParameterPanel

@@ -44,6 +44,7 @@ from squid.core.events import (
     CurrentFOVRegistered,
     PlateViewUpdate,
     PlateViewInit,
+    AutofocusMode,
 )
 
 import tests.control.test_stubs as ts
@@ -376,7 +377,7 @@ class TestAutofocusScenarios:
 
         mpc.set_NZ(1)
         mpc.set_Nt(1)
-        mpc.set_af_flag(True)  # Enable contrast AF
+        mpc.set_autofocus_mode(AutofocusMode.CONTRAST)  # Enable contrast AF
 
         mpc.run_acquisition()
 
@@ -397,7 +398,7 @@ class TestAutofocusScenarios:
 
         mpc.set_NZ(1)
         mpc.set_Nt(1)
-        mpc.set_reflection_af_flag(True)
+        mpc.set_autofocus_mode(AutofocusMode.LASER_REFLECTION)
 
         # Set up fake laser AF reference
         scope.addons.camera_focus.send_trigger()
@@ -695,9 +696,12 @@ class TestEdgeCases:
 
         assert mpc.get_acquisition_image_count() == 0
 
-        mpc.run_acquisition()
-
-        assert collector.wait_for_completion(timeout_s=5)
+        # Empty scan coordinates fail validation synchronously: run_acquisition
+        # returns False without ever launching a worker, so no
+        # AcquisitionWorkerFinished is emitted (unlike the bounds-failure path).
+        # Assert the synchronous contract instead of waiting for a completion
+        # event that never arrives.
+        assert mpc.run_acquisition() is False
         assert collector.total_images_captured == 0
 
     def test_large_z_range(self):

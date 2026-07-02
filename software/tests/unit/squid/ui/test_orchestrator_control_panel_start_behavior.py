@@ -23,7 +23,10 @@ def event_bus():
 
 
 @pytest.fixture
-def panel(event_bus, qtbot):
+def panel(event_bus, qtbot, gui_dialog_patches):
+    # gui_dialog_patches neutralizes modal QMessageBox/QFileDialog calls so that
+    # _on_start_clicked's validation dialogs don't spawn a blocking modal loop
+    # (which segfaults under a headless/no-exec Qt app).
     orchestrator = MagicMock()
     widget = OrchestratorControlPanel(event_bus=event_bus, orchestrator=orchestrator)
     qtbot.addWidget(widget)
@@ -165,7 +168,9 @@ def test_progress_update_populates_progress_section(panel):
     assert panel._progress_bar.value() == 25
     assert panel._paused_time_label.text() == "10s"
     assert panel._retry_time_label.text() == "4s"
-    assert "Round 1" in panel._round_label.text()
+    # Progress section uses its own label (_progress_round_label); the status-strip
+    # _round_label is updated only by the run-status handler (L8 fix).
+    assert "Round 1" in panel._progress_round_label.text()
     assert panel._time_remaining_label.text() == "2m 00s"
 
 
