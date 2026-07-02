@@ -48,7 +48,6 @@ from squid.core.events import (
     SetAcquisitionChannelsCommand,
     SetFocusLockAutoSearchCommand,
     SetFocusLockParamsCommand,
-    SetFluidicsRoundsCommand,
     StartNewExperimentCommand,
     StartAcquisitionCommand,
     StopAcquisitionCommand,
@@ -1485,17 +1484,6 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
     def _on_set_acquisition_channels(self, cmd: SetAcquisitionChannelsCommand) -> None:
         """Handle SetAcquisitionChannelsCommand from EventBus."""
         self.set_selected_configurations(cmd.channel_names)
-
-    @handles(SetFluidicsRoundsCommand)
-    def _on_set_fluidics_rounds(self, cmd: SetFluidicsRoundsCommand) -> None:
-        """Handle SetFluidicsRoundsCommand from EventBus."""
-        if self._fluidics_service is None:
-            self._log.warning("Fluidics service not available; ignoring rounds update")
-            return
-        try:
-            self._fluidics_service.set_rounds(cmd.rounds)
-        except Exception as exc:
-            self._log.exception("Failed to set fluidics rounds", exc_info=exc)
 
     @handles(StartNewExperimentCommand)
     def _on_start_new_experiment(self, cmd: StartNewExperimentCommand) -> None:

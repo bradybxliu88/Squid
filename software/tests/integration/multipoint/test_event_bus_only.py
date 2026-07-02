@@ -19,7 +19,6 @@ from squid.core.events import (
     SetAcquisitionChannelsCommand,
     SetAcquisitionParametersCommand,
     SetAcquisitionPathCommand,
-    SetFluidicsRoundsCommand,
     StartAcquisitionCommand,
 )
 
@@ -157,24 +156,6 @@ def test_set_acquisition_channels_command_updates_controller(
     controller = bus_only_sim.ctx.multipoint_controller
     actual = [cfg.name for cfg in controller.selected_configurations]
     assert actual == expected
-
-
-def test_set_fluidics_rounds_command_calls_service(bus_only_sim: AcquisitionSimulator):
-    """Verify SetFluidicsRoundsCommand is wired to the fluidics service."""
-    class _StubFluidicsService:
-        def __init__(self):
-            self.rounds = None
-
-        def set_rounds(self, rounds):
-            self.rounds = rounds
-
-    stub = _StubFluidicsService()
-    bus_only_sim.ctx.multipoint_controller._fluidics_service = stub
-
-    bus_only_sim.publish(SetFluidicsRoundsCommand(rounds=[0, 2, 4]))
-    bus_only_sim.drain(timeout_s=0.5)
-
-    assert stub.rounds == [0, 2, 4]
 
 
 @pytest.mark.parametrize(

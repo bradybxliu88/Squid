@@ -1688,18 +1688,6 @@ class AcquisitionWorkerProgress(Event):
 
 
 # ============================================================================
-# Fluidics Commands
-# ============================================================================
-
-
-@dataclass
-class SetFluidicsRoundsCommand(Event):
-    """Command to set fluidics rounds for acquisition."""
-
-    rounds: list  # List of round numbers
-
-
-# ============================================================================
 # Autofocus Commands
 # ============================================================================
 

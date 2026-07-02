@@ -157,7 +157,6 @@ class BackendContext:
     def _unsubscribe_multipoint_controller(self) -> None:
         """Unsubscribe the multipoint controller from event bus commands."""
         from squid.core.events import (
-            SetFluidicsRoundsCommand,
             SetAcquisitionParametersCommand,
             SetAcquisitionPathCommand,
             SetAcquisitionChannelsCommand,
@@ -170,7 +169,6 @@ class BackendContext:
 
         mpc = self._multipoint_controller
         commands = [
-            (SetFluidicsRoundsCommand, mpc._on_set_fluidics_rounds),
             (SetAcquisitionParametersCommand, mpc._on_set_acquisition_parameters),
             (SetAcquisitionPathCommand, mpc._on_set_acquisition_path),
             (SetAcquisitionChannelsCommand, mpc._on_set_acquisition_channels),
