@@ -1,0 +1,59 @@
+# =============================================================================
+# Imaging protocol for the 8-round 60x-oil run
+# =============================================================================
+# Copy of the proven tests/e2e/.../resource_files/protocols/custom_4ch_water_run.yaml
+# used by the real 12-round water run. Unchanged acquisition logic.
+#
+# FOCUS_LOCK_PER_FOV: the laser autofocus is stopped during fluidics and
+# re-engaged per FOV with a piezo Z seeded from previous rounds. The 60x laser-AF
+# calibration/reference is stored per-objective in
+# user_profiles/default_profile/laser_af_configs/60x.yaml (calibrated 2026-07-01).
+#
+# The OBJECTIVE (60x) is NOT set here - it is a GUI/hardware selection. Confirm
+# "60x" is the active objective before starting (see PRE_RUN_CHECKLIST.md).
+#
+# Channels below OVERRIDE the per-channel exposure/intensity from the 60x channel
+# config for the duration of this protocol. Confirm these 4 channels + their
+# exposures/intensities match your probes/readouts before the real run.
+# =============================================================================
+description: "4-channel imaging protocol for 8-round 60x-oil run. Laser AF stopped during fluidics, re-engaged per FOV with seeded piezo Z."
+acquisition:
+  channels:
+    - name: "Fluorescence 405 nm Ex"
+      exposure_time_ms: 50.0
+      illumination_intensity: 25.0
+    - name: "Fluorescence 488 nm Ex"
+      exposure_time_ms: 250.0
+      illumination_intensity: 30.0
+    - name: "Fluorescence 638 nm Ex"
+      exposure_time_ms: 250.0
+      illumination_intensity: 50.0
+    - name: "Fluorescence 730 nm Ex"
+      exposure_time_ms: 500.0
+      illumination_intensity: 100.0
+  z_stack:
+    planes: 8
+    step_um: 1.5
+    direction: from_center
+  acquisition_order: channel_first
+  skip_saving: false
+focus_gate:
+  mode: focus_lock_per_fov
+  interval_fovs: 1
+  require_in_focus: true
+  max_focus_attempts: 3
+  on_focus_gate_fail: skip_fov
+  focus_lock:
+    min_spot_snr: 2.0           # Tolerant of weak spots
+    lock_timeout_s: 2.0         # SHORT timeout - tier-2 single-shot fallback handles failures
+    acquire_threshold_um: 1.0   # Looser acquisition gate
+    maintain_threshold_um: 1.5  # Looser maintenance gate
+    buffer_length: 5
+    recovery_attempts: 3
+    auto_search_enabled: true
+    per_fov_max_attempts: 1     # Try once - if strict lock fails, fall back to single-shot, then seed
+    per_fov_settle_s: 0.2       # Settle time after piezo seed move before acquire
+capture_policy:
+  max_capture_attempts: 2
+  retry_delay_s: 0.1
+  on_capture_fail: fail_step

@@ -1,0 +1,367 @@
+# =============================================================================
+# Fluidics protocols for the 8-ROUND 60x-oil run (REAL HARDWARE)
+# =============================================================================
+# Derived by trimming merfish_config/water_run_fluidics_protocols.yaml (the
+# proven 12-round water-run file) down to rounds 1-8.
+#
+# Solution names MUST match keys in MERFISH_config.json -> solution_port_mapping
+# (case-insensitive, but spelling/spacing must match exactly):
+#     "Round 1" .. "Round 24"  (probe ports 1-24)
+#     "Readout Buffer"         (port 25)
+#     "Wash Buffer"            (port 26)
+#     "Imaging Buffer"         (port 27)
+#     "Cleavage Buffers"       (port 28)   <- note the plural
+#
+# All volumes: 1000 uL   (syringe is 5000 uL -> well under the limit)
+# All flow rates: 300 uL/min (gentle, reduces sample disturbance)
+# All incubations: 60 s
+#
+# NOTE: This file has REAL 60 s incubations for the actual run. The validation
+# dry-run used a fast copy (1 s incubations); structure is identical.
+# =============================================================================
+
+protocols:
+  # ---------------------------------------------------------------------------
+  # Initial wash before the first round (Round 1 only)
+  # ---------------------------------------------------------------------------
+  initial_wash:
+    description: "Initial wash to clear storage buffer before first probe"
+    steps:
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash 1"
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash 2"
+
+  # ---------------------------------------------------------------------------
+  # Strip fluorophores between rounds (cleavage + 2x wash) - Rounds 2-8
+  # ---------------------------------------------------------------------------
+  strip_fluorophores:
+    description: "Cleavage + 2x wash to strip fluorophores between rounds"
+    steps:
+      - operation: flow
+        solution: Cleavage Buffers
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Flow cleavage buffer to chamber"
+      - operation: incubate
+        duration_s: 60
+        description: "Cleavage incubation (1 min)"
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash 1 - clear cleaved fluorophores"
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash 2 - clear cleaved fluorophores"
+
+  # ---------------------------------------------------------------------------
+  # Imaging buffer exchange before each imaging step (with settle time)
+  # ---------------------------------------------------------------------------
+  imaging_buffer_exchange:
+    description: "Exchange to imaging buffer prior to acquisition (with settle time for focus lock to recover)"
+    steps:
+      - operation: flow
+        solution: Imaging Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Flow imaging buffer to chamber"
+      - operation: incubate
+        duration_s: 60
+        description: "Settle time - let sample stabilize so laser AF can re-lock before imaging"
+
+  # ---------------------------------------------------------------------------
+  # Per-round probe delivery + readout
+  # Probe: 1000 uL @ 300 uL/min, 1 min hybridization
+  # Wash: 2x 1000 uL Wash Buffer
+  # Readout: 1000 uL @ 300 uL/min, 1 min incubation
+  # Wash: 2x 1000 uL Wash Buffer
+  # ---------------------------------------------------------------------------
+  round_1:
+    description: "Deliver Round 1 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 1
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Flow Round 1 probes"
+      - operation: incubate
+        duration_s: 60
+        description: "Hybridization (1 min)"
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash unbound probes (1 of 2)"
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash unbound probes (2 of 2)"
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Flow readout buffer"
+      - operation: incubate
+        duration_s: 60
+        description: "Readout binding (1 min)"
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash unbound readout (1 of 2)"
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+        description: "Wash unbound readout (2 of 2)"
+
+  round_2:
+    description: "Deliver Round 2 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 2
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+
+  round_3:
+    description: "Deliver Round 3 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 3
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+
+  round_4:
+    description: "Deliver Round 4 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 4
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+
+  round_5:
+    description: "Deliver Round 5 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 5
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+
+  round_6:
+    description: "Deliver Round 6 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 6
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+
+  round_7:
+    description: "Deliver Round 7 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 7
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+
+  round_8:
+    description: "Deliver Round 8 probes and readout"
+    steps:
+      - operation: flow
+        solution: Round 8
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: flow
+        solution: Readout Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: incubate
+        duration_s: 60
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+
+  # ---------------------------------------------------------------------------
+  # Final wash and storage at end of run
+  # ---------------------------------------------------------------------------
+  final_wash:
+    description: "Final wash and remove excess liquid"
+    steps:
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: wash
+        solution: Wash Buffer
+        volume_ul: 1000
+        flow_rate_ul_per_min: 300
+      - operation: empty
+        description: "Remove excess liquid"

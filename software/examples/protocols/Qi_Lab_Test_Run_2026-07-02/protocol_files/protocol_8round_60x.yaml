@@ -1,0 +1,148 @@
+# =============================================================================
+# 8-ROUND FLUIDICS + IMAGING RUN - 60x OIL - SINGLE COVERSLIP
+# =============================================================================
+# THIS is the file you load in the Orchestrator ("Load Protocol").
+#
+# It is a trim of the proven 12-round water-run protocol
+# (tests/e2e/configs/protocols/twelve_round_fluidics_imaging.yaml) down to
+# 8 rounds + a final wash.
+#
+# Each imaging round:
+#   1. fluidics: strip fluorophores (Round 1 uses initial_wash instead)
+#   2. fluidics: deliver round_N probes + readout
+#   3. fluidics: exchange to imaging buffer (+ settle time for AF re-lock)
+#   4. imaging : 4-channel z-stack with per-FOV laser autofocus
+# Then a final wash.
+#
+# ---------------------------------------------------------------------------
+# PATHS: all resource paths below are RELATIVE and resolve against THIS file's
+# folder. Keep all 5 files together in protocol_files/. If you move this file,
+# either keep the other 4 next to it or switch to absolute paths.
+#
+# output_directory is ABSOLUTE. Confirm the drive exists and has free space
+# (25 FOVs x 4 ch x 8 planes x 8 rounds = ~6,400 frames -> tens of GB).
+# ---------------------------------------------------------------------------
+name: "8-Round 60x Oil Run"
+version: "3.0"
+description: "Eight sequential probe-delivery rounds with 4-channel z-stack imaging between each round, 60x oil, per-FOV laser autofocus, single coverslip."
+author: "Brady (Qi Lab)"
+
+output_directory: D:/brady/Qi_Lab_Test_Run/outputs
+
+resources:
+  fluidics_protocols_file: fluidics_protocols_8round.yaml
+  fluidics_config_file: MERFISH_config.json
+  fov_file: fov_positions.csv
+
+# Run-level failure policy. "pause" = halt and wait for the operator on any step
+# failure (preserves a checkpoint you can resume from). This is the safe choice
+# for a real sample: it will NOT keep burning reagents/sample after a failure.
+# Change on_fail to "skip_step" to continue past failures, or "abort" to stop
+# the whole run. See PRE_RUN_CHECKLIST.md.
+defaults:
+  step_failure_policy:
+    max_attempts: 1
+    retry_delay_s: 0.0
+    on_fail: pause
+
+rounds:
+  - name: "Round 1"
+    steps:
+      - step_type: fluidics
+        protocol: initial_wash
+      - step_type: fluidics
+        protocol: round_1
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_01
+
+  - name: "Round 2"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_2
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_02
+
+  - name: "Round 3"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_3
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_03
+
+  - name: "Round 4"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_4
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_04
+
+  - name: "Round 5"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_5
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_05
+
+  - name: "Round 6"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_6
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_06
+
+  - name: "Round 7"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_7
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_07
+
+  - name: "Round 8"
+    steps:
+      - step_type: fluidics
+        protocol: strip_fluorophores
+      - step_type: fluidics
+        protocol: round_8
+      - step_type: fluidics
+        protocol: imaging_buffer_exchange
+      - step_type: imaging
+        protocol: imaging_4ch_60x.yaml
+        output_label: round_08
+
+  - name: "Final Wash"
+    steps:
+      - step_type: fluidics
+        protocol: final_wash
