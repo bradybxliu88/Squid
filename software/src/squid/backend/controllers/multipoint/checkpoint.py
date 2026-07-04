@@ -9,13 +9,12 @@ This module provides checkpoint support for multipoint acquisitions:
 
 import json
 import hashlib
-import os
-import tempfile
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from squid.core.utils.atomic_io import atomic_write_json
 from squid.backend.controllers.multipoint.fov_task import FovTaskList
 
 
@@ -75,13 +74,13 @@ class MultiPointCheckpoint:
     def save(self, path: Path) -> None:
         """Save checkpoint to file atomically.
 
-        Uses temp file + rename for atomic write to prevent corruption.
+        Delegates to the shared ``atomic_write_json`` helper (temp file +
+        fsync + rename) so an interrupted write can never corrupt the file.
 
         Args:
             path: The file path to save to
         """
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
 
         # Convert to dict for JSON serialization
         data = {
@@ -93,24 +92,7 @@ class MultiPointCheckpoint:
             "created_at": self.created_at,
         }
 
-        # Write to temp file first, then rename (atomic on most filesystems)
-        fd, tmp_path = tempfile.mkstemp(
-            dir=path.parent,
-            prefix=".checkpoint_",
-            suffix=".json.tmp",
-        )
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=2)
-            # Atomic rename
-            os.replace(tmp_path, path)
-        except Exception:
-            # Clean up temp file on failure
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        atomic_write_json(path, data)
 
     @classmethod
     def load(cls, path: Path, current_plan_hash: Optional[str] = None) -> "MultiPointCheckpoint":

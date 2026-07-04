@@ -6,8 +6,13 @@ import os
 import json
 from datetime import datetime
 
-from squid.backend.controllers.orchestrator.checkpoint import CheckpointManager
-from squid.backend.controllers.orchestrator.state import Checkpoint
+from squid.backend.controllers.orchestrator.checkpoint import (
+    CheckpointManager,
+    CHECKPOINT_FILENAME,
+    save_checkpoint,
+    load_checkpoint,
+)
+from squid.backend.controllers.orchestrator.state import Checkpoint, CheckpointCorruptError
 
 
 @pytest.fixture
@@ -178,3 +183,63 @@ class TestCheckpointFileFormat:
 
             for field in expected_fields:
                 assert field in data, f"Missing field: {field}"
+
+
+class TestCheckpointCorruption:
+    """B1.0: load must distinguish corrupt-vs-missing and recover from .bak."""
+
+    def _make(self, round_index):
+        return Checkpoint(
+            protocol_name="p",
+            protocol_version="1.0",
+            experiment_id="exp",
+            experiment_path="/tmp/exp",
+            round_index=round_index,
+            created_at=datetime.now(),
+        )
+
+    def test_atomic_save_leaves_no_temp_files(self, sample_checkpoint):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_checkpoint(sample_checkpoint, tmpdir)
+            leftovers = [f for f in os.listdir(tmpdir) if f.endswith(".tmp")]
+            assert leftovers == [], f"temp files not cleaned: {leftovers}"
+
+    def test_missing_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            assert load_checkpoint(tmpdir) is None
+
+    def test_corrupt_without_backup_raises(self, sample_checkpoint):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_checkpoint(sample_checkpoint, tmpdir)
+            cp = os.path.join(tmpdir, CHECKPOINT_FILENAME)
+            with open(cp, "w") as f:
+                f.write("{ this is not valid json")
+            with pytest.raises(CheckpointCorruptError):
+                load_checkpoint(tmpdir)
+
+    def test_corrupt_recovers_from_backup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # First save -> primary=A (no .bak yet). Second save -> primary=B, .bak=A.
+            save_checkpoint(self._make(round_index=2), tmpdir)
+            save_checkpoint(self._make(round_index=5), tmpdir)
+            cp = os.path.join(tmpdir, CHECKPOINT_FILENAME)
+            assert os.path.exists(cp + ".bak")
+
+            # Corrupt the primary; loader should fall back to the last-good .bak (round 2).
+            with open(cp, "w") as f:
+                f.write("not json at all")
+            recovered = load_checkpoint(tmpdir)
+            assert recovered is not None
+            assert recovered.round_index == 2
+
+    def test_corrupt_primary_and_backup_raises(self, sample_checkpoint):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_checkpoint(sample_checkpoint, tmpdir)
+            save_checkpoint(sample_checkpoint, tmpdir)  # creates .bak
+            cp = os.path.join(tmpdir, CHECKPOINT_FILENAME)
+            with open(cp, "w") as f:
+                f.write("garbage")
+            with open(cp + ".bak", "w") as f:
+                f.write("also garbage")
+            with pytest.raises(CheckpointCorruptError):
+                load_checkpoint(tmpdir)

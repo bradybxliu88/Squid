@@ -242,6 +242,15 @@ class Checkpoint:
     effective_run_seconds: float = 0.0
 
 
+class CheckpointCorruptError(Exception):
+    """Raised when a checkpoint file exists but cannot be parsed.
+
+    Distinguishes a torn/corrupt checkpoint -- which recovery should surface as
+    a clear error (and may fall back to a ``.bak``) -- from a simply-absent
+    checkpoint, for which ``load_checkpoint`` returns ``None``.
+    """
+
+
 class ThroughputTracker:
     """Tracks FOV completion timestamps to compute rolling throughput."""
 

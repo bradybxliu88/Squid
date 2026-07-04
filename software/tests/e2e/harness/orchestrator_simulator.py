@@ -331,6 +331,72 @@ class OrchestratorSimulator(BaseSimulator):
         """Skip to a specific round."""
         return self.orchestrator.skip_to_round(round_index)
 
+    # =========================================================================
+    # Crash Injection (B1.1)
+    # =========================================================================
+
+    def _wait_until(self, predicate, timeout_s: float) -> bool:
+        """Poll ``predicate`` until true or ``timeout_s`` elapses."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if predicate():
+                return True
+            self.sleep(0.1)
+        return predicate()
+
+    def soft_crash(self, timeout_s: float = 15.0) -> None:
+        """Model a process death, then leave the run recoverable.
+
+        Aborts the in-flight worker and waits for a terminal state. Unlike a
+        clean completion, abort does NOT clear the checkpoint, so the on-disk
+        checkpoint + partial data are left exactly as a crashed run would leave
+        them. The caller then re-adds coordinates and calls
+        ``run_and_wait(resume_from_checkpoint=True)``.
+
+        Fidelity: this is the L1 "soft crash" (same process, graceful worker
+        abort). A true power-loss (L2) would SIGKILL a subprocess; the
+        deterministic torn-write case is covered at unit level by the
+        ``atomic_io._FAULT_BEFORE_REPLACE`` fault seam.
+        """
+        self.orchestrator.abort()
+        terminal = (
+            OrchestratorState.ABORTED,
+            OrchestratorState.COMPLETED,
+            OrchestratorState.FAILED,
+            OrchestratorState.IDLE,
+        )
+        self._wait_until(lambda: self.orchestrator.state in terminal, timeout_s)
+
+    def crash_after_n_fovs(self, n: int, timeout_s: float = 60.0) -> bool:
+        """Wait until imaging reaches FOV index ``n``, then soft-crash.
+
+        Returns True if the threshold was observed before crashing.
+        """
+        def reached() -> bool:
+            return any(
+                p.current_fov_index >= n
+                for p in self.monitor.get_events(OrchestratorProgress)
+            )
+
+        hit = self._wait_until(reached, timeout_s)
+        self.soft_crash()
+        return hit
+
+    def crash_at_round(self, round_index: int, timeout_s: float = 60.0) -> bool:
+        """Wait until ``round_index`` has started, then soft-crash.
+
+        Returns True if the round start was observed before crashing.
+        """
+        def reached() -> bool:
+            return any(
+                e.round_index >= round_index
+                for e in self.monitor.get_events(OrchestratorRoundStarted)
+            )
+
+        hit = self._wait_until(reached, timeout_s)
+        self.soft_crash()
+        return hit
+
     def run_and_wait(
         self,
         experiment_id: Optional[str] = None,

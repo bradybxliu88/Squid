@@ -219,6 +219,117 @@ def assert_coordinates_csv_valid(
     return rows
 
 
+def assert_checkpoint_valid(experiment_path: str):
+    """
+    Assert the checkpoint file exists AND is loadable by the real loader.
+
+    Stronger than assert_checkpoint_created: it round-trips through
+    ``load_checkpoint``, so a torn checkpoint that cannot be recovered (even from
+    its ``.bak``) fails here even though a file is present. A torn primary with a
+    good backup is considered valid, because that is exactly what B1.0 recovers.
+    Use after a simulated crash to prove atomicity.
+
+    Returns:
+        The loaded ``Checkpoint`` object.
+    """
+    from squid.backend.controllers.orchestrator.checkpoint import (
+        load_checkpoint,
+        CHECKPOINT_FILENAME,
+    )
+
+    checkpoint_path = Path(experiment_path) / CHECKPOINT_FILENAME
+    assert checkpoint_path.exists(), f"Checkpoint not found at {checkpoint_path}"
+
+    loaded = load_checkpoint(str(experiment_path))
+    assert loaded is not None, (
+        f"Checkpoint at {experiment_path} exists but load_checkpoint() returned None"
+    )
+    return loaded
+
+
+def assert_no_prior_data_loss(
+    experiment_path: str,
+    min_round_dirs: Optional[int] = None,
+    min_image_files: Optional[int] = None,
+) -> None:
+    """
+    Assert that data written before a (simulated) crash still exists after resume.
+
+    Every ``round_*`` directory must still contain at least one file, and the
+    round-directory / image-file counts must not have dropped below a baseline
+    captured before the crash. This is the core "resume did not destroy prior
+    data" check reused by the writer phases (B1.4/B1.5).
+
+    Args:
+        experiment_path: Path to experiment directory.
+        min_round_dirs: Minimum number of ``round_*`` directories expected.
+        min_image_files: Minimum number of image files expected across all rounds.
+    """
+    exp_path = Path(experiment_path)
+    assert exp_path.exists(), f"Experiment directory not found: {exp_path}"
+
+    round_dirs = sorted(
+        p for p in exp_path.iterdir() if p.is_dir() and p.name.startswith("round_")
+    )
+
+    if min_round_dirs is not None:
+        assert len(round_dirs) >= min_round_dirs, (
+            f"Prior data loss: expected >= {min_round_dirs} round dirs, "
+            f"found {len(round_dirs)}: {[d.name for d in round_dirs]}"
+        )
+
+    image_files = []
+    for round_dir in round_dirs:
+        contents = list(round_dir.rglob("*"))
+        files = [p for p in contents if p.is_file()]
+        assert files, f"Prior data loss: round dir {round_dir.name} is empty"
+        image_files.extend(
+            p for p in files if p.suffix.lower() in (".tiff", ".tif", ".bmp", ".png")
+        )
+
+    if min_image_files is not None:
+        assert len(image_files) >= min_image_files, (
+            f"Prior data loss: expected >= {min_image_files} image files, "
+            f"found {len(image_files)}"
+        )
+
+
+def assert_no_duplicate_coordinates(experiment_path: str) -> None:
+    """
+    Assert no coordinates.csv contains duplicate FOV rows.
+
+    A resume that re-records already-completed FOVs (or an append/rewrite that
+    fails to reconcile) shows up as duplicate ``(region, x, y, z)`` rows. Checks
+    every coordinates.csv under the experiment tree.
+
+    Args:
+        experiment_path: Path to experiment directory.
+    """
+    exp_path = Path(experiment_path)
+    csv_files = sorted(exp_path.rglob("coordinates.csv"))
+
+    for csv_path in csv_files:
+        with open(csv_path, newline="") as f:
+            rows = list(csv.DictReader(f))
+
+        seen = set()
+        duplicates = []
+        for row in rows:
+            key = (
+                row.get("region"),
+                row.get("x (mm)"),
+                row.get("y (mm)"),
+                row.get("z (mm)"),
+            )
+            if key in seen:
+                duplicates.append(key)
+            seen.add(key)
+
+        assert not duplicates, (
+            f"Duplicate coordinate rows in {csv_path}: {duplicates}"
+        )
+
+
 def assert_no_errors(monitor: "EventMonitor") -> None:
     """
     Assert that no error events were published.

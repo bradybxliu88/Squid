@@ -62,6 +62,7 @@ from squid.backend.controllers.orchestrator.state import (
     ProtocolValidationComplete,
 )  # fmt: skip
 from squid.backend.controllers.orchestrator import checkpoint as ckpt
+from squid.core.utils.atomic_io import atomic_write_json
 from squid.backend.controllers.orchestrator.warnings import (
     WarningCategory,
     WarningSeverity,
@@ -607,7 +608,12 @@ class OrchestratorController(StateMachine[OrchestratorState]):
             # Load checkpoint if resuming (base_path should be experiment folder)
             self._resume_checkpoint = None
             if resume_from_checkpoint:
-                self._resume_checkpoint = ckpt.load_checkpoint(base_path)
+                try:
+                    self._resume_checkpoint = ckpt.load_checkpoint(base_path)
+                except ckpt.CheckpointCorruptError as e:
+                    # Distinct from "no checkpoint": the run cannot be safely
+                    # resumed and the operator needs to know why.
+                    raise RuntimeError(f"Checkpoint corrupt in {base_path}: {e}") from e
                 if self._resume_checkpoint is None:
                     raise RuntimeError(f"No checkpoint found in {base_path}")
                 if (
@@ -989,8 +995,10 @@ class OrchestratorController(StateMachine[OrchestratorState]):
             "protocol": self._protocol.model_dump(mode="json", exclude_none=True),
             "written_at": datetime.now().isoformat(),
         }
-        with open(metadata_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+        # Atomic write: experiment_metadata.json is the canonical protocol
+        # snapshot used to interpret a partially-completed run, and it is
+        # rewritten on every resume -- a torn write here would corrupt it.
+        atomic_write_json(metadata_path, payload, sort_keys=True)
 
     def _start_timing_publisher(self) -> None:
         """Publish continuously updated timing/progress snapshots during a run."""
