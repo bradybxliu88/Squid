@@ -99,6 +99,7 @@ from squid.backend.controllers.multipoint.checkpoint import (
     get_checkpoint_path,
     find_latest_checkpoint,
 )
+from squid.backend.controllers.multipoint.resume_verification import fov_frames_present
 from squid.core.config.feature_flags import get_feature_flags
 from squid.core.events import AutofocusMode
 
@@ -1745,14 +1746,45 @@ class MultiPointWorker:
         # Build task list if not already built (first time point)
         if self._fov_task_list is None:
             self._fov_task_list = self._build_fov_task_list()
-            # Apply start FOV index for resume support
+            # Apply start FOV index for resume support.
+            # B1.2a: the checkpoint index is an ACQUIRE-time counter and saves are
+            # async/fire-and-forget, so a FOV below the index may have been marked
+            # complete yet never flushed. For INDIVIDUAL_IMAGES, verify each skipped
+            # FOV's frames are actually on disk and re-acquire any that are missing,
+            # rather than skipping blindly by position. Other save modes keep the
+            # legacy positional skip until they get their own durability verifier.
             if self._start_fov_index > 0:
-                if self._fov_task_list.jump_to_index(self._start_fov_index):
-                    self._log.info(f"Jumped to FOV index {self._start_fov_index} for resume")
+                if FILE_SAVING_OPTION == FileSavingOption.INDIVIDUAL_IMAGES:
+                    channel_names = [c.name for c in self.selected_configurations]
+
+                    def _fov_is_written(task) -> bool:
+                        return fov_frames_present(
+                            current_path,
+                            task.fov_id,
+                            self.NZ,
+                            channel_names,
+                            FILE_ID_PADDING,
+                        )
+
+                    verified, missing = self._fov_task_list.reconcile_for_resume(
+                        self._start_fov_index, _fov_is_written
+                    )
+                    self._log.info(
+                        f"Resume reconcile (INDIVIDUAL_IMAGES): verified {verified} FOV(s) "
+                        f"on disk, re-acquiring {missing} missing FOV(s) below index "
+                        f"{self._start_fov_index}"
+                    )
                 else:
+                    if self._fov_task_list.jump_to_index(self._start_fov_index):
+                        self._log.info(f"Jumped to FOV index {self._start_fov_index} for resume")
+                    else:
+                        self._log.warning(
+                            f"Could not jump to FOV index {self._start_fov_index} "
+                            f"(task list has {len(self._fov_task_list)} tasks)"
+                        )
                     self._log.warning(
-                        f"Could not jump to FOV index {self._start_fov_index} "
-                        f"(task list has {len(self._fov_task_list)} tasks)"
+                        "Resume durability-verify not supported for current save mode; "
+                        "using legacy positional skip"
                     )
                 self._start_fov_index = 0  # Reset after applying
         elif self._resumed_from_checkpoint:

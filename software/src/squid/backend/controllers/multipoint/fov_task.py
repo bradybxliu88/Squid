@@ -11,7 +11,7 @@ This module provides data structures for managing FOV acquisition tasks with:
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, Any, Optional, List
+from typing import Callable, Dict, Any, Optional, List, Tuple
 import threading
 
 
@@ -238,6 +238,48 @@ class FovTaskList:
                 self.cursor = index
                 return True
             return False
+
+    def reconcile_for_resume(
+        self,
+        skip_index: int,
+        is_written: "Callable[[FovTask], bool]",
+    ) -> Tuple[int, int]:
+        """Resume-safe replacement for ``jump_to_index`` on a freshly-built list.
+
+        Instead of skipping FOVs below ``skip_index`` purely by cursor position
+        (which trusts an acquire-time checkpoint index and can drop a FOV whose
+        frames were never durably written), verify each one: mark it COMPLETED iff
+        ``is_written(task)`` confirms its frames are on disk, otherwise leave it
+        PENDING so it is re-acquired. Reset the cursor to 0 so ``advance_and_get``
+        returns any un-written "hole" first, then proceeds past ``skip_index``.
+
+        When every FOV below ``skip_index`` is present, this is behaviorally
+        identical to ``jump_to_index(skip_index)`` (all skipped, none re-acquired).
+
+        Intended for a freshly-built, all-PENDING task list (the orchestrator
+        rebuilds the list each round on resume).
+
+        Args:
+            skip_index: The resume FOV index (checkpoint ``imaging_fov_index``).
+            is_written: Predicate ``FovTask -> bool``: are this FOV's frames
+                durably on disk?
+
+        Returns:
+            ``(verified, missing)`` -- FOVs skipped-as-present vs re-queued, below
+            ``skip_index``.
+        """
+        with self._lock:
+            idx = max(0, min(skip_index, len(self.tasks)))
+            verified = 0
+            missing = 0
+            for task in self.tasks[:idx]:
+                if is_written(task):
+                    task.status = FovStatus.COMPLETED
+                    verified += 1
+                else:
+                    missing += 1  # stays PENDING -> re-acquired
+            self.cursor = 0
+            return verified, missing
 
     def skip(self, fov_id: str) -> bool:
         """Explicitly mark a PENDING task as SKIPPED.

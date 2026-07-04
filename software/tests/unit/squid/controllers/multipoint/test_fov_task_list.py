@@ -529,3 +529,82 @@ class TestFovTaskListHelpers:
         task_list.reset_cursor()
 
         assert task_list.cursor == 0
+
+
+class TestFovTaskListReconcileForResume:
+    """B1.2a: resume-side durability reconciliation (vs. blind positional skip)."""
+
+    def _list(self, n=10):
+        tasks = [FovTask.from_coordinate("A1", i, (0, 0, 0)) for i in range(n)]
+        return FovTaskList(tasks=tasks), tasks
+
+    def _drain(self, task_list):
+        """Return the ordered list of fov_ids advance_and_get yields to completion."""
+        seen = []
+        while True:
+            t = task_list.advance_and_get()
+            if t is None:
+                break
+            seen.append(t.fov_id)
+            task_list.mark_complete_task(t, success=True)
+        return seen
+
+    def test_all_written_matches_jump_to_index(self):
+        """When every FOV below skip_index is on disk, behaves like jump_to_index."""
+        task_list, tasks = self._list(10)
+        verified, missing = task_list.reconcile_for_resume(4, lambda t: True)
+        assert (verified, missing) == (4, 0)
+        assert all(t.status == FovStatus.COMPLETED for t in tasks[:4])
+        assert all(t.status == FovStatus.PENDING for t in tasks[4:])
+        # advance_and_get yields exactly the un-skipped tail, in order.
+        assert self._drain(task_list) == [f"A1_{i:04d}" for i in range(4, 10)]
+
+    def test_missing_hole_is_reacquired_first(self):
+        """A missing FOV below skip_index stays PENDING and is returned first."""
+        task_list, tasks = self._list(10)
+        missing_id = "A1_0002"
+        verified, missing = task_list.reconcile_for_resume(
+            5, lambda t: t.fov_id != missing_id
+        )
+        assert (verified, missing) == (4, 1)
+        assert tasks[2].status == FovStatus.PENDING
+        yielded = self._drain(task_list)
+        # The hole is re-acquired first, then the normal tail (5..9); the other
+        # verified FOVs (0,1,3,4) are never returned.
+        assert yielded[0] == missing_id
+        assert yielded == ["A1_0002"] + [f"A1_{i:04d}" for i in range(5, 10)]
+
+    def test_multiple_holes_reacquired_in_order(self):
+        task_list, tasks = self._list(10)
+        holes = {"A1_0001", "A1_0003"}
+        task_list.reconcile_for_resume(6, lambda t: t.fov_id not in holes)
+        yielded = self._drain(task_list)
+        assert yielded == ["A1_0001", "A1_0003"] + [f"A1_{i:04d}" for i in range(6, 10)]
+
+    def test_tasks_at_or_above_index_untouched(self):
+        task_list, tasks = self._list(10)
+        task_list.reconcile_for_resume(4, lambda t: True)
+        assert all(t.status == FovStatus.PENDING for t in tasks[4:])
+
+    def test_index_bounds(self):
+        # skip_index 0 -> nothing marked
+        tl, tasks = self._list(5)
+        assert tl.reconcile_for_resume(0, lambda t: True) == (0, 0)
+        assert all(t.status == FovStatus.PENDING for t in tasks)
+        assert tl.cursor == 0
+        # skip_index beyond length -> clamped, no IndexError
+        tl2, tasks2 = self._list(5)
+        verified, missing = tl2.reconcile_for_resume(99, lambda t: True)
+        assert verified == 5 and missing == 0
+        # empty list
+        empty = FovTaskList()
+        assert empty.reconcile_for_resume(3, lambda t: True) == (0, 0)
+
+    def test_counts_partition_skip_index(self):
+        task_list, tasks = self._list(10)
+        written = {"A1_0000", "A1_0002", "A1_0004", "A1_0006"}
+        verified, missing = task_list.reconcile_for_resume(
+            7, lambda t: t.fov_id in written
+        )
+        assert verified + missing == 7
+        assert verified == 4 and missing == 3
