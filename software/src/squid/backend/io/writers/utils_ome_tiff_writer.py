@@ -44,11 +44,25 @@ def ome_output_folder(acq_info: "AcquisitionInfo", info: "CaptureInfo") -> str:
 
 
 def metadata_temp_path(acq_info: "AcquisitionInfo", info: "CaptureInfo", base_name: str) -> str:
+    # Legacy OS-temp tracker location. Kept as a READ-ONLY migration source so an
+    # FOV started under the pre-B1.4 build can still be resumed; the live path
+    # writes/reads plane_tracker_path() instead.
     base_identifier = acq_info.experiment_path or info.save_directory
     key = f"{base_identifier}:{base_name}"
     digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
     # Use squid_ome_ prefix to avoid conflicts with other OME-TIFF applications
     return os.path.join(tempfile.gettempdir(), f"squid_ome_{digest}_metadata.json")
+
+
+def plane_tracker_path(acq_info: "AcquisitionInfo", info: "CaptureInfo", base_name: str) -> str:
+    """B1.4: primary plane-tracker path, co-located with the data.
+
+    <experiment>/ome_tiff/.plane_trackers/{base}_metadata.json -- survives OS-temp
+    cleanup and travels with the experiment folder for crash-resume.
+    """
+    return os.path.join(
+        ome_output_folder(acq_info, info), ".plane_trackers", f"{base_name}_metadata.json"
+    )
 
 
 def load_metadata(metadata_path: str) -> Optional[Dict[str, Any]]:
@@ -59,8 +73,79 @@ def load_metadata(metadata_path: str) -> Optional[Dict[str, Any]]:
 
 
 def write_metadata(metadata_path: str, metadata: Dict[str, Any]) -> None:
-    with open(metadata_path, "w", encoding="utf-8") as metadata_file:
-        json.dump(metadata, metadata_file)
+    # Route through the shared atomic helper so a crash mid-write can never leave
+    # a torn tracker (what makes the tracker trustworthy on resume), and so the
+    # .plane_trackers parent dir is auto-created.
+    from squid.core.utils.atomic_io import atomic_write_json
+
+    atomic_write_json(metadata_path, metadata)
+
+
+def memmap_matches(output_path: str, expected_shape, expected_dtype) -> bool:
+    """B1.4: True iff the existing OME-TIFF memmap has the expected geometry.
+
+    The gate that lets the writer ADOPT (not wipe) a partially-written stack
+    when its tracker is missing. Returns False on any read error.
+    """
+    import tifffile
+
+    try:
+        arr = tifffile.memmap(output_path, mode="r")
+    except Exception:
+        return False
+    try:
+        if np.dtype(arr.dtype) != np.dtype(expected_dtype):
+            return False
+        # tifffile may squeeze singleton axes, so arr.shape need not equal SHAPE;
+        # the stack matches if it holds the same number of elements (the writer
+        # reshapes the memmap to SHAPE before indexing planes).
+        return int(arr.size) == int(np.prod([int(s) for s in expected_shape]))
+    finally:
+        _close_memmap(arr)
+
+
+def rebuild_written_indices_from_memmap(
+    output_path: str, metadata: Dict[str, Any]
+) -> Dict[str, Any]:
+    """B1.4: repopulate WRITTEN_INDICES/SAVED_COUNT from the non-empty planes of
+    an existing memmap so a resume knows which planes are already durable.
+
+    Keys are T-C-Z (matching job_processing.index_key and update_plane_metadata's
+    plane_key). PLANES metadata cannot be reconstructed from pixels, so it is
+    left as-is. A legitimately all-zero plane reads as 'not written' -- safe and
+    idempotent (it will be re-acquired/overwritten).
+    """
+    import tifffile
+
+    shape = tuple(int(s) for s in metadata[SHAPE_KEY])  # [T, Z, C, Y, X]
+    t_n, z_n, c_n = shape[0], shape[1], shape[2]
+    arr = tifffile.memmap(output_path, mode="r")
+    try:
+        # tifffile may squeeze singleton axes; reshape back to the logical
+        # TZCYX layout (same buffer order the writer wrote) before indexing.
+        view = arr.reshape(shape)
+        written: List[str] = []
+        for t in range(t_n):
+            for z in range(z_n):
+                for c in range(c_n):
+                    if np.any(view[t, z, c] != 0):
+                        written.append(f"{t}-{c}-{z}")
+    finally:
+        _close_memmap(arr)
+    metadata[WRITTEN_INDICES_KEY] = written
+    metadata[SAVED_COUNT_KEY] = len(written)
+    return metadata
+
+
+def _close_memmap(arr) -> None:
+    """Best-effort release of a numpy memmap's file handle (matters on Windows
+    before a subsequent os.remove / re-open of the same file)."""
+    try:
+        mmap = getattr(arr, "_mmap", None)
+        if mmap is not None:
+            mmap.close()
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 def ome_base_name(info: "CaptureInfo") -> str:
@@ -339,18 +424,23 @@ def ensure_output_directory(path: str) -> None:
 
 
 def cleanup_stale_metadata_files() -> List[str]:
-    """Remove stale OME-TIFF metadata files from previous crashed acquisitions.
+    """Sweep redundant COMPLETED trackers from the LEGACY OS-temp location only.
 
-    Returns a list of removed file paths.
+    B1.4: trackers are now co-located with the data (plane_tracker_path); this
+    janitor never touches .plane_trackers. An INCOMPLETE legacy tracker is
+    resume/migration fuel, so it is KEPT (previously it was deleted -- the exact
+    file a migrating resume needs). Only COMPLETED (redundant) legacy trackers
+    are removed. Returns a list of removed file paths.
     """
     pattern = os.path.join(tempfile.gettempdir(), "squid_ome_*_metadata.json")
     stale_files = glob.glob(pattern)
     removed = []
     for filepath in stale_files:
         try:
-            # Check if this is actually a stale file (completed flag is False or missing)
+            # Incomplete trackers are resume fuel -- keep them. Only remove a
+            # COMPLETED (redundant) legacy tracker.
             metadata = load_metadata(filepath)
-            if metadata is not None and not metadata.get(COMPLETED_KEY, False):
+            if metadata is not None and metadata.get(COMPLETED_KEY, False):
                 os.remove(filepath)
                 removed.append(filepath)
                 # Also try to remove the lock file

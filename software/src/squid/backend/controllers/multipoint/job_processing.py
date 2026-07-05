@@ -161,6 +161,16 @@ def _merged_image_path(info: "CaptureInfo", image: np.ndarray) -> str:
     return os.path.join(info.save_directory, f"{info.file_id}_merged{ext}")
 
 
+def multipage_stack_path(info: "CaptureInfo") -> str:
+    """Single source of truth for the MULTI_PAGE_TIFF {region}_{fov}_stack.tiff so
+    SaveImageJob (which appends to it) and the worker's B1.4 resume guard (which
+    deletes it before re-acquiring an in-flight FOV) agree on the exact file."""
+    return os.path.join(
+        info.save_directory,
+        f"{info.region_id}_{info.fov:0{_def.FILE_ID_PADDING}}_stack.tiff",
+    )
+
+
 def _merged_lock_path(output_path: str) -> str:
     return output_path + ".lock"
 
@@ -230,10 +240,7 @@ class SaveImageJob(Job):
                 metadata["time"] = info.capture_time
             if info.z_piezo_um is not None:
                 metadata["z_piezo (um)"] = info.z_piezo_um
-            output_path: str = os.path.join(
-                info.save_directory,
-                f"{info.region_id}_{info.fov:0{_def.FILE_ID_PADDING}}_stack.tiff",
-            )
+            output_path: str = multipage_stack_path(info)
             # Ensure channel information is preserved across common TIFF readers by:
             # - embedding full metadata as JSON in ImageDescription (description=)
             # - setting PageName (tag 285) to the channel name via extratags
@@ -368,7 +375,7 @@ class SaveOMETiffJob(Job):
 
         base_name: str = ome_tiff_writer.ome_base_name(info)
         output_path: str = os.path.join(ome_folder, base_name + ".ome.tiff")
-        metadata_path: str = ome_tiff_writer.metadata_temp_path(self.acquisition_info, info, base_name)
+        metadata_path: str = ome_tiff_writer.plane_tracker_path(self.acquisition_info, info, base_name)
         lock_path: str = _metadata_lock_path(metadata_path)
 
         with _acquire_file_lock(lock_path, context=output_path):
@@ -376,17 +383,44 @@ class SaveOMETiffJob(Job):
                 metadata_path
             )
             if metadata is None:
+                # B1.4 migration fallback (read-only): a tracker written by the
+                # pre-relocation build lives in OS temp; adopt it so an FOV
+                # started under the old build can still resume. It is rewritten
+                # to the new .plane_trackers location by write_metadata below.
+                legacy_path = ome_tiff_writer.metadata_temp_path(self.acquisition_info, info, base_name)
+                metadata = ome_tiff_writer.load_metadata(legacy_path)
+            if metadata is None:
                 metadata = ome_tiff_writer.initialize_metadata(self.acquisition_info, info, image)
                 target_dtype: np.dtype = np.dtype(metadata[ome_tiff_writer.DTYPE_KEY])
-                if os.path.exists(output_path):
-                    os.remove(output_path)
-                tifffile.imwrite(
-                    output_path,
-                    shape=tuple(metadata[ome_tiff_writer.SHAPE_KEY]),
-                    dtype=target_dtype,
-                    metadata=ome_tiff_writer.metadata_for_imwrite(metadata),
-                    ome=True,
-                )
+                # B1.4 non-destructive guard: only wipe on TRUE absence or a
+                # shape/dtype MISMATCH. On a fresh FOV output_path does not exist,
+                # so this reaches the identical create branch as before.
+                if os.path.exists(output_path) and ome_tiff_writer.memmap_matches(
+                    output_path, metadata[ome_tiff_writer.SHAPE_KEY], target_dtype
+                ):
+                    _log.warning(
+                        "OME resume: adopting existing stack %s (no tracker); "
+                        "rebuilding written-plane set from disk",
+                        output_path,
+                    )
+                    metadata = ome_tiff_writer.rebuild_written_indices_from_memmap(
+                        output_path, metadata
+                    )
+                else:
+                    if os.path.exists(output_path):
+                        _log.warning(
+                            "OME resume: existing stack %s does not match expected "
+                            "shape/dtype; discarding and recreating",
+                            output_path,
+                        )
+                        os.remove(output_path)
+                    tifffile.imwrite(
+                        output_path,
+                        shape=tuple(metadata[ome_tiff_writer.SHAPE_KEY]),
+                        dtype=target_dtype,
+                        metadata=ome_tiff_writer.metadata_for_imwrite(metadata),
+                        ome=True,
+                    )
             else:
                 expected_shape: Tuple[int, ...] = tuple(metadata[ome_tiff_writer.SHAPE_KEY])
                 if expected_shape[-2:] != image.shape[-2:]:
@@ -412,6 +446,15 @@ class SaveOMETiffJob(Job):
                 raise ValueError("Z index out of range for OME stack")
             if not (0 <= channel_index < shape[2]):
                 raise ValueError("Channel index out of range for OME stack")
+
+            # B1.4 per-plane skip fast-path: a plane already recorded as written
+            # (rebuilt from disk on resume, or a duplicate dispatch) is already
+            # durable and counted. Placed BEFORE the memmap write so a resumed
+            # plane never re-touches pixels/OME-XML. On a linear fresh run the
+            # key is only added AFTER the write, so this is always False.
+            index_key: str = f"{time_point}-{channel_index}-{z_index}"
+            if index_key in metadata[ome_tiff_writer.WRITTEN_INDICES_KEY]:
+                return
 
             stack: np.ndarray = tifffile.memmap(
                 output_path, dtype=target_dtype, mode="r+"

@@ -1733,6 +1733,30 @@ class MultiPointWorker:
         if self._downsampled_view_manager is not None:
             self._downsampled_view_manager.save_plate_view(path)
 
+    def _reset_multipage_stacks_from(self, current_path: str, start_index: int) -> int:
+        """B1.4: delete stale MULTI_PAGE_TIFF stack files for every to-be-re-
+        acquired FOV (task index >= start_index) before any page is appended.
+
+        append=True is non-idempotent, so re-acquiring an in-flight FOV without
+        this would duplicate/corrupt pages. Deletion is per-FOV (the whole
+        {fov_id}_stack.tiff), never per-plane, so it cannot erase earlier planes
+        of the same re-acquired FOV. Only ever runs on the resume path. The
+        stack filename mirrors job_processing.multipage_stack_path via the same
+        fov_id convention B1.2a uses to locate INDIVIDUAL_IMAGES frames, so a
+        wrong guess simply finds no file (a harmless no-op).
+        """
+        removed = 0
+        tasks = getattr(self._fov_task_list, "tasks", None) or []
+        for task in tasks[max(0, start_index):]:
+            stack = os.path.join(current_path, f"{task.fov_id}_stack.tiff")
+            if os.path.isfile(stack):
+                try:
+                    os.remove(stack)
+                    removed += 1
+                except OSError as e:
+                    self._log.warning(f"Could not remove stale stack {stack}: {e}")
+        return removed
+
     def _summarize_job_result(self, job_result: JobResult) -> bool:
         """
         Prints a summary, then returns True if the result was successful or False otherwise.
@@ -1786,6 +1810,18 @@ class MultiPointWorker:
                         f"{self._start_fov_index}"
                     )
                 else:
+                    if FILE_SAVING_OPTION == FileSavingOption.MULTI_PAGE_TIFF:
+                        # B1.4: append=True is non-idempotent, so delete each
+                        # to-be-re-acquired FOV's stack before the positional
+                        # jump re-acquires it. Runs ONLY on resume.
+                        removed = self._reset_multipage_stacks_from(
+                            current_path, self._start_fov_index
+                        )
+                        if removed:
+                            self._log.info(
+                                f"Resume (MULTI_PAGE): deleted {removed} stale stack "
+                                f"file(s) at/above FOV index {self._start_fov_index}"
+                            )
                     if self._fov_task_list.jump_to_index(self._start_fov_index):
                         self._log.info(f"Jumped to FOV index {self._start_fov_index} for resume")
                     else:
