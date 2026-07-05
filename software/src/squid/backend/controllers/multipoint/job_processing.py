@@ -541,6 +541,11 @@ class ZarrWriterInfo:
     channel_names: List[str] = field(default_factory=list)
     channel_colors: List[str] = field(default_factory=list)
     channel_wavelengths: List[Optional[int]] = field(default_factory=list)
+    # B1.5 resume plumbing (across the multiprocessing pickle boundary). DERIVED
+    # from the worker's _start_fov_index > 0 in set_start_fov_index(); default
+    # False so every normal run is unchanged.
+    allow_resume: bool = False
+    force_overwrite: bool = False
 
     def get_output_path(self, region_id: str, fov: int) -> str:
         """Get output path for writing (array path).
@@ -778,7 +783,11 @@ class SaveZarrJob(Job):
 
     def _save_zarr(self, image: np.ndarray, info: CaptureInfo, output_path: str) -> None:
         """Write image to zarr dataset using TensorStore."""
-        from squid.backend.io.writers.zarr_writer import ZarrWriter, ZarrAcquisitionConfig
+        from squid.backend.io.writers.zarr_writer import (
+            ZarrWriter,
+            ZarrAcquisitionConfig,
+            RefuseToOverwriteError,
+        )
 
         is_hcs = self.zarr_writer_info.is_hcs
         use_6d_fov = self.zarr_writer_info.use_6d_fov
@@ -790,6 +799,15 @@ class SaveZarrJob(Job):
         # - Non-HCS 6D: shared per region (all FOVs in one 6D array)
         # - Non-HCS default: unique per (region, fov) via output_path
         if not is_hcs and use_6d_fov:
+            # B1.5: the 6D per-region layout keys one writer per region holding
+            # every FOV; the incremental per-FOV create=False model does not
+            # apply, and a naive reopen would delete_existing the whole region.
+            # Refuse resume for this layout rather than risk wiping written FOVs.
+            if self.zarr_writer_info.allow_resume:
+                raise RefuseToOverwriteError(
+                    f"Zarr resume is not supported for the 6D per-region layout "
+                    f"(region {region_id}); re-run without ZARR_USE_6D_FOV_DIMENSION"
+                )
             writer_key = f"{self.zarr_writer_info.base_path}:{region_id}"
         else:
             writer_key = output_path  # Unique per FOV
@@ -829,6 +847,8 @@ class SaveZarrJob(Job):
                 chunk_mode=_def.ZARR_CHUNK_MODE,
                 compression=_def.ZARR_COMPRESSION,
                 is_hcs=is_hcs or not use_6d_fov,  # 5D for HCS and non-HCS default
+                allow_resume=self.zarr_writer_info.allow_resume,
+                force_overwrite=self.zarr_writer_info.force_overwrite,
             )
             try:
                 writer = ZarrWriter(config)

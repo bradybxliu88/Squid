@@ -762,6 +762,15 @@ class MultiPointWorker:
             fov_index: The FOV index to start from (0-based)
         """
         self._start_fov_index = fov_index
+        # B1.5 / correction C4: derive Zarr allow_resume from _start_fov_index>0
+        # (the orchestrated resume path), NOT _resumed_from_checkpoint. This is
+        # the moment resume intent becomes known -- the ZarrWriterInfo was built
+        # in __init__ where the index was still 0. The worker and the parent-side
+        # JobRunner share this object by reference, and dispatch() pickles it into
+        # each SaveZarrJob, so mutating the flag here (before run() dispatches)
+        # propagates to every subsequent Zarr write.
+        if self._zarr_writer_info is not None:
+            self._zarr_writer_info.allow_resume = fov_index > 0
         self._log.info(f"Set start FOV index to {fov_index} for resume")
 
     # =========================================================================

@@ -42,6 +42,17 @@ def _get_tensorstore():
     return _tensorstore
 
 
+class RefuseToOverwriteError(RuntimeError):
+    """B1.5: raised when a resume would destroy data.
+
+    initialize() raises this when a prior store is already
+    acquisition_complete=True and force_overwrite is False; _save_zarr raises it
+    for the 6D-per-region layout (which cannot be resumed non-destructively).
+    Subclasses RuntimeError so existing broad ``except Exception`` handlers in
+    job_processing still surface it.
+    """
+
+
 # -----------------------------------------------------------------------------
 # Zarr path building utilities
 # -----------------------------------------------------------------------------
@@ -157,6 +168,9 @@ class ZarrAcquisitionConfig:
     compression: ZarrCompression = ZarrCompression.FAST
     is_hcs: bool = True  # Default to HCS (5D); non-HCS uses 6D with FOV dimension
     plate_name: str = "plate"
+    # B1.5 resume support (default False -> every normal run is unchanged).
+    allow_resume: bool = False  # Open an existing incomplete store with create=False (no delete_existing)
+    force_overwrite: bool = False  # Permit clobbering even a completed store (allow_resume path only)
 
     @property
     def ndim(self) -> int:
@@ -466,8 +480,20 @@ class ZarrWriter:
             return
 
         try:
-            ts = _get_tensorstore()
             config = self._config
+
+            # B1.5 resume preconditions (no tensorstore needed so they fail fast):
+            # read the prior on-disk _squid ledger and decide resume-existing vs
+            # refuse-completed vs fresh-create. resume_existing stays False on
+            # every normal run (allow_resume defaults False).
+            resume_existing = False
+            if config.allow_resume:
+                prior_squid = self._read_prior_squid(self._get_metadata_zarr_json_path())
+                if prior_squid is not None:
+                    self._check_resume_preconditions(prior_squid)
+                    resume_existing = True
+
+            ts = _get_tensorstore()
 
             # Build TensorStore spec
             os.makedirs(os.path.dirname(config.output_path), exist_ok=True)
@@ -531,24 +557,43 @@ class ZarrWriter:
                 f"compression={config.compression.value}"
             )
 
-            # Warn if overwriting existing data
-            if os.path.exists(config.output_path):
-                _log.warning(
-                    "Zarr v3 dataset path already exists and will be overwritten: %s",
-                    config.output_path,
-                )
-
             # Use asyncio only for the TensorStore open operation
-            async def _open():
-                return await ts.open(spec, create=True, delete_existing=True)
+            if resume_existing:
+                # B1.5: open the existing incomplete store NON-destructively
+                # (create=False, no delete_existing) so already-written chunks
+                # survive. Strip the 'metadata' key so TensorStore reads codecs
+                # from the on-disk zarr.json (immune to _def config drift between
+                # the original run and this resume). Geometry was already checked
+                # against the on-disk ledger in _check_resume_preconditions.
+                resume_spec = {k: v for k, v in spec.items() if k != "metadata"}
+
+                async def _open():
+                    return await ts.open(resume_spec, create=False)
+
+            else:
+                # Warn if overwriting existing data
+                if os.path.exists(config.output_path):
+                    _log.warning(
+                        "Zarr v3 dataset path already exists and will be overwritten: %s",
+                        config.output_path,
+                    )
+
+                async def _open():
+                    return await ts.open(spec, create=True, delete_existing=True)
 
             loop = self._get_loop()
             self._dataset = loop.run_until_complete(_open())
             self._initialized = True
             _log.info("Zarr v3 dataset initialized successfully")
 
-            # Write metadata synchronously (just file I/O)
-            self._write_zarr_metadata()
+            # On a preserved resume the on-disk zarr.json (ledger + progress) is
+            # authoritative -- rewriting it would reset acquisition_complete and
+            # drop fov_positions. Only (re)write metadata on the fresh-store path.
+            if resume_existing:
+                _log.info("Zarr resume: preserving on-disk metadata/ledger (not rewriting)")
+            else:
+                # Write metadata synchronously (just file I/O)
+                self._write_zarr_metadata()
         except Exception:
             # Clean up event loop if we created it during failed initialization
             self._cleanup_event_loop()
@@ -575,6 +620,48 @@ class ZarrWriter:
         if self._is_ome_ngff_array_path():
             return os.path.join(os.path.dirname(self._config.output_path), "zarr.json")
         return os.path.join(self._config.output_path, "zarr.json")
+
+    def _read_prior_squid(self, zarr_json_path: str) -> Optional[Dict[str, Any]]:
+        """B1.5: return the prior on-disk ``_squid`` attributes block, or None if
+        there is no readable prior store.
+
+        None means 'nothing to resume' -> the caller creates fresh (so a crash
+        during the very first init, before any frame is written, is recoverable).
+        """
+        if not os.path.exists(zarr_json_path):
+            return None
+        try:
+            with open(zarr_json_path, "r") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            _log.warning(f"Zarr resume: could not read prior metadata {zarr_json_path}: {e}")
+            return None
+        return (data.get("attributes") or {}).get("_squid")
+
+    def _check_resume_preconditions(self, prior_squid: Dict[str, Any]) -> None:
+        """B1.5: guard a resume against destroying/mismatching a prior store.
+
+        Raises RefuseToOverwriteError if the prior store already finished (and
+        force_overwrite is False), or RuntimeError on a shape/dtype mismatch.
+        Never opens tensorstore, so it fails fast and is unit-testable.
+        """
+        config = self._config
+        if prior_squid.get("acquisition_complete") and not config.force_overwrite:
+            raise RefuseToOverwriteError(
+                f"Refusing to overwrite a completed Zarr dataset on resume: {config.output_path}"
+            )
+        prior_shape = prior_squid.get("shape")
+        if prior_shape is not None and list(config.shape) != list(prior_shape):
+            raise RuntimeError(
+                f"Zarr resume shape mismatch for {config.output_path}: "
+                f"expected {list(config.shape)}, on-disk {list(prior_shape)}"
+            )
+        prior_dtype = prior_squid.get("dtype")
+        if prior_dtype is not None and str(config.dtype) != str(prior_dtype):
+            raise RuntimeError(
+                f"Zarr resume dtype mismatch for {config.output_path}: "
+                f"expected {config.dtype}, on-disk {prior_dtype}"
+            )
 
     def _write_zarr_metadata(self) -> None:
         """Write OME-NGFF 0.5 compliant metadata to zarr.json attributes."""
