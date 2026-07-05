@@ -319,6 +319,11 @@ class OrchestratorControlPanel(EventBusWidget):
         self._start_fov_index: int = 0
         self._run_single_round: bool = False
         self._last_progress: Optional[OrchestratorProgress] = None
+        # B1.2 resume-from-checkpoint discovery result (set by _load_protocol via
+        # _discover_checkpoint). None => no resumable run found under _base_path.
+        self._resume_run_folder: Optional[str] = None   # run folder that CONTAINS checkpoint.json
+        self._resume_checkpoint = None                  # ckpt.Checkpoint of the newest matching run
+        self._resume_version_mismatch: bool = False     # newest match had a differing protocol_version
         # Optional callable returning (is_ready: bool, unchecked_titles: list[str])
         # from the Pre-Run Checklist. Used to soft-gate Start (never hard-blocks).
         self._readiness_provider = None
@@ -535,6 +540,24 @@ class OrchestratorControlPanel(EventBusWidget):
         row3.addWidget(self._run_only_btn)
         row3.addStretch()
         layout.addLayout(row3)
+
+        # Row 4: one-click resume-from-checkpoint (B1.2). Distinct from the
+        # 'Start from round' spinbox above: that re-runs a chosen round of a
+        # FRESH experiment; this continues the *same* crashed run in place
+        # (base_path = the run folder, resume_from_checkpoint=True).
+        row4 = QHBoxLayout()
+        row4.setSpacing(6)
+        self._resume_ckpt_btn = QPushButton("Resume from checkpoint")
+        self._resume_ckpt_btn.setStyleSheet(BTN_STYLES["resume"])
+        self._resume_ckpt_btn.setEnabled(False)
+        self._resume_ckpt_btn.clicked.connect(self._on_resume_from_checkpoint_clicked)
+        self._resume_ckpt_btn.setToolTip(
+            "Continue the most recent crashed/paused run found in the output folder "
+            "(INDIVIDUAL_IMAGES only). Enabled after Load discovers a checkpoint.json."
+        )
+        row4.addWidget(self._resume_ckpt_btn)
+        row4.addStretch()
+        layout.addLayout(row4)
 
         return widget
 
@@ -1016,6 +1039,9 @@ class OrchestratorControlPanel(EventBusWidget):
                 self._round_spin.setValue(1)
                 self._start_from_btn.setEnabled(False)
                 self._run_only_btn.setEnabled(False)
+            # B1.2: discover a resumable run for THIS protocol under _base_path.
+            # Hard-match on protocol name (== controller's gate key), warn on version.
+            self._discover_checkpoint(protocol_obj.name, getattr(protocol_obj, "version", ""))
             self._update_stepper()
             _log.info(f"Protocol loaded: {protocol_path}")
 
@@ -1051,6 +1077,13 @@ class OrchestratorControlPanel(EventBusWidget):
             if hasattr(self, "_start_from_btn"):
                 self._start_from_btn.setEnabled(False)
                 self._run_only_btn.setEnabled(False)
+            # B1.2: clear any stale resume affordance from a prior successful load
+            self._resume_run_folder = None
+            self._resume_checkpoint = None
+            self._resume_version_mismatch = False
+            if hasattr(self, "_resume_ckpt_btn"):
+                self._resume_ckpt_btn.setEnabled(False)
+                self._resume_ckpt_btn.setText("Resume from checkpoint")
             self._update_stepper()
 
     def get_loaded_protocol_bundle(self) -> Optional[dict]:
@@ -1269,6 +1302,120 @@ class OrchestratorControlPanel(EventBusWidget):
         idx = max(0, self._round_spin.value() - 1)
         self.run_single_round(idx, 0, 0)
 
+    @staticmethod
+    def _individual_images_selected() -> bool:
+        """True iff the RUNTIME writer selection is INDIVIDUAL_IMAGES (C1).
+
+        Keys off _def.FILE_SAVING_OPTION -- the value that actually drives writer
+        selection under orchestrator control -- NOT any per-protocol ip.save_format.
+        Fails closed (returns False) if _def cannot be imported.
+        """
+        try:
+            import _def
+            return _def.FILE_SAVING_OPTION == _def.FileSavingOption.INDIVIDUAL_IMAGES
+        except Exception:
+            return False
+
+    def _discover_checkpoint(self, protocol_name: str, protocol_version: str) -> None:
+        """Scan immediate subdirs of _base_path for a resumable checkpoint.json.
+
+        Hard-filters on protocol_name; warns (does not exclude) on version diff;
+        picks the newest by created_at. Stashes run folder + Checkpoint for the
+        button label. Never raises.
+        """
+        from squid.backend.controllers.orchestrator import checkpoint as ckpt
+
+        self._resume_run_folder = None
+        self._resume_checkpoint = None
+        self._resume_version_mismatch = False
+        best = None
+        best_folder = None
+        best_mismatch = False
+        try:
+            base = self._base_path
+            if base and os.path.isdir(base):
+                for entry in os.scandir(base):
+                    if not entry.is_dir():
+                        continue
+                    try:
+                        cp = ckpt.load_checkpoint(entry.path)
+                    except Exception:
+                        continue  # corrupt/unreadable -> skip in discovery
+                    if cp is None or cp.protocol_name != protocol_name:
+                        continue
+                    if best is None or cp.created_at > best.created_at:
+                        best = cp
+                        best_folder = entry.path
+                        best_mismatch = cp.protocol_version != protocol_version
+        except Exception:
+            _log.debug("checkpoint discovery failed", exc_info=True)
+        self._resume_checkpoint = best
+        self._resume_run_folder = best_folder
+        self._resume_version_mismatch = best_mismatch
+        # Refresh label + enabled state (also re-checked by _update_button_states).
+        if hasattr(self, "_resume_ckpt_btn"):
+            if best is not None:
+                warn = " (version differs)" if best_mismatch else ""
+                self._resume_ckpt_btn.setText(
+                    f"Resume from checkpoint (Round {best.round_index + 1} / "
+                    f"FOV {best.imaging_fov_index}){warn}"
+                )
+            else:
+                self._resume_ckpt_btn.setText("Resume from checkpoint")
+            self._resume_ckpt_btn.setEnabled(
+                best is not None and self._individual_images_selected()
+            )
+
+    def _on_resume_from_checkpoint_clicked(self) -> None:
+        """One-click continue the discovered run, gated to INDIVIDUAL_IMAGES (C2)."""
+        if self._orchestrator is None or self._protocol_path is None:
+            _log.warning("Resume: no orchestrator/protocol")
+            return
+        if self._resume_run_folder is None or self._resume_checkpoint is None:
+            QMessageBox.warning(
+                self,
+                self.tr("No checkpoint"),
+                self.tr("No resumable checkpoint was found for this protocol in the output folder."),
+            )
+            return
+        # C2: authoritative runtime-writer gate at click time (option can change
+        # after Load). Only INDIVIDUAL_IMAGES supports resume in B1.2.
+        if not self._individual_images_selected():
+            self._resume_ckpt_btn.setEnabled(False)
+            QMessageBox.warning(
+                self,
+                self.tr("Resume not supported"),
+                self.tr(
+                    "Resume from checkpoint is only supported when the file-saving "
+                    "option is INDIVIDUAL_IMAGES.\nMULTI_PAGE_TIFF, OME_TIFF and "
+                    "ZARR_V3 runs cannot be resumed in this version."
+                ),
+            )
+            return
+        if self._resume_version_mismatch:
+            proceed = QMessageBox.question(
+                self,
+                self.tr("Protocol version differs"),
+                self.tr(
+                    "The checkpoint was written by a different protocol version.\n"
+                    "Resume anyway?"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if proceed != QMessageBox.StandardButton.Yes:
+                return
+        # Pass the RUN FOLDER as base_path (it contains checkpoint.json), NOT the
+        # parent output dir used by the fresh-run Start path.
+        success = self._orchestrator.start_experiment(
+            protocol_path=self._protocol_path,
+            base_path=self._resume_run_folder,
+            experiment_id=self._experiment_id or None,
+            resume_from_checkpoint=True,
+        )
+        if not success:
+            _log.error("Failed to resume experiment from checkpoint")
+
     # ========================================================================
     # Readiness soft-gate (Pre-Run Checklist)
     # ========================================================================
@@ -1357,6 +1504,16 @@ class OrchestratorControlPanel(EventBusWidget):
         if hasattr(self, "_start_from_btn"):
             self._start_from_btn.setEnabled(bool(can_start))
             self._run_only_btn.setEnabled(bool(can_start))
+        # B1.2 resume button: only in idle/terminal, only when a checkpoint was
+        # discovered AND the runtime writer is INDIVIDUAL_IMAGES (C1/C2). Note
+        # this does NOT require self._validated -- resume replays a saved run.
+        if hasattr(self, "_resume_ckpt_btn"):
+            can_resume = (
+                (is_idle or is_terminal)
+                and self._resume_run_folder is not None
+                and self._individual_images_selected()
+            )
+            self._resume_ckpt_btn.setEnabled(bool(can_resume))
         self._update_stepper()
 
     @staticmethod

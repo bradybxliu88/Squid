@@ -608,6 +608,13 @@ class OrchestratorController(StateMachine[OrchestratorState]):
             # Load checkpoint if resuming (base_path should be experiment folder)
             self._resume_checkpoint = None
             if resume_from_checkpoint:
+                # Validate base_path actually contains a checkpoint.json before
+                # attempting to load, so a wrong/parent folder gives a clear error.
+                expected = os.path.join(base_path, ckpt.CHECKPOINT_FILENAME)
+                if not os.path.isfile(expected):
+                    raise RuntimeError(
+                        f"Cannot resume: no {ckpt.CHECKPOINT_FILENAME} in {base_path}"
+                    )
                 try:
                     self._resume_checkpoint = ckpt.load_checkpoint(base_path)
                 except ckpt.CheckpointCorruptError as e:
@@ -616,14 +623,20 @@ class OrchestratorController(StateMachine[OrchestratorState]):
                     raise RuntimeError(f"Checkpoint corrupt in {base_path}: {e}") from e
                 if self._resume_checkpoint is None:
                     raise RuntimeError(f"No checkpoint found in {base_path}")
-                if (
-                    self._resume_checkpoint.protocol_name != self._protocol.name
-                    or self._resume_checkpoint.protocol_version != self._protocol.version
-                ):
+                # Protocol NAME must match (a genuinely different protocol cannot
+                # resume). A VERSION mismatch is only warned so a minor protocol
+                # bump does not block recovery of a crashed run.
+                if self._resume_checkpoint.protocol_name != self._protocol.name:
                     raise RuntimeError(
-                        "Checkpoint protocol mismatch: "
-                        f"checkpoint={self._resume_checkpoint.protocol_name}@{self._resume_checkpoint.protocol_version}, "
-                        f"loaded={self._protocol.name}@{self._protocol.version}"
+                        "Checkpoint protocol name mismatch: "
+                        f"checkpoint={self._resume_checkpoint.protocol_name!r}, "
+                        f"loaded={self._protocol.name!r}"
+                    )
+                if self._resume_checkpoint.protocol_version != self._protocol.version:
+                    _log.warning(
+                        "Checkpoint protocol version differs "
+                        f"(checkpoint={self._resume_checkpoint.protocol_version}, "
+                        f"loaded={self._protocol.version}); resuming anyway."
                     )
 
             # Create cancel token
