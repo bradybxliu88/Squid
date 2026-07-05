@@ -57,6 +57,11 @@ class RunLogger:
 
     def start(self) -> None:
         os.makedirs(self._experiment_path, exist_ok=True)
+        # Resume continuity (B1.3): if this experiment_path already holds
+        # step/fov metrics or a warning summary from a pre-crash run, load
+        # them so the truncating "w" CSV writes and warning_summary.json
+        # extend pre-crash history instead of erasing it.
+        self._preload_existing_artifacts()
         for event_type, handler in (
             (OrchestratorStateChanged, self._on_event),
             (OrchestratorProgress, self._on_event),
@@ -73,6 +78,52 @@ class RunLogger:
         ):
             self._event_bus.subscribe(event_type, handler)
             self._subscriptions.append((event_type, handler))
+
+    def _preload_existing_artifacts(self) -> None:
+        """Load metrics/warnings from a prior (pre-crash) run of this same
+        experiment_path so the truncating ``"w"`` CSV writes and the warning
+        summary continue pre-crash history instead of erasing it (B1.3).
+
+        No-op unless the artifacts already exist -- i.e. a resume into an
+        existing experiment folder -- so a fresh run is unaffected.
+        """
+        self._step_rows = self._read_existing_csv(self._step_csv_path, self._step_rows)
+        self._fov_rows = self._read_existing_csv(self._fov_csv_path, self._fov_rows)
+        self._preload_warning_counts()
+
+    @staticmethod
+    def _read_existing_csv(path: str, current: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if current or not os.path.exists(path):
+            return current
+        try:
+            with open(path, "r", encoding="utf-8", newline="") as handle:
+                rows = [dict(row) for row in csv.DictReader(handle)]
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning("Failed preloading %s for resume continuity: %s", path, exc)
+            return current
+        for row in rows:
+            for int_key in ("round_index", "step_index", "attempt", "fov_index", "time_point"):
+                if row.get(int_key) not in ("", None):
+                    try:
+                        row[int_key] = int(row[int_key])
+                    except (TypeError, ValueError):
+                        pass
+        return rows
+
+    def _preload_warning_counts(self) -> None:
+        if self._warning_counts or not os.path.exists(self._warning_summary_path):
+            return
+        try:
+            with open(self._warning_summary_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning("Failed preloading warning summary for resume: %s", exc)
+            return
+        for key, count in (payload.get("warning_counts") or {}).items():
+            category, _, severity = key.partition(":")
+            self._warning_counts[(category, severity)] += int(count)
+        for category, rounds in (payload.get("affected_rounds") or {}).items():
+            self._warning_rounds[category].update(rounds)
 
     def stop(self) -> None:
         for event_type, handler in self._subscriptions:

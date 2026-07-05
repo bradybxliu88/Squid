@@ -1221,6 +1221,13 @@ class OrchestratorController(StateMachine[OrchestratorState]):
             if self._progress.current_round is None:
                 return
 
+            # completed_* totals live only on the runner (ETA scaling factor);
+            # retry/intervention/subsystem are mirrored on _progress. Persist all
+            # five (B1.3) so a resumed run restores continuous ETA/overhead/QC.
+            runner = self._runner
+            completed_est, completed_act = (
+                runner.get_completed_totals() if runner is not None else (0.0, 0.0)
+            )
             checkpoint = ckpt.create_checkpoint(
                 protocol_name=self._protocol.name,
                 protocol_version=self._protocol.version,
@@ -1233,6 +1240,11 @@ class OrchestratorController(StateMachine[OrchestratorState]):
                 elapsed_seconds=self._progress.elapsed_seconds,
                 paused_seconds=self._progress.paused_seconds,
                 effective_run_seconds=self._progress.effective_run_seconds,
+                retry_overhead_seconds=self._progress.retry_overhead_seconds,
+                intervention_overhead_seconds=self._progress.intervention_overhead_seconds,
+                subsystem_seconds=dict(self._progress.subsystem_seconds),
+                completed_estimated_total=completed_est,
+                completed_actual_total=completed_act,
             )
 
         ckpt.save_checkpoint(checkpoint, self._experiment_path)

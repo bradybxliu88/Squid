@@ -287,6 +287,15 @@ class ExperimentRunner:
             "subsystem_seconds": dict(self._subsystem_durations),
         }
 
+    def get_completed_totals(self) -> tuple[float, float]:
+        """Return (completed_estimated_total, completed_actual_total).
+
+        Read by the controller's checkpoint save so a resumed run restores the
+        actual/estimated scaling factor used by compute_eta. Two plain float
+        reads; called on the worker thread that also writes them.
+        """
+        return self._completed_estimated_total, self._completed_actual_total
+
     def snapshot(self, state: "OrchestratorState") -> "RunState":
         """Produce an immutable RunState from current mutable state.
 
@@ -436,6 +445,17 @@ class ExperimentRunner:
             resume_step_index = resume_checkpoint.step_index
             resume_imaging_fov = resume_checkpoint.imaging_fov_index
             self._total_paused_seconds = max(0.0, resume_checkpoint.paused_seconds)
+            # Reseed run telemetry so overhead accounting and the ETA scaling
+            # factor stay continuous across the resume (B1.3). Safe to write
+            # without _progress_lock here: the worker round loop (the sole
+            # writer of these accumulators) has not started yet.
+            self._retry_overhead_seconds = max(0.0, resume_checkpoint.retry_overhead_seconds)
+            self._intervention_overhead_seconds = max(
+                0.0, resume_checkpoint.intervention_overhead_seconds
+            )
+            self._subsystem_durations = dict(resume_checkpoint.subsystem_seconds)
+            self._completed_estimated_total = max(0.0, resume_checkpoint.completed_estimated_total)
+            self._completed_actual_total = max(0.0, resume_checkpoint.completed_actual_total)
             with self._progress_lock:
                 self._progress.current_attempt = max(1, resume_checkpoint.current_attempt)
                 self._progress.elapsed_seconds = max(0.0, resume_checkpoint.elapsed_seconds)
@@ -444,6 +464,9 @@ class ExperimentRunner:
                     0.0,
                     resume_checkpoint.effective_run_seconds,
                 )
+                self._progress.retry_overhead_seconds = self._retry_overhead_seconds
+                self._progress.intervention_overhead_seconds = self._intervention_overhead_seconds
+                self._progress.subsystem_seconds = dict(self._subsystem_durations)
 
         # Determine end round for run_single_round mode
         end_round = len(self._protocol.rounds)

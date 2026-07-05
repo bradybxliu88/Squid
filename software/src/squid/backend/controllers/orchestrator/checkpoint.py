@@ -62,6 +62,11 @@ def save_checkpoint(checkpoint: Checkpoint, experiment_path: str) -> str:
         "elapsed_seconds": checkpoint.elapsed_seconds,
         "paused_seconds": checkpoint.paused_seconds,
         "effective_run_seconds": checkpoint.effective_run_seconds,
+        "retry_overhead_seconds": checkpoint.retry_overhead_seconds,
+        "intervention_overhead_seconds": checkpoint.intervention_overhead_seconds,
+        "subsystem_seconds": checkpoint.subsystem_seconds,
+        "completed_estimated_total": checkpoint.completed_estimated_total,
+        "completed_actual_total": checkpoint.completed_actual_total,
     }
 
     # Atomic write + a .bak of the previous good checkpoint, so a crash mid-write
@@ -91,6 +96,11 @@ def _checkpoint_from_dict(data: dict) -> Checkpoint:
         elapsed_seconds=data.get("elapsed_seconds", 0.0),
         paused_seconds=data.get("paused_seconds", 0.0),
         effective_run_seconds=data.get("effective_run_seconds", 0.0),
+        retry_overhead_seconds=data.get("retry_overhead_seconds", 0.0),
+        intervention_overhead_seconds=data.get("intervention_overhead_seconds", 0.0),
+        subsystem_seconds=data.get("subsystem_seconds", {}),
+        completed_estimated_total=data.get("completed_estimated_total", 0.0),
+        completed_actual_total=data.get("completed_actual_total", 0.0),
     )
 
 
@@ -192,6 +202,11 @@ def create_checkpoint(
     elapsed_seconds: float = 0.0,
     paused_seconds: float = 0.0,
     effective_run_seconds: float = 0.0,
+    retry_overhead_seconds: float = 0.0,
+    intervention_overhead_seconds: float = 0.0,
+    subsystem_seconds: Optional[dict] = None,
+    completed_estimated_total: float = 0.0,
+    completed_actual_total: float = 0.0,
 ) -> Checkpoint:
     """Create a new checkpoint object.
 
@@ -225,6 +240,11 @@ def create_checkpoint(
         elapsed_seconds=elapsed_seconds,
         paused_seconds=paused_seconds,
         effective_run_seconds=effective_run_seconds,
+        retry_overhead_seconds=retry_overhead_seconds,
+        intervention_overhead_seconds=intervention_overhead_seconds,
+        subsystem_seconds=subsystem_seconds or {},
+        completed_estimated_total=completed_estimated_total,
+        completed_actual_total=completed_actual_total,
     )
 
 

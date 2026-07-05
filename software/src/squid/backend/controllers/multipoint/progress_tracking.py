@@ -447,6 +447,8 @@ class CoordinateTracker:
         self._use_piezo = use_piezo
         self._coordinates_df: Optional[pd.DataFrame] = None
         self._last_z_positions: Dict[Tuple[str, int], float] = {}
+        # B1.3(2): number of _coordinates_df rows already flushed to coordinates.csv
+        self._flush_cursor: int = 0
 
     @property
     def dataframe(self) -> Optional[pd.DataFrame]:
@@ -459,6 +461,7 @@ class CoordinateTracker:
         piezo_column = ["z_piezo (um)"] if self._use_piezo else []
         columns = ["region", "fov", "fov_id"] + base_columns + piezo_column
         self._coordinates_df = pd.DataFrame(columns=columns)
+        self._flush_cursor = 0
 
     def record(
         self,
@@ -562,6 +565,39 @@ class CoordinateTracker:
     def clear_last_z_positions(self) -> None:
         """Clear all recorded last z positions."""
         self._last_z_positions.clear()
+
+    def preload_from_csv(self, path: str) -> None:
+        """Resume support: load previously-persisted coordinate rows so the
+        authoritative end-of-timepoint mode='w' rewrite reconciles instead of
+        clobbering pre-crash rows (CORRECTION C3). Marks loaded rows as already
+        flushed so append_new_since_cursor() will not re-append them.
+        """
+        if not os.path.exists(path):
+            return
+        try:
+            df = pd.read_csv(path)
+        except Exception as e:  # empty/corrupt partial file -> start clean
+            _log.warning(f"Could not preload coordinates from {path}: {e}")
+            return
+        self._coordinates_df = df
+        self._flush_cursor = len(df)
+        _log.info(f"Preloaded {len(df)} coordinate row(s) from {path} for resume")
+
+    def append_new_since_cursor(self, path: str) -> None:
+        """Durably append rows recorded since the last flush (mode='a').
+
+        Cheap and idempotent: no-ops when there are no new rows. Header is
+        written only when the target file does not yet exist.
+        """
+        if self._coordinates_df is None:
+            return
+        n = len(self._coordinates_df)
+        if n <= self._flush_cursor:
+            return
+        new_rows = self._coordinates_df.iloc[self._flush_cursor:]
+        header = not os.path.exists(path)
+        new_rows.to_csv(path, mode="a", index=False, header=header)
+        self._flush_cursor = n
 
     def save(self, path: str) -> None:
         """

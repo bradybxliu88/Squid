@@ -241,6 +241,15 @@ class Checkpoint:
     paused_seconds: float = 0.0
     effective_run_seconds: float = 0.0
 
+    # Run telemetry carried across a resume (B1.3) so ETA / overhead / QC stay
+    # continuous. All optional with 0.0/{} defaults -> old checkpoints and old
+    # callers construct a Checkpoint exactly as before.
+    retry_overhead_seconds: float = 0.0
+    intervention_overhead_seconds: float = 0.0
+    subsystem_seconds: Dict[str, float] = field(default_factory=dict)
+    completed_estimated_total: float = 0.0
+    completed_actual_total: float = 0.0
+
 
 class CheckpointCorruptError(Exception):
     """Raised when a checkpoint file exists but cannot be parsed.

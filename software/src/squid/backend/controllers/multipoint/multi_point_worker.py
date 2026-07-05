@@ -1474,6 +1474,17 @@ class MultiPointWorker:
 
             # create a dataframe to save coordinates
             self.initialize_coordinates_dataframe()
+            # B1.3(2)/C3: on resume, preload rows already in coordinates.csv so
+            # the end-of-timepoint mode='w' rewrite reconciles instead of
+            # clobbering pre-crash rows. Fresh (non-resume) timepoints have no
+            # coordinates.csv yet, so preload_from_csv() no-ops. Must run AFTER
+            # initialize_coordinates_dataframe() (which resets the flush cursor)
+            # and BEFORE run_coordinate_acquisition() clears _start_fov_index.
+            if self._start_fov_index > 0 or self._resumed_from_checkpoint:
+                self._coordinate_tracker.preload_from_csv(
+                    os.path.join(current_path, "coordinates.csv")
+                )
+                self.coordinates_pd = self._coordinate_tracker._coordinates_df
 
             # init z parameters, z range
             self.initialize_z_stack()
@@ -1886,6 +1897,15 @@ class MultiPointWorker:
 
                 # Publish FOV completed event
                 self._publish_fov_completed(task)
+
+                # B1.3(2): durably append this FOV's coordinate rows so a crash
+                # mid-timepoint leaves coordinates.csv covering all completed
+                # FOVs. Cheap/idempotent: writes only rows recorded since the
+                # last flush. The end-of-timepoint mode='w' rewrite still emits
+                # the authoritative full file.
+                self._coordinate_tracker.append_new_since_cursor(
+                    os.path.join(current_path, "coordinates.csv")
+                )
 
                 # Save checkpoint periodically
                 self._fov_since_checkpoint += 1

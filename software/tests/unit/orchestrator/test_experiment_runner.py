@@ -574,4 +574,41 @@ def test_l3_pause_step_boundary_stress_no_lost_pause():
     final = runner.get_timing_snapshot()["paused_seconds"]
     assert final >= 0
     assert math.isfinite(runner._total_paused_seconds)
+
+
+def test_get_completed_totals_reads_accumulators():
+    """B1.3: the getter surfaces the runner-private ETA scaling accumulators."""
+    runner = _make_runner()
+    runner._completed_estimated_total = 42.0
+    runner._completed_actual_total = 63.0
+    assert runner.get_completed_totals() == (42.0, 63.0)
+
+
+def test_run_reseeds_telemetry_from_checkpoint():
+    """B1.3: resuming reseeds overhead/subsystem/ETA-scaling accumulators from
+    the checkpoint so post-resume telemetry stays continuous. round_index is set
+    one past the single round so the round loop is empty (no imaging executor)
+    and the reseed is observed in isolation."""
+    runner = _make_runner()
+    resume = Checkpoint(
+        protocol_name="test_protocol",
+        protocol_version="1",
+        experiment_id="exp1",
+        experiment_path="/tmp",
+        round_index=1,  # past the one round -> empty loop
+        retry_overhead_seconds=3.0,
+        intervention_overhead_seconds=5.0,
+        subsystem_seconds={"imaging": 10.0},
+        completed_estimated_total=100.0,
+        completed_actual_total=150.0,
+    )
+
+    runner.run(resume_checkpoint=resume)
+
+    assert runner._retry_overhead_seconds == 3.0
+    assert runner._intervention_overhead_seconds == 5.0
+    assert runner._subsystem_durations == {"imaging": 10.0}
+    assert runner.get_completed_totals() == (100.0, 150.0)
+    # ETA scaling factor is now the reseeded actual/estimated ratio (1.5).
+    assert runner._completed_actual_total / runner._completed_estimated_total == 1.5
     assert runner._total_paused_seconds >= 0
