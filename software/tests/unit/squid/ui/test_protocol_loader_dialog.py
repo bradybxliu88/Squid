@@ -261,3 +261,31 @@ def test_panel_refresh_recents_picks_up_new_entries(qtbot):
         panel.refresh_recents()
     datas = [panel._recent_combo.itemData(i) for i in range(panel._recent_combo.count())]
     assert "/x/new_protocol.yaml" in datas
+
+
+def test_panel_load_bundle_from_folder_loads_protocol(qtbot, tmp_path):
+    (tmp_path / "fov_positions.csv").write_text("region,x (mm),y (mm)\n5,1.0,2.0\n")
+    (tmp_path / "imaging_4ch.yaml").write_text("channels: [BF]\n")
+    (tmp_path / "protocol.yaml").write_text(
+        "\n".join(
+            [
+                "name: Bundle Load",
+                'version: "3.0"',
+                "output_directory: outputs",
+                "resources:",
+                "  fov_file: fov_positions.csv",
+                "rounds:",
+                "  - name: Round 1",
+                "    steps:",
+                "      - step_type: imaging",
+                "        protocol: imaging_4ch.yaml",
+            ]
+        )
+    )
+
+    panel = ProtocolLoaderPanel()
+    qtbot.addWidget(panel)
+    assert panel.load_bundle_from_folder(str(tmp_path)) is True
+    assert panel._current_protocol is not None
+    assert panel._current_protocol.name == "Bundle Load"
+    assert panel.get_protocol_path() == str(tmp_path / "protocol.yaml")

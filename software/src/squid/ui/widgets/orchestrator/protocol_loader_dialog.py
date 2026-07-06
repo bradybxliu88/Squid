@@ -27,6 +27,11 @@ from PyQt5.QtWidgets import (
 
 from squid.core.events import ClearScanCoordinatesCommand, LoadScanCoordinatesCommand
 from squid.core.protocol import ExperimentProtocol, ProtocolLoader, ProtocolValidationError
+from squid.ui.widgets.orchestrator.run_bundle import (
+    dest_within_target,
+    find_bundle_protocols,
+    plan_bundle_copy,
+)
 
 import squid.core.logging
 
@@ -159,6 +164,26 @@ class ProtocolLoaderPanel(QWidget):
         file_layout.addWidget(browse_btn)
 
         layout.addWidget(file_group)
+
+        # Run-bundle: load a whole portable folder, or save the loaded protocol +
+        # its resource files into one.
+        bundle_row = QHBoxLayout()
+        load_bundle_btn = QPushButton("Load Bundle…")
+        load_bundle_btn.setToolTip(
+            "Load a run-bundle folder — finds the experiment protocol inside "
+            "(the YAML with a 'rounds:' section)."
+        )
+        load_bundle_btn.clicked.connect(self._on_load_bundle_clicked)
+        bundle_row.addWidget(load_bundle_btn)
+        self._save_bundle_btn = QPushButton("Save Run Bundle…")
+        self._save_bundle_btn.setToolTip(
+            "Copy the loaded protocol and every resource file it references "
+            "(fluidics, imaging, FOV positions) into one portable folder."
+        )
+        self._save_bundle_btn.clicked.connect(self._on_save_bundle_clicked)
+        bundle_row.addWidget(self._save_bundle_btn)
+        bundle_row.addStretch()
+        layout.addLayout(bundle_row)
 
         # Protocol preview
         preview_group = QGroupBox("Protocol Preview")
@@ -304,6 +329,139 @@ class ProtocolLoaderPanel(QWidget):
         if path:
             self._path_edit.setText(path)
             self._load_protocol(path)
+
+    def _on_load_bundle_clicked(self) -> None:
+        """Pick a run-bundle folder and load the experiment protocol inside it."""
+        folder = QFileDialog.getExistingDirectory(self, "Select Run-Bundle Folder", "")
+        if folder:
+            self.load_bundle_from_folder(folder)
+
+    def load_bundle_from_folder(self, folder: str) -> bool:
+        """Find and load the experiment protocol inside a run-bundle folder.
+        Returns True if a protocol was found and loaded."""
+        protos = find_bundle_protocols(folder)
+        if not protos:
+            QMessageBox.warning(
+                self,
+                "Load Run Bundle",
+                "No experiment protocol was found in that folder.\n\n"
+                "A run bundle must contain a YAML file with a 'rounds:' section.",
+            )
+            return False
+        proto = protos[0]
+        if len(protos) > 1:
+            # Ambiguous — load the first (alphabetical) but say so; the operator
+            # can Browse to the exact file if it's the wrong one.
+            QMessageBox.warning(
+                self,
+                "Load Run Bundle",
+                f"This folder contains {len(protos)} experiment protocols. "
+                f"Loading:\n  {Path(proto).name}\n\n"
+                "If that's not the one you want, use Browse to pick it.",
+            )
+        self._path_edit.setText(proto)
+        self._load_protocol(proto)
+        return True
+
+    def _on_save_bundle_clicked(self) -> None:
+        """Copy the loaded protocol + every resource file it references into one
+        portable folder chosen by the operator."""
+        protocol_path = self._path_edit.text().strip()
+        if self._current_protocol is None or not protocol_path:
+            QMessageBox.information(
+                self, "Save Run Bundle", "Load a protocol first, then save it as a bundle."
+            )
+            return
+
+        target = QFileDialog.getExistingDirectory(
+            self, "Choose a folder for the run bundle", ""
+        )
+        if not target:
+            return
+
+        try:
+            plan = plan_bundle_copy(protocol_path, target)
+        except Exception as exc:  # unreadable/invalid protocol YAML
+            QMessageBox.warning(
+                self, "Save Run Bundle", f"Could not read the protocol:\n\n{exc}"
+            )
+            return
+
+        if plan["same_dir"]:
+            QMessageBox.information(
+                self,
+                "Save Run Bundle",
+                "The bundle already lives in that folder — choose a different one.",
+            )
+            return
+
+        # Confirm before overwriting anything already in the chosen folder.
+        existing = plan["existing"]
+        if existing:
+            shown = "\n".join(f"  • {Path(p).name}" for p in existing[:12])
+            more = f"\n  … and {len(existing) - 12} more" if len(existing) > 12 else ""
+            reply = QMessageBox.question(
+                self,
+                "Save Run Bundle",
+                f"{len(existing)} file(s) already in that folder will be OVERWRITTEN:\n"
+                f"{shown}{more}\n\nOverwrite?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        import os
+        import shutil
+
+        copied = 0
+        errors: List[str] = []
+        for src, dest in [plan["protocol"], *plan["files"]]:
+            try:
+                Path(dest).parent.mkdir(parents=True, exist_ok=True)
+                # Never follow a pre-existing symlink out of the bundle folder:
+                # copy2 opens the dest for writing and the OS would follow the
+                # link, clobbering an arbitrary file OUTSIDE target. Drop the
+                # link first, then verify the real parent stays inside target
+                # (guards a symlinked parent dir too).
+                if os.path.islink(dest):
+                    os.unlink(dest)
+                if not dest_within_target(target, dest):
+                    errors.append(
+                        f"{Path(dest).name}: destination resolves outside the "
+                        f"bundle folder (symlink?) — skipped"
+                    )
+                    continue
+                shutil.copy2(src, dest)
+                copied += 1
+            except Exception as exc:
+                errors.append(f"{Path(src).name}: {exc}")
+
+        lines = [f"Copied {copied} file(s) to:\n{target}"]
+        if plan["missing"]:
+            lines.append(
+                "\nReferenced but not found (not copied):\n"
+                + "\n".join(f"  • {m}" for m in plan["missing"])
+            )
+        if plan["external"]:
+            lines.append(
+                "\nReferenced by absolute or '..' path — copied into the bundle by "
+                "name, but the protocol still points at the original location, so "
+                "the bundle is not fully self-contained:\n"
+                + "\n".join(f"  • {m}" for m in plan["external"])
+            )
+        if plan["collisions"]:
+            lines.append(
+                "\nSkipped — the destination name collides with another bundled "
+                "file (NOT copied, to avoid clobbering it):\n"
+                + "\n".join(f"  • {m}" for m in plan["collisions"])
+            )
+        if errors:
+            lines.append("\nErrors:\n" + "\n".join(f"  • {e}" for e in errors))
+
+        problems = errors or plan["missing"] or plan["collisions"] or plan["external"]
+        icon = QMessageBox.warning if problems else QMessageBox.information
+        icon(self, "Save Run Bundle", "\n".join(lines))
 
     def _on_output_browse_clicked(self) -> None:
         """Handle output directory browse."""
