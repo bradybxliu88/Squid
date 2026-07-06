@@ -491,7 +491,11 @@ class ZarrWriter:
                 prior_squid = self._read_prior_squid(self._get_metadata_zarr_json_path())
                 if prior_squid is not None:
                     self._check_resume_preconditions(prior_squid)
-                    resume_existing = True
+                    # Only continue an INCOMPLETE store non-destructively. A
+                    # completed store that reached here did so via force_overwrite
+                    # (otherwise _check_resume_preconditions raised) -> clobber it
+                    # with a fresh create rather than reopen it.
+                    resume_existing = not bool(prior_squid.get("acquisition_complete"))
 
             ts = _get_tensorstore()
 
