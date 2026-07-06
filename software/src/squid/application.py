@@ -1242,6 +1242,16 @@ class ApplicationContext:
         except Exception:
             _def = None  # type: ignore[assignment]
 
+        # Laser safety FIRST: force every laser off before the (slow) Z-retract and
+        # the rest of teardown, so the beam is extinguished the instant shutdown
+        # begins. The Teensy latches its last state and is not reset on serial
+        # close, so without this an active laser is left emitting after the app
+        # exits. Best-effort — turn_off_all_lasers never raises.
+        try:
+            self._microscope.low_level_drivers.microcontroller.turn_off_all_lasers()
+        except Exception:
+            self._log.exception("Failed to force all lasers off during shutdown")
+
         stage_service = self._services.get("stage")
         if stage_service is not None:
             try:

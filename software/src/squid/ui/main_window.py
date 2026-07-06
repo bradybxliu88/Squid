@@ -2078,60 +2078,85 @@ class HighContentScreeningGui(QMainWindow):
                 widget.setEnabled(enabled)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if not getattr(self, "_skip_close_confirmation", False):
-            reply = QMessageBox.question(
-                self,
-                "Confirm Exit",
-                "Are you sure you want to exit the software?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply == QMessageBox.No:
-                event.ignore()
-                return
-
-        if self._subscriptions and self._ui_event_bus is not None:
-            auto_unsubscribe(self._subscriptions, self._ui_event_bus)
-            self._subscriptions.clear()
-
-        # Disconnect warning/error widget logging handler
-        self._disconnect_warning_handler()
-
-        # UI publishes commands only; hardware cleanup is handled by ApplicationContext.shutdown().
-        self._ui_event_bus.publish(StopLiveCommand())
-
-        if self._feature_flags.is_enabled("SUPPORT_LASER_AUTOFOCUS") and self.imageDisplayWindow_focus is not None:
+        # The confirm dialog must also be guarded: if it raises, the exception
+        # would escape closeEvent (a C++ virtual override) and abort the process
+        # via qFatal, skipping context.shutdown() (laser-off + fluidics empty).
+        # On any dialog failure we proceed to close — safer than staying open with
+        # lasers on, or aborting.
+        try:
+            if not getattr(self, "_skip_close_confirmation", False):
+                reply = QMessageBox.question(
+                    self,
+                    "Confirm Exit",
+                    "Are you sure you want to exit the software?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply == QMessageBox.No:
+                    event.ignore()
+                    return
+        except Exception:
             try:
-                self.imageDisplayWindow_focus.close()
+                self.log.exception("Close-confirm dialog failed; proceeding to close")
             except Exception:
                 pass
 
-        # Clean up NDViewer resources (file handles, timers)
-        if getattr(self, "ndviewerTab", None) is not None:
-            try:
-                self.ndviewerTab.cleanup()
-            except Exception:
-                self.log.exception("Error closing NDViewer tab during shutdown")
+        # SAFETY-CRITICAL: everything below is best-effort UI teardown and MUST
+        # NOT raise out of closeEvent. On PyQt an unhandled exception from a C++
+        # virtual override (closeEvent) aborts the process (qFatal) — which would
+        # skip main_hcs's `finally: context.shutdown()`, and with it the laser
+        # force-off and the fluidics empty-to-waste. So we guard the whole body
+        # and ALWAYS accept() the close, so the event loop returns and hardware
+        # cleanup runs.
+        try:
+            if self._subscriptions and self._ui_event_bus is not None:
+                auto_unsubscribe(self._subscriptions, self._ui_event_bus)
+                self._subscriptions.clear()
 
-        # Close napari viewers to prevent vispy/OpenGL thread hangs on exit
-        for attr in ("napariLiveWidget", "napariMultiChannelWidget",
-                     "napariMosaicDisplayWidget", "napariPlateViewWidget"):
-            widget = getattr(self, attr, None)
-            if widget is not None and hasattr(widget, "viewer"):
+            # Disconnect warning/error widget logging handler
+            self._disconnect_warning_handler()
+
+            # UI publishes commands only; hardware cleanup is handled by ApplicationContext.shutdown().
+            self._ui_event_bus.publish(StopLiveCommand())
+
+            if self._feature_flags.is_enabled("SUPPORT_LASER_AUTOFOCUS") and self.imageDisplayWindow_focus is not None:
                 try:
-                    widget.viewer.close()
+                    self.imageDisplayWindow_focus.close()
                 except Exception:
                     pass
 
-        try:
-            self.imageDisplay.close()
+            # Clean up NDViewer resources (file handles, timers)
+            if getattr(self, "ndviewerTab", None) is not None:
+                try:
+                    self.ndviewerTab.cleanup()
+                except Exception:
+                    self.log.exception("Error closing NDViewer tab during shutdown")
+
+            # Close napari viewers to prevent vispy/OpenGL thread hangs on exit
+            for attr in ("napariLiveWidget", "napariMultiChannelWidget",
+                         "napariMosaicDisplayWidget", "napariPlateViewWidget"):
+                widget = getattr(self, attr, None)
+                if widget is not None and hasattr(widget, "viewer"):
+                    try:
+                        widget.viewer.close()
+                    except Exception:
+                        pass
+
+            try:
+                self.imageDisplay.close()
+            except Exception:
+                pass
+
+            # Save camera settings for next session
+            try:
+                save_camera_settings(self.camera)
+            except Exception as e:
+                self.log.warning(f"Could not save camera settings: {e}")
         except Exception:
-            pass
-
-        # Save camera settings for next session
-        try:
-            save_camera_settings(self.camera)
-        except Exception as e:
-            self.log.warning(f"Could not save camera settings: {e}")
-
-        event.accept()
+            try:
+                self.log.exception("Error during window-close teardown (continuing to close)")
+            except Exception:
+                pass
+        finally:
+            # Must always run: lets app.exec_() return so hardware cleanup fires.
+            event.accept()

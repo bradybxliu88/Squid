@@ -15,6 +15,7 @@ from _def import (
     CMD_EXECUTION_STATUS,
     CMD_SET,
     HOME_OR_ZERO,
+    ILLUMINATION_CODE,
     ILLUMINATION_INTENSITY_FACTOR,
     ILLUMINATION_TIMEOUT_S,
     MAX_ACCELERATION_W_mm,
@@ -197,6 +198,11 @@ class Microcontroller:
         self._cmd_id_mcu = None  # command id of mcu's last received command
         self._cmd_execution_status = None
         self.mcu_cmd_execution_in_progress = False
+        # When True, send_command does NOT ask the serial layer to reconnect on a
+        # failed write. Used by the laser-safety shutoff so that a disconnected
+        # Teensy fails fast instead of triggering a multi-second reconnect storm
+        # per command (which would hang shutdown). See turn_off_all_lasers.
+        self._suppress_reconnect = False
 
         # This is a sentinel/watchdog of sorts.  Every time we receive a valid packet from the micro, we update this.
         # The micro should be sending packets once very ~10 ms, so if we go much longer than that without something
@@ -271,6 +277,16 @@ class Microcontroller:
             self.wait_till_operation_is_completed()
             self.log.info(f"Illumination timeout configured: {ILLUMINATION_TIMEOUT_S}s")
 
+        # Self-heal: the Teensy is not reset when we (re)open the serial port, so
+        # a laser left latched on by a previous session — or by a crash — is still
+        # emitting right now. Force every laser off on startup so launching the
+        # software always brings the instrument to a known dark state. (wait=False:
+        # the commands are written synchronously; no need to block construction.)
+        try:
+            self.turn_off_all_lasers(wait=False)
+        except Exception:
+            self.log.exception("Failed to force lasers off during microcontroller init")
+
     def _warn_if_reads_stale(self) -> None:
         # Skip this warning in simulation - the simulated serial doesn't behave the same
         if self._is_simulated:
@@ -287,8 +303,19 @@ class Microcontroller:
                 )
 
     def close(self) -> None:
+        # Last-resort laser safety: force every laser off before we tear down the
+        # link. This runs while the read thread is still alive (so the commands
+        # can be acked) and covers ANY path that closes the microcontroller, even
+        # ones that bypass the application-level shutdown. Never raises.
+        try:
+            self.turn_off_all_lasers(wait=True)
+        except Exception:
+            self.log.exception("Failed to force lasers off in Microcontroller.close()")
         self.terminate_reading_received_packet_thread = True
-        self.thread_read_received_packet.join()
+        # Bounded join: the read thread is a daemon, and if the Teensy dropped it
+        # may be mid-reconnect-backoff and slow to see the terminate flag. Don't
+        # let that hang shutdown indefinitely.
+        self.thread_read_received_packet.join(timeout=5.0)
         self._serial.close()
 
     def add_joystick_button_listener(self, listener: Callable[[bool], None]) -> None:
@@ -1007,6 +1034,82 @@ class Microcontroller:
     def turn_off_AF_laser(self) -> None:
         self.set_pin_level(MCU_PINS.AF_LASER, 0)
 
+    # Source codes for the five excitation-laser TTL ports (single-port firmware).
+    _EXCITATION_ILLUMINATION_SOURCES = (
+        ILLUMINATION_CODE.ILLUMINATION_D1,  # 405 nm
+        ILLUMINATION_CODE.ILLUMINATION_D2,  # 488 nm
+        ILLUMINATION_CODE.ILLUMINATION_D3,  # 561 nm
+        ILLUMINATION_CODE.ILLUMINATION_D4,  # 638 nm (red)
+        ILLUMINATION_CODE.ILLUMINATION_D5,  # 730 nm
+    )
+
+    def turn_off_all_lasers(self, wait: bool = True) -> bool:
+        """Force EVERY laser OFF: the laser-autofocus diode (Teensy pin 15) and
+        all five excitation-laser TTL ports, on both single-port and multi-port
+        firmware.
+
+        Safety belt-and-suspenders. The Teensy latches its last-commanded GPIO
+        and port state and is NOT reset when the USB serial port opens or closes,
+        so a laser left on stays on even after the control software exits. Driving
+        them all low on init (self-heal a previously-latched beam), on shutdown,
+        and on close makes that state recoverable and prevents it on a clean exit.
+
+        Best-effort and must not raise: each command is guarded so a single
+        failure cannot stop the rest, and the whole thing is safe to call at any
+        time (idempotent). Reconnect is suppressed for the duration so a
+        disconnected Teensy fails fast instead of triggering a per-command
+        reconnect storm that would hang shutdown.
+
+        Returns:
+            True  if the off commands were sent AND (when wait=True) acknowledged
+                  by the controller — i.e. the lasers are confirmed off.
+            False if the controller did not respond. This does NOT prove a laser
+                  is still on, only that we could not confirm it — the caller
+                  should treat it as "power-cycle to be certain".
+        """
+        sent_any = False
+        failed_any = False
+
+        def _try(fn, *args) -> None:
+            nonlocal sent_any, failed_any
+            try:
+                fn(*args)
+                sent_any = True
+            except Exception:
+                failed_any = True
+                self.log.exception("turn_off_all_lasers: a command failed; continuing")
+
+        prev_suppress = self._suppress_reconnect
+        self._suppress_reconnect = True
+        try:
+            # 1) Laser-autofocus diode. This pin is NOT gated by the firmware
+            #    laser interlock, so it is the beam most likely to be left latched.
+            _try(self.turn_off_AF_laser)
+
+            # 2) Excitation lasers on single-port firmware: select each source
+            #    (intensity 0) then drive the active illumination pin low.
+            for source in Microcontroller._EXCITATION_ILLUMINATION_SOURCES:
+                _try(self.set_illumination, source, 0)
+                _try(self.turn_off_illumination)
+
+            # 3) Multi-port firmware: one command clears all ports at once.
+            if self.supports_multi_port():
+                _try(self.turn_off_all_ports)
+        finally:
+            self._suppress_reconnect = prev_suppress
+
+        if not sent_any:
+            return False  # nothing reached the device — cannot confirm anything
+
+        if wait:
+            try:
+                self.wait_till_operation_is_completed(timeout_limit_s=2.0)
+            except Exception:
+                self.log.exception("turn_off_all_lasers: wait for completion failed")
+                return False
+
+        return not failed_any
+
     def send_command(self, command: bytearray) -> None:
         self._cmd_id = (self._cmd_id + 1) % 256
         command[0] = self._cmd_id
@@ -1014,7 +1117,8 @@ class Microcontroller:
         cmd_type = command[1]
         cmd_name = _CMD_NAMES.get(cmd_type, f"UNKNOWN({cmd_type})")
         self.log.debug(f"[MCU] >>> sending command {self._cmd_id}, type={cmd_name}")
-        self._serial.write(command, reconnect_tries=Microcontroller.MAX_RECONNECT_COUNT)
+        reconnect_tries = 0 if self._suppress_reconnect else Microcontroller.MAX_RECONNECT_COUNT
+        self._serial.write(command, reconnect_tries=reconnect_tries)
         self.mcu_cmd_execution_in_progress = True
         self.last_command = command
         self.last_command_send_timestamp = time.time()

@@ -76,6 +76,11 @@ class FluidicsService(BaseService):
         self._lock = threading.RLock()
         self._abort_incubation = threading.Event()
         self._is_incubating = False
+        # Guards the one-shot shutdown close (see shutdown()). A plain Lock held
+        # only briefly to flip the flag — never during a long pump op — so it can
+        # never deadlock the main shutdown thread against self._lock.
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_started = False
         # Set up callbacks if driver supports them
         if driver is not None:
             if hasattr(driver, "set_phase_callback"):
@@ -698,12 +703,52 @@ class FluidicsService(BaseService):
             return []
         return self._driver.get_available_ports()
 
+    # Max time to wait for the on-close empty-to-waste before proceeding with app
+    # shutdown anyway. The pump's wait-for-stop loop is unbounded, so a stuck pump
+    # would otherwise hang shutdown forever; a healthy empty finishes well under this.
+    SHUTDOWN_CLOSE_TIMEOUT_S = 30.0
+
     def shutdown(self) -> None:
-        """Clean shutdown of the service and driver."""
+        """Clean shutdown of the service and driver.
+
+        The driver's ``close()`` empties the syringe to waste before releasing the
+        pump (safety) — but the underlying pump wait-for-stop is UNBOUNDED, so a
+        stuck/unresponsive pump would hang application shutdown indefinitely. Run
+        the close on a daemon thread with a bounded join so the empty-to-waste is
+        still attempted on every close, but can never wedge shutdown.
+        """
         super().shutdown()
 
-        if self._driver is not None:
+        # One-shot: a second shutdown() must NOT spawn a second close thread that
+        # would race the first on the pump serial. Flip the flag under a short-held
+        # lock (never held during a pump op, so it can't block the main thread).
+        with self._shutdown_lock:
+            if self._driver is None or self._shutdown_started:
+                return
+            self._shutdown_started = True
+            driver = self._driver
+
+        def _close_driver() -> None:
             try:
-                self._driver.close()
+                # Serialize with normal operations (flow/wash/empty all hold
+                # self._lock) so the empty-to-waste can't corrupt an in-flight
+                # pump command. If an op is stuck holding the lock, this blocks —
+                # but only this daemon thread; the bounded join below still frees
+                # the main shutdown thread.
+                with self._lock:
+                    driver.close()  # empties syringe to waste, then releases pump
             except Exception as e:
                 _log.exception(f"Error closing fluidics driver: {e}")
+
+        closer = threading.Thread(
+            target=_close_driver, name="fluidics-close-shutdown", daemon=True
+        )
+        closer.start()
+        closer.join(self.SHUTDOWN_CLOSE_TIMEOUT_S)
+        if closer.is_alive():
+            _log.warning(
+                "Fluidics empty-to-waste/close did not finish within %ss — "
+                "continuing shutdown; the syringe may not be fully emptied "
+                "(pump unresponsive or an operation still holding the lock)",
+                self.SHUTDOWN_CLOSE_TIMEOUT_S,
+            )
