@@ -71,6 +71,12 @@ class FocusLockSimulator(BaseController):
         self._mode: FocusLockMode = self._config.default_mode
         self._status: FocusLockStatus = "disabled"
 
+        # Per-FOV Z memory (parity with ContinuousFocusLockController). The
+        # per-FOV focus-lock strategy shares this across per-round workers so
+        # each FOV's last-good piezo Z persists round-to-round. Left None here;
+        # the strategy lazily attaches one on first use if still unset.
+        self.fov_focus_memory = None
+
         self._keep_running = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._is_running = False
@@ -295,6 +301,74 @@ class FocusLockSimulator(BaseController):
             if not self.is_running:
                 return False
             time.sleep(0.02)
+        return False
+
+    def acquire_lock_reference(
+        self,
+        timeout_s: float = 5.0,
+        confirmation_readings: Optional[int] = None,
+    ) -> bool:
+        """Acquire a stable lock reference using bounded retries (sim).
+
+        Mirrors ``ContinuousFocusLockController.acquire_lock_reference`` so the
+        per-FOV focus-lock strategy exercises its Tier-1 lock path in
+        simulation. Previously the simulator lacked this method, so per-FOV
+        Tier-1 always raised ``AttributeError`` (caught by the strategy) and
+        every simulated FOV fell through to single-shot/degraded — meaning a
+        dry run could not validate the real re-lock path at all.
+
+        Collects ``required`` consecutive valid measurements whose displacement
+        spread is within ``acquire_threshold_um``, then commits the lock. Returns
+        False on timeout so the strategy falls through to its sweep/seed tiers,
+        exactly as the real controller does.
+        """
+        if not self.is_running or self._laser_af is None:
+            return False
+
+        required = int(confirmation_readings or getattr(self._config, "acquire_confirmation_readings", 2))
+        required = max(1, required)
+        threshold = float(getattr(self._config, "acquire_threshold_um", 0.25))
+        min_snr = float(getattr(self._config, "min_spot_snr", 0.0))
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        accepted: list[float] = []
+
+        while time.monotonic() <= deadline:
+            try:
+                result = self._laser_af.measure_displacement_continuous()
+            except Exception:
+                self._log.exception("Sim acquire_lock_reference: measurement failed")
+                return False
+
+            disp = getattr(result, "displacement_um", math.nan)
+            snr = getattr(result, "spot_snr", 0.0)
+            valid = (
+                disp is not None
+                and not math.isnan(disp)
+                and snr is not None
+                and not math.isnan(snr)
+                and snr >= min_snr
+            )
+            if not valid:
+                accepted.clear()
+                time.sleep(0.01)
+                continue
+
+            accepted.append(float(disp))
+            if len(accepted) > required:
+                accepted = accepted[-required:]
+            if len(accepted) < required:
+                time.sleep(0.01)
+                continue
+
+            if (max(accepted) - min(accepted)) > threshold:
+                accepted = accepted[-1:]
+                time.sleep(0.01)
+                continue
+
+            # Stable enough — commit the lock at the current position.
+            self.set_lock()
+            return True
+
         return False
 
     def set_preview_handler(self, handler: Callable) -> None:

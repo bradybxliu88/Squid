@@ -145,15 +145,27 @@ class TestFluidicsWidgetSaveLog:
             fluidics_widget._save_log()
 
 
-class TestEmergencyStopResetsAbort:
-    """Test that emergency stop resets the abort flag."""
+class TestEmergencyStopLatches:
+    """Emergency stop must halt immediately and LATCH (no auto re-arm).
 
-    def test_emergency_stop_resets_abort_flag(self, fluidics_widget_with_service, mock_service):
-        """After emergency stop, reset_abort() should be called so manual ops work."""
+    Previously ``_emergency_stop`` called ``reset_abort()`` right after
+    ``abort()``, which re-armed instantly and defeated the latch. The correct
+    behavior halts the pump (abort) WITHOUT resetting; re-arm is a separate,
+    explicit operator action (Clear E-Stop).
+    """
+
+    def test_emergency_stop_halts_without_rearming(self, fluidics_widget_with_service, mock_service):
+        """abort() is called for an immediate halt; reset_abort() must NOT be."""
         fluidics_widget_with_service._emergency_stop()
 
         mock_service.abort.assert_called_once()
-        mock_service.reset_abort.assert_called_once()
+        # The latch must NOT be cleared here (that was the bug).
+        mock_service.reset_abort.assert_not_called()
+
+    def test_clear_emergency_stop_does_not_crash(self, fluidics_widget_with_service):
+        """The explicit re-arm path runs cleanly after an e-stop."""
+        fluidics_widget_with_service._emergency_stop()
+        fluidics_widget_with_service._clear_emergency_stop()  # Should not raise
 
     def test_emergency_stop_without_service(self, fluidics_widget):
         """Emergency stop should not crash when service is None."""

@@ -170,6 +170,18 @@ MULTIPOINT_DISPLAY_IMAGES = False
 # Default to showing a periodic update so the mosaic is populated without swamping the UI.
 MULTIPOINT_DISPLAY_EVERY_NTH = 5
 
+# --- Per-round excitation-laser warm-up -----------------------------------
+# Some laser engines go to standby between rounds (during fluidics) and take a
+# few firings to reach full power, so the first FOVs of a round come out dark.
+# When enabled, each excitation laser used in the round is pulsed briefly at LOW
+# power before the FOV loop to wake it. The pulse fires at the current stage
+# position, so keep it short/low to avoid photobleaching the first FOV.
+ILLUMINATION_WARMUP_ENABLED = True
+ILLUMINATION_WARMUP_S = 0.4  # Seconds each laser is held on to warm up.
+# Warm-up power as a fraction of the channel's acquisition intensity (0-1).
+# Low by design to minimize bleaching while still driving diode current.
+ILLUMINATION_WARMUP_FRACTION = 0.1
+
 # Backpressure/throttling settings for acquisition
 # Prevents RAM exhaustion during high-speed acquisitions by throttling when limits are exceeded.
 ACQUISITION_THROTTLING_ENABLED = True

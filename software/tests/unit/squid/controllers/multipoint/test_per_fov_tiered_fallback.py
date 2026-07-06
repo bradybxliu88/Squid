@@ -191,7 +191,12 @@ class TestTier2SingleShot:
         assert result.method in ("seed", "no_seed")
 
     def test_single_shot_disabled(self):
-        """When single_shot_fallback is disabled, skip tier 2."""
+        """When single_shot_fallback is disabled, skip tier 2.
+
+        Also disable the Tier 2.5 sweep here so this isolates the single-shot
+        tier: with both re-acquire tiers off, a valid reading must NOT be
+        consumed and we fall straight through to the seed tier.
+        """
         mem = FOVFocusMemory(default_z_um=150.0)
         piezo = FakePiezo()
         controller = FakeControllerNeverLocks()
@@ -202,13 +207,14 @@ class TestTier2SingleShot:
             memory=mem,
             laser_af_controller=laser_af,
             enable_single_shot_fallback=False,
+            enable_sweep_fallback=False,
             settle_s=0.0,
             sleep_fn=lambda _s: None,
         )
         result = strat.prepare("r", 0)
         assert result.ok
         assert result.method in ("seed", "no_seed")
-        assert laser_af.measure_calls == 0  # Tier 2 never called
+        assert laser_af.measure_calls == 0  # Tier 2 + 2.5 never called
 
 
 # ---------------------------------------------------------------------------

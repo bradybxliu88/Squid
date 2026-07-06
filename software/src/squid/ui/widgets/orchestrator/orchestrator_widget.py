@@ -494,6 +494,22 @@ class OrchestratorControlPanel(EventBusWidget):
         self._abort_btn.setStyleSheet(BTN_STYLES["destructive"])
         self._abort_btn.clicked.connect(self._on_abort_clicked)
         row2.addWidget(self._abort_btn)
+
+        self._estop_btn = QPushButton("■ E-STOP")
+        # Distinct, high-visibility safety control. Halts the fluidics pump
+        # immediately (mid-move) and aborts the run; no confirmation dialog so it
+        # is instant. The fluidics stays latched until the next Start re-arms it.
+        self._estop_btn.setStyleSheet(
+            "QPushButton { background-color: #b00020; color: white; font-weight: bold; }"
+            " QPushButton:disabled { background-color: #5a2b31; color: #cfb0b4; }"
+        )
+        self._estop_btn.setToolTip(
+            "Emergency stop: immediately halt the fluidics pump and abort the run. "
+            "The fluidics is latched off until you start a new run (or clear the "
+            "e-stop on the Fluidics tab)."
+        )
+        self._estop_btn.clicked.connect(self._on_emergency_stop_clicked)
+        row2.addWidget(self._estop_btn)
         layout.addLayout(row2)
 
         # Stepper state line: at-a-glance Load -> Validate -> Start readiness.
@@ -1236,6 +1252,12 @@ class OrchestratorControlPanel(EventBusWidget):
         if reply == QMessageBox.StandardButton.Yes:
             self._orchestrator.abort()
 
+    def _on_emergency_stop_clicked(self) -> None:
+        """Trigger an immediate emergency stop (no confirmation — it's instant)."""
+        if self._orchestrator is None:
+            return
+        self._orchestrator.emergency_stop()
+
     def _on_acknowledge_clicked(self) -> None:
         if self._orchestrator is not None:
             self._orchestrator.acknowledge_intervention()
@@ -1501,6 +1523,7 @@ class OrchestratorControlPanel(EventBusWidget):
         self._pause_btn.setEnabled(bool(is_running))
         self._resume_btn.setEnabled(bool(is_paused))
         self._abort_btn.setEnabled(bool(is_running or is_paused))
+        self._estop_btn.setEnabled(bool(is_running or is_paused))
         if hasattr(self, "_start_from_btn"):
             self._start_from_btn.setEnabled(bool(can_start))
             self._run_only_btn.setEnabled(bool(can_start))

@@ -505,6 +505,16 @@ class OrchestratorController(StateMachine[OrchestratorState]):
                 _log.warning("Cannot start: orchestrator not idle")
                 return False
 
+        # Re-arm the fluidics if a prior emergency stop left it latched. Starting
+        # a fresh experiment is a conscious operator action, so it is a valid
+        # re-arm point; otherwise the latch would block the new run's fluidics.
+        if self._fluidics_controller is not None:
+            try:
+                if self._fluidics_controller.clear_emergency_stop():
+                    _log.info("Cleared latched fluidics emergency stop for new run")
+            except Exception:
+                _log.exception("Failed to clear fluidics emergency stop on start")
+
         try:
             self._run_scan_coordinates = None
             # Load protocol
@@ -764,6 +774,32 @@ class OrchestratorController(StateMachine[OrchestratorState]):
             self._fluidics_controller.stop()
 
         # State transition happens in worker thread
+        return True
+
+    def emergency_stop(self) -> bool:
+        """Emergency-stop the whole experiment.
+
+        Safety action: immediately halts the fluidics pump (mid-move) and LATCHES
+        a fluidics emergency stop so nothing can re-drive it, then aborts the
+        experiment (interrupts imaging + cancels). The fluidics latch persists
+        until an operator re-arms via
+        ``fluidics_controller.clear_emergency_stop()`` (or the
+        ClearFluidicsEmergencyStopCommand), so a new run cannot start by accident.
+
+        Returns True if the emergency stop was dispatched.
+        """
+        _log.critical("ORCHESTRATOR EMERGENCY STOP requested")
+
+        # Latch + immediate pump halt first (before abort, so the pump stops even
+        # if the abort path is slow).
+        if self._fluidics_controller is not None:
+            try:
+                self._fluidics_controller.emergency_stop()
+            except Exception:
+                _log.exception("Emergency stop: fluidics_controller.emergency_stop() failed")
+
+        # Then abort the experiment (cancels token, stops imaging + fluidics).
+        self.abort()
         return True
 
     @property

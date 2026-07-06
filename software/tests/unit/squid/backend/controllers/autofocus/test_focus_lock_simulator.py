@@ -694,3 +694,48 @@ def test_resume_grace_readings_absorb_bad_readings():
         f"Expected lock to be lost after grace period with bad readings, got '{sim.status}'"
     )
     sim.stop()
+
+
+# ---------------------------------------------------------------------------
+# acquire_lock_reference — parity with ContinuousFocusLockController so the
+# per-FOV focus-lock strategy exercises its Tier-1 path in simulation.
+# ---------------------------------------------------------------------------
+
+
+def test_acquire_lock_reference_succeeds_with_good_readings():
+    """Stable, valid readings -> acquire commits a lock and returns True."""
+    bus = EventBus()
+    laser_af = _FakeLaserAF(result=_make_good_result(displacement_um=0.0))
+    piezo = _FakePiezoService()
+    sim = FocusLockSimulator(bus, laser_autofocus=laser_af, piezo_service=piezo)
+    _init_laser_af(bus)
+    sim.start()
+    try:
+        assert sim.acquire_lock_reference(timeout_s=2.0) is True
+        assert sim.status == "locked"
+    finally:
+        sim.stop()
+
+
+def test_acquire_lock_reference_fails_without_spot():
+    """No spot (NaN displacement, zero SNR) -> acquire times out and returns
+    False, so the per-FOV strategy falls through to its sweep/seed tiers."""
+    bus = EventBus()
+    laser_af = _FakeLaserAF(result=_make_no_spot_result())
+    piezo = _FakePiezoService()
+    sim = FocusLockSimulator(bus, laser_autofocus=laser_af, piezo_service=piezo)
+    _init_laser_af(bus)
+    sim.start()
+    try:
+        assert sim.acquire_lock_reference(timeout_s=0.3) is False
+    finally:
+        sim.stop()
+
+
+def test_acquire_lock_reference_returns_false_when_not_running():
+    """acquire must no-op (False) when the loop is not running."""
+    bus = EventBus()
+    laser_af = _FakeLaserAF()
+    sim = FocusLockSimulator(bus, laser_autofocus=laser_af)
+    _init_laser_af(bus)
+    assert sim.acquire_lock_reference(timeout_s=0.2) is False

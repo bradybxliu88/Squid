@@ -343,6 +343,48 @@ class TestOrchestratorControl:
 
         assert sim.orchestrator.state == OrchestratorState.ABORTED
 
+    def test_emergency_stop_aborts_and_latches_fluidics(
+        self,
+        e2e_orchestrator: OrchestratorSimulator,
+        e2e_backend_ctx: BackendContext,
+        multi_round_fish_protocol: str,
+    ):
+        """Emergency stop aborts the run AND latches the fluidics so nothing can
+        re-drive the pump until a fresh Start re-arms it."""
+        import time
+
+        from squid.backend.controllers.orchestrator import OrchestratorState
+
+        sim = e2e_orchestrator
+        center = e2e_backend_ctx.get_stage_center()
+
+        sim.load_protocol(multi_round_fish_protocol)
+        sim.add_single_fov("region_1", x=center[0], y=center[1], z=center[2])
+
+        assert sim.start()
+        time.sleep(0.5)
+
+        # Fire the emergency stop through the orchestrator.
+        assert sim.orchestrator.emergency_stop() is True
+
+        # The run aborts...
+        start = time.time()
+        while sim.orchestrator.is_running and time.time() - start < 30:
+            time.sleep(0.1)
+        assert sim.orchestrator.state == OrchestratorState.ABORTED
+
+        # ...and the fluidics is latched off.
+        fc = sim.orchestrator._fluidics_controller
+        assert fc is not None
+        assert fc.is_emergency_stopped is True
+
+        # A fresh Start re-arms the fluidics (conscious operator action) and runs.
+        # Re-add coordinates (abort clears them, like a crash) before rerunning.
+        sim.add_single_fov("region_1", x=center[0], y=center[1], z=center[2])
+        result = sim.run_and_wait(timeout_s=120)
+        assert fc.is_emergency_stopped is False
+        assert result.final_state == "COMPLETED", f"post-estop rerun did not complete: {result.final_state}"
+
     def test_skip_to_round(
         self,
         e2e_orchestrator: OrchestratorSimulator,

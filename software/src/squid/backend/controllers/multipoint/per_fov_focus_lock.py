@@ -122,6 +122,15 @@ class PerFOVFocusLockStrategy:
         enable_single_shot_fallback: bool = True,
         enable_seed_fallback: bool = True,
         laser_af_controller: Optional[object] = None,
+        # Tier 2.5 bounded piezo sweep. When the strict lock and single-shot both
+        # fail (typically because the chamber shifted in Z beyond the AF capture
+        # window at the seed), sweep the piezo across a bounded window around the
+        # seed to RE-FIND the reflection spot, then re-lock there. This is what
+        # lets a per-round chamber shift be re-grabbed instead of degrading
+        # forever at the stale round-1 seed.
+        enable_sweep_fallback: bool = True,
+        sweep_range_um: float = 20.0,
+        sweep_step_um: float = 2.0,
         # Single-shot (Tier 2) safety bounds. A single displacement reading must
         # not command a large or edge-pinning piezo move (a spurious reflection
         # otherwise slams the piezo to a travel limit, then gets cached as the
@@ -161,6 +170,9 @@ class PerFOVFocusLockStrategy:
         self._single_shot_min_snr = float(single_shot_min_snr)
         self._single_shot_max_disp_um = abs(float(single_shot_max_disp_um))
         self._piezo_edge_margin_um = abs(float(piezo_edge_margin_um))
+        self._enable_sweep = bool(enable_sweep_fallback)
+        self._sweep_range_um = abs(float(sweep_range_um))
+        self._sweep_step_um = abs(float(sweep_step_um)) or 1.0
         self._ephemeral = bool(ephemeral)
         # Optional: direct access to the laser AF for single-shot fallback.
         # If not provided, we try to extract it from the controller.
@@ -260,13 +272,17 @@ class PerFOVFocusLockStrategy:
         # Seed the piezo
         seed_used: Optional[float] = None
         if seed is not None and self._piezo is not None:
+            # Clamp a stale/out-of-range cached Z to the piezo's usable travel so
+            # we never drive the piezo into a hard limit (the single-shot tier had
+            # this guard; the seed move did not).
+            target_seed = self._clamp_seed_to_bounds(float(seed))
             try:
-                self._piezo.move_to(float(seed))
-                seed_used = float(seed)
+                self._piezo.move_to(target_seed)
+                seed_used = target_seed
             except Exception:
                 _log.exception(
                     "PerFOV focus lock: piezo.move_to(%.3f) failed for region=%s fov=%d",
-                    seed,
+                    target_seed,
                     region_id,
                     fov_index,
                 )
@@ -341,6 +357,20 @@ class PerFOVFocusLockStrategy:
             )
             if single_shot_result is not None:
                 return single_shot_result
+
+        # ================================================================
+        # TIER 2.5: Bounded piezo sweep re-acquire
+        # The strict lock and single-shot both measure only at/near the seed. If
+        # the chamber physically shifted in Z beyond the AF capture window at the
+        # seed, the spot is not visible there and both fail. Sweep the piezo
+        # across a bounded window around the seed to re-find the spot, then
+        # re-lock at the corrected Z (which gets cached, so subsequent rounds
+        # seed from it and track the drift).
+        # ================================================================
+        if self._enable_sweep and self._piezo is not None and self._laser_af is not None:
+            sweep_result = self._try_sweep_reacquire(region_id, fov_index, seed_used)
+            if sweep_result is not None:
+                return sweep_result
 
         # ================================================================
         # TIER 3: Seed-only fallback
@@ -466,23 +496,212 @@ class PerFOVFocusLockStrategy:
             method="single_shot",
         )
 
+    def _piezo_bounds(self) -> tuple[Optional[float], Optional[float]]:
+        """Usable piezo travel as (lo+margin, hi-margin), or (None, None).
+
+        Returns (None, None) when the piezo does not expose ``get_range`` (e.g.
+        fakes / piezos without a declared range) so callers leave behavior
+        unchanged there. If the declared range is narrower than 2*margin, falls
+        back to the raw (lo, hi) so we never produce an empty interval.
+        """
+        get_range = getattr(self._piezo, "get_range", None)
+        if not callable(get_range):
+            return (None, None)
+        try:
+            lo, hi = get_range()
+            lo = float(lo)
+            hi = float(hi)
+        except Exception:
+            return (None, None)
+        margin = self._piezo_edge_margin_um
+        lo_b = lo + margin
+        hi_b = hi - margin
+        if hi_b < lo_b:
+            return (lo, hi)
+        return (lo_b, hi_b)
+
     def _piezo_target_in_bounds(self, target_um: float) -> bool:
         """True if ``target_um`` is within the piezo's usable travel.
 
         Returns True when the piezo does not expose ``get_range`` (e.g. fakes /
         piezos without a declared range) so behavior is unchanged there.
         """
-        get_range = getattr(self._piezo, "get_range", None)
-        if not callable(get_range):
+        lo, hi = self._piezo_bounds()
+        if lo is None or hi is None:
             return True
+        return lo <= float(target_um) <= hi
+
+    def _clamp_seed_to_bounds(self, seed_um: float) -> float:
+        """Clamp a cached/default seed Z into the piezo's usable travel.
+
+        A stale cross-round seed (or an out-of-range default) must not drive the
+        piezo to a hard limit. Returns ``seed_um`` unchanged when no range is
+        exposed.
+        """
+        lo, hi = self._piezo_bounds()
+        if lo is None or hi is None:
+            return seed_um
+        clamped = max(lo, min(hi, float(seed_um)))
+        if abs(clamped - float(seed_um)) > 1e-9:
+            _log.warning(
+                "PerFOV focus lock: seed %.2fum out of piezo travel [%.2f, %.2f]; "
+                "clamped to %.2fum",
+                seed_um, lo, hi, clamped,
+            )
+        return clamped
+
+    def _build_sweep_positions(self, center_um: float) -> list[float]:
+        """Piezo positions to visit during a sweep.
+
+        Center first, then outward in both directions in ``sweep_step_um``
+        increments up to ``±sweep_range_um``, clamped to the piezo's usable
+        travel and de-duplicated. Visiting the center first means a spot already
+        near the seed is found immediately.
+        """
+        step = self._sweep_step_um
+        rng = self._sweep_range_um
+        if step <= 0 or rng <= 0:
+            return [center_um]
+
+        lo, hi = self._piezo_bounds()
+        positions: list[float] = []
+        seen: set[float] = set()
+
+        def _add(pos: float) -> None:
+            if lo is not None and pos < lo:
+                return
+            if hi is not None and pos > hi:
+                return
+            key = round(pos, 3)
+            if key in seen:
+                return
+            seen.add(key)
+            positions.append(pos)
+
+        _add(center_um)
+        n = int(rng / step)
+        for i in range(1, n + 1):
+            delta = i * step
+            _add(center_um - delta)
+            _add(center_um + delta)
+        return positions
+
+    def _try_sweep_reacquire(
+        self, region_id: str, fov_index: int, seed_used: Optional[float]
+    ) -> Optional[PerFOVLockResult]:
+        """Bounded piezo sweep to re-find the AF spot after a chamber Z-shift.
+
+        Steps the piezo across ``±sweep_range_um`` around the current (seeded)
+        position, measuring at each stop. Picks the position with the smallest
+        valid ``|displacement|`` (best focus), moves there, nulls the residual,
+        and re-attempts the strict lock. Returns a locked/sweep result if the
+        spot was re-found (safe to cache), else None so the caller falls to the
+        seed fallback.
+        """
+        import math
+
+        measure = getattr(self._laser_af, "measure_displacement_continuous", None)
+        if not callable(measure):
+            return None
+
         try:
-            lo, hi = get_range()
-            lo = float(lo)
-            hi = float(hi)
+            center = float(self._piezo.get_position())
         except Exception:
-            return True
-        margin = self._piezo_edge_margin_um
-        return (lo + margin) <= float(target_um) <= (hi - margin)
+            _log.exception("PerFOV focus lock: failed to read piezo for sweep")
+            return None
+
+        positions = self._build_sweep_positions(center)
+        if not positions:
+            return None
+
+        # best = (abs_disp, position, disp, snr)
+        best: Optional[tuple[float, float, float, float]] = None
+        for pos in positions:
+            try:
+                self._piezo.move_to(pos)
+                if self._settle_s > 0:
+                    self._sleep(self._settle_s)
+                result = measure()
+            except Exception:
+                continue
+            disp = getattr(result, "displacement_um", float("nan"))
+            snr = getattr(result, "spot_snr", 0.0)
+            if disp is None or math.isnan(disp) or math.isinf(disp):
+                continue
+            if snr is None or math.isnan(snr) or snr < self._single_shot_min_snr:
+                continue
+            abs_disp = abs(float(disp))
+            if best is None or abs_disp < best[0]:
+                best = (abs_disp, pos, float(disp), float(snr))
+
+        if best is None:
+            # No spot anywhere in the swept window. Restore the piezo to where the
+            # sweep started (the seed) so the downstream seed fallback captures at
+            # the remembered Z rather than at some arbitrary swept position.
+            try:
+                self._piezo.move_to(center)
+                if self._settle_s > 0:
+                    self._sleep(self._settle_s)
+            except Exception:
+                _log.exception("PerFOV focus lock: failed to restore piezo after empty sweep")
+            _log.info(
+                "PerFOV focus lock: sweep found no valid spot across %d positions "
+                "(region=%s fov=%d); restored piezo to seed",
+                len(positions), region_id, fov_index,
+            )
+            return None
+
+        _, best_pos, best_disp, best_snr = best
+        # Move to the best position and null the residual displacement.
+        target = best_pos - best_disp
+        if not self._piezo_target_in_bounds(target):
+            target = best_pos
+        try:
+            self._piezo.move_to(target)
+            if self._settle_s > 0:
+                self._sleep(self._settle_s)
+        except Exception:
+            _log.exception("PerFOV focus lock: failed to move to swept position")
+            try:
+                self._piezo.move_to(center)
+            except Exception:
+                pass
+            return None
+
+        # Re-attempt the strict lock now that the spot is back in the window.
+        relocked = False
+        try:
+            relocked = bool(
+                self._controller.acquire_lock_reference(
+                    timeout_s=self._lock_timeout_s,
+                    confirmation_readings=self._confirmation_readings,
+                )
+            )
+        except Exception:
+            relocked = False
+
+        corrected_z: Optional[float] = None
+        try:
+            corrected_z = float(self._piezo.get_position())
+        except Exception:
+            pass
+
+        method = "locked" if relocked else "sweep"
+        _log.info(
+            "PerFOV focus lock: sweep re-acquired spot for region=%s fov=%d "
+            "(best_disp=%.2fum snr=%.2f piezo=%.2fum relocked=%s)",
+            region_id, fov_index, best_disp, best_snr,
+            corrected_z if corrected_z is not None else float("nan"), relocked,
+        )
+        return PerFOVLockResult(
+            ok=True,
+            seed_used_um=seed_used,
+            locked_piezo_um=corrected_z,
+            reason=f"sweep_disp={best_disp:.2f}um_snr={best_snr:.2f}",
+            attempts=self._max_attempts,
+            method=method,
+            degraded=False,  # focus positively re-found — safe to cache as new seed
+        )
 
     # ---------------------------------------------------------------------
     # Record successful lock for later rounds

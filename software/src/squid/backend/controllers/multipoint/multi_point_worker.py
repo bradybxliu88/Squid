@@ -10,6 +10,7 @@ import imageio as iio
 import numpy as np
 import pandas as pd
 
+import _def
 from _def import (
     Acquisition,
     ACQUISITION_MAX_PENDING_JOBS,
@@ -187,6 +188,11 @@ class MultiPointWorker:
         self._stream_handler = stream_handler
         self._trigger_mode = trigger_mode
         self._illumination_service = illumination_service
+        # Per-round excitation-laser warm-up (wakes lasers that standby between
+        # rounds). Tunable via _def; read defensively so older configs still work.
+        self._illumination_warmup_enabled = bool(getattr(_def, "ILLUMINATION_WARMUP_ENABLED", True))
+        self._illumination_warmup_s = float(getattr(_def, "ILLUMINATION_WARMUP_S", 0.4))
+        self._illumination_warmup_fraction = float(getattr(_def, "ILLUMINATION_WARMUP_FRACTION", 0.1))
         self._filter_wheel_service = filter_wheel_service
         self._enable_channel_auto_filter_switching = enable_channel_auto_filter_switching
         self._focus_lock_controller = focus_lock_controller
@@ -922,6 +928,9 @@ class MultiPointWorker:
         lock_timeout_s = float(getattr(settings, "lock_timeout_s", 5.0))
         max_attempts = int(getattr(settings, "per_fov_max_attempts", 2))
         settle_s = float(getattr(settings, "per_fov_settle_s", 0.2))
+        sweep_enabled = bool(getattr(settings, "per_fov_sweep_enabled", True))
+        sweep_range_um = float(getattr(settings, "per_fov_sweep_range_um", 20.0))
+        sweep_step_um = float(getattr(settings, "per_fov_sweep_step_um", 2.0))
         ephemeral = bool(getattr(self, "_ephemeral_run", False))
         strat = PerFOVFocusLockStrategy(
             focus_lock_controller=controller,
@@ -930,6 +939,9 @@ class MultiPointWorker:
             lock_timeout_s=lock_timeout_s,
             max_attempts=max_attempts,
             settle_s=settle_s,
+            enable_sweep_fallback=sweep_enabled,
+            sweep_range_um=sweep_range_um,
+            sweep_step_um=sweep_step_um,
             ephemeral=ephemeral,
         )
         # Initialize default seed from current piezo the first time we use the
@@ -1014,6 +1026,9 @@ class MultiPointWorker:
         acquisition_error: Optional[Exception] = None
         try:
             self._prepare_focus_lock_for_acquisition()
+            # Wake the excitation lasers before the first FOV (they can drop to
+            # standby during fluidics and be dark for the first few FOVs).
+            self._warmup_illumination()
             # Publish acquisition started event via ProgressTracker
             self._progress_tracker.start()
 
@@ -2389,6 +2404,67 @@ class MultiPointWorker:
             self._illumination_service.turn_off_channel(int(source))
         except Exception:
             pass
+
+    def _warmup_illumination(self) -> None:
+        """Wake each excitation laser used this round before the FOV loop.
+
+        Some laser engines drop to standby between rounds (during fluidics) and
+        take a few firings to reach full power, so the first FOVs come out dark.
+        We pulse each distinct excitation source once, at LOW power (a fraction
+        of its acquisition intensity), for a short time — enough to drive diode
+        current and prime the engine without meaningfully bleaching the sample.
+
+        Runs once per round (called at the top of :meth:`run`). Best-effort: any
+        failure is logged and ignored so it can never block acquisition. The
+        per-channel capture path re-sets the correct power before each exposure,
+        so the low warm-up power here does not leak into the acquisition.
+        """
+        if not self._illumination_warmup_enabled:
+            return
+        if self._illumination_service is None:
+            return
+        duration = self._illumination_warmup_s
+        if duration <= 0:
+            return
+
+        # Distinct excitation sources used this round, with a low warm-up power.
+        fraction = max(0.0, min(1.0, self._illumination_warmup_fraction))
+        seen: set[int] = set()
+        warmed: list[tuple[int, float]] = []
+        for cfg in getattr(self, "selected_configurations", None) or []:
+            source = getattr(cfg, "illumination_source", None)
+            intensity = getattr(cfg, "illumination_intensity", None)
+            if source is None or intensity is None:
+                continue
+            s = int(source)
+            if s in seen:
+                continue
+            seen.add(s)
+            warmed.append((s, max(0.0, float(intensity) * fraction)))
+
+        if not warmed:
+            return
+
+        self._log.info(
+            "Warming up %d excitation laser(s) for %.2fs at %.0f%% power before round imaging",
+            len(warmed),
+            duration,
+            fraction * 100.0,
+        )
+        # Warm each source sequentially (mirrors the one-channel-at-a-time
+        # acquisition pattern; avoids piling multiple lasers on the sample).
+        for source, warm_power in warmed:
+            try:
+                self._illumination_service.set_channel_power(source, warm_power)
+                self._illumination_service.turn_on_channel(source)
+                time.sleep(duration)
+            except Exception:
+                self._log.exception("Laser warm-up: failed for source %s", source)
+            finally:
+                try:
+                    self._illumination_service.turn_off_channel(source)
+                except Exception:
+                    self._log.exception("Laser warm-up: failed to turn off source %s", source)
 
     def perform_autofocus(self, region_id: str, fov: int) -> bool:
         """Perform autofocus using the AutofocusExecutor.

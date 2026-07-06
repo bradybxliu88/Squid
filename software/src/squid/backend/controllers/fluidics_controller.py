@@ -40,6 +40,8 @@ from squid.core.events import (
     PauseFluidicsCommand,
     ResumeFluidicsCommand,
     StopFluidicsCommand,
+    EmergencyStopFluidicsCommand,
+    ClearFluidicsEmergencyStopCommand,
     SkipFluidicsStepCommand,
     FluidicsControllerStateChanged,
     FluidicsProtocolStarted,
@@ -159,6 +161,17 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
         self._stop_event = threading.Event()
         self._skip_event = threading.Event()
         self._empty_syringe_on_skip = True
+
+        # Latched emergency stop. Unlike _stop_event (graceful, auto-cleared on
+        # the next run_protocol), this LATCHES: while set, run_protocol() refuses
+        # to start until clear_emergency_stop() re-arms. Mirrors the legacy
+        # driver's ``emergency_stop_called`` flag (drivers/fluidics/fluidics.py).
+        self._emergency_stop_latched = threading.Event()
+
+        # Cancel token for the currently-blocking run (run_protocol_blocking).
+        # Threaded into long waits (e.g. incubation) so orchestrator-level
+        # cancellation reaches them directly, in addition to the abort() path.
+        self._active_cancel_token: Optional[CancelToken] = None
 
         # Register valid commands per state
         self.register_valid_commands(
@@ -391,6 +404,13 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
         Returns:
             True if protocol was started, False if not found or invalid state
         """
+        if self._emergency_stop_latched.is_set():
+            _log.error(
+                f"Cannot run protocol '{name}': fluidics is emergency-stopped. "
+                "Call clear_emergency_stop() to re-arm."
+            )
+            return False
+
         if not self._is_in_state(FluidicsControllerState.IDLE):
             _log.warning(f"Cannot run protocol '{name}': not in IDLE state")
             return False
@@ -462,7 +482,11 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
             The ``FluidicsProtocolCompleted`` event produced by the worker
             thread, or ``None`` if the protocol could not be started.
         """
+        # Expose the token to the worker thread so long waits (e.g. incubation)
+        # honor orchestrator-level cancellation directly, not only via abort().
+        self._active_cancel_token = cancel_token
         if not self.run_protocol(name):
+            self._active_cancel_token = None
             return None
 
         poll_interval_s = scale_duration(0.1, min_seconds=0.01)
@@ -475,18 +499,27 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
             }
         )
 
-        while True:
-            if cancel_token is not None:
-                cancel_token.check_point()
+        cancel_exc: Optional[BaseException] = None
+        try:
+            while True:
+                if cancel_token is not None:
+                    cancel_token.check_point()
 
-            state = self.state
-            if state in terminal_states:
-                break
+                state = self.state
+                if state in terminal_states:
+                    break
 
-            if progress_callback is not None:
-                progress_callback(self.current_step_index, self.total_steps)
+                if progress_callback is not None:
+                    progress_callback(self.current_step_index, self.total_steps)
 
-            time.sleep(poll_interval_s)
+                time.sleep(poll_interval_s)
+        except BaseException as exc:
+            # A cancellation (or any error) raised out of the poll loop must not
+            # orphan the executor worker thread that is still driving hardware.
+            # Stop it, then let the idle-wait below join it, before propagating.
+            _log.info("run_protocol_blocking interrupted (%s); stopping executor", type(exc).__name__)
+            self.stop()
+            cancel_exc = exc
 
         # Wait for the worker thread's _reset_to_idle() to finish so the
         # controller is ready for the next run_protocol() call immediately.
@@ -496,6 +529,11 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
                 _log.warning("Timed out waiting for controller to return to IDLE")
                 break
             time.sleep(poll_interval_s)
+
+        self._active_cancel_token = None
+
+        if cancel_exc is not None:
+            raise cancel_exc
 
         return self._last_result
 
@@ -567,6 +605,61 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
         service = self._get_fluidics_service()
         if service is not None:
             service.abort()
+
+        return True
+
+    def emergency_stop(self) -> bool:
+        """Latched emergency stop: immediately halt the pump and refuse further
+        operations until :meth:`clear_emergency_stop` re-arms.
+
+        Difference from :meth:`stop`:
+          - ``stop()`` is graceful and auto-re-armable — the next
+            ``run_protocol()`` clears the stop flag and runs.
+          - ``emergency_stop()`` LATCHES a flag. While latched, ``run_protocol()``
+            refuses to start, so nothing can accidentally re-drive the pump until
+            an operator explicitly re-arms. This mirrors the legacy driver's
+            ``emergency_stop_called`` guard (drivers/fluidics/fluidics.py:302-316).
+
+        The actual hardware halt is immediate: ``FluidicsService.abort()`` is
+        lock-free and calls ``driver.abort() -> syringe_pump.terminateCmd()``,
+        stopping the pump mid-move regardless of any lock held by a running op.
+
+        Safe to call from any state (including IDLE — it still latches so a
+        subsequent run is blocked and the pump is halted).
+        """
+        _log.critical("FLUIDICS EMERGENCY STOP requested")
+        self._emergency_stop_latched.set()
+        # Signal the worker to stop at its next checkpoint (graceful path), and
+        # unblock any pause-wait (the wait exits because _stop_event is set).
+        self._stop_event.set()
+
+        # Immediate hardware halt (lock-free; works while an op holds the lock).
+        service = self._get_fluidics_service()
+        if service is not None:
+            service.abort()
+
+        return True
+
+    @property
+    def is_emergency_stopped(self) -> bool:
+        """True while an emergency stop is latched (blocks new protocols)."""
+        return self._emergency_stop_latched.is_set()
+
+    def clear_emergency_stop(self) -> bool:
+        """Re-arm the fluidics after an emergency stop.
+
+        Clears the latched flag and resets the service abort flag so a new
+        protocol can run. Returns False if no emergency stop was latched.
+        """
+        if not self._emergency_stop_latched.is_set():
+            return False
+
+        _log.info("Clearing fluidics emergency stop (re-arm)")
+        self._emergency_stop_latched.clear()
+
+        service = self._get_fluidics_service()
+        if service is not None:
+            service.reset_abort()
 
         return True
 
@@ -644,6 +737,18 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
         """Handle command to stop execution."""
         self.stop()
 
+    @handles(EmergencyStopFluidicsCommand)
+    def _on_emergency_stop_command(self, cmd: EmergencyStopFluidicsCommand) -> None:
+        """Handle command to latch an emergency stop."""
+        self.emergency_stop()
+
+    @handles(ClearFluidicsEmergencyStopCommand)
+    def _on_clear_emergency_stop_command(
+        self, cmd: ClearFluidicsEmergencyStopCommand
+    ) -> None:
+        """Handle command to re-arm after an emergency stop."""
+        self.clear_emergency_stop()
+
     @handles(SkipFluidicsStepCommand)
     def _on_skip_step_command(self, cmd: SkipFluidicsStepCommand) -> None:
         """Handle command to skip current step."""
@@ -678,22 +783,32 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
             protocol: Protocol to execute
         """
         error_message: Optional[str] = None
-        success = False
 
         try:
-            step_index = 0
-            estimated_remaining = protocol.estimated_duration_s()
+            steps = protocol.steps
+            total = len(steps)
+            # Explicit index (NOT a for-loop): a step interrupted by a pause must
+            # be RE-RUN from the top on resume, never skipped. Silently dropping a
+            # partially-executed flow/incubate/wash would under-deliver reagent or
+            # under-incubate and corrupt a MERFISH round. step_pos advances ONLY
+            # when a step completes (success) or is explicitly skipped.
+            step_pos = 0
 
-            for step_pos, step in enumerate(protocol.steps):
-                # Check stop signal
+            while step_pos < total:
+                step = steps[step_pos]
+
+                # Check stop signal (at step boundary)
                 if self._stop_event.is_set():
                     _log.info("Protocol stopped by user")
                     self._transition_to(FluidicsControllerState.STOPPED)
-                    self._publish_completed(name, False, step_index, "Stopped by user")
+                    self._publish_completed(name, False, step_pos, "Stopped by user")
                     self._reset_to_idle()
                     return
 
-                # Check pause signal
+                # Check pause signal. This gate is reached both at a clean step
+                # boundary AND on re-entry after a mid-step pause; either way we do
+                # NOT advance step_pos, so the pending/interrupted step re-runs in
+                # full on resume.
                 if self._pause_event.is_set():
                     _log.info("Protocol paused")
                     self._transition_to(FluidicsControllerState.PAUSED)
@@ -703,32 +818,37 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
                     if self._stop_event.is_set():
                         _log.info("Protocol stopped while paused")
                         self._transition_to(FluidicsControllerState.STOPPED)
-                        self._publish_completed(name, False, step_index, "Stopped by user")
+                        self._publish_completed(name, False, step_pos, "Stopped by user")
                         self._reset_to_idle()
                         return
-                    _log.info("Protocol resumed")
+                    _log.info("Protocol resumed; (re-)running step %d", step_pos)
+                    # Re-evaluate this same step from the top of the loop.
+                    continue
 
                 # Check skip signal
                 if self._skip_event.is_set():
-                    step_index = self._apply_skip(step_index)
+                    step_pos = self._apply_skip(step_pos)
                     continue
 
                 # Update step tracking
-                self._current_step_index = step_index
-                estimated_remaining -= step.estimated_duration_s()
+                self._current_step_index = step_pos
+                # Remaining estimate = duration of steps AFTER this one. Computed
+                # fresh each iteration so a re-run on resume does not skew it.
+                estimated_remaining = sum(
+                    s.estimated_duration_s() for s in steps[step_pos + 1 :]
+                )
 
                 # Get next step description for preview
                 next_desc = None
-                if step_pos + 1 < len(protocol.steps):
-                    next_step = protocol.steps[step_pos + 1]
-                    next_desc = next_step.get_description()
+                if step_pos + 1 < total:
+                    next_desc = steps[step_pos + 1].get_description()
 
                 # Publish step started event
                 if self._event_bus:
                     self._event_bus.publish(
                         FluidicsProtocolStepStarted(
                             protocol_name=name,
-                            step_index=step_index,
+                            step_index=step_pos,
                             total_steps=self._total_steps,
                             step_description=step.get_description(),
                             next_step_description=next_desc,
@@ -739,37 +859,42 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
                 # Execute the step
                 step_success = self._execute_step(step)
                 if step_success:
-                    step_index += 1
+                    step_pos += 1
                     continue
 
+                # Step returned False — decide why (stop / skip / pause / error).
                 if self._stop_event.is_set():
                     _log.info("Protocol stopped during step")
                     self._transition_to(FluidicsControllerState.STOPPED)
-                    self._publish_completed(name, False, step_index, "Stopped by user")
+                    self._publish_completed(name, False, step_pos, "Stopped by user")
                     self._reset_to_idle()
                     return
 
                 if self._skip_event.is_set():
-                    step_index = self._apply_skip(step_index)
+                    step_pos = self._apply_skip(step_pos)
                     continue
 
                 if self._pause_event.is_set():
-                    _log.info("Protocol paused during step")
+                    # Paused mid-step: do NOT advance step_pos. Loop back to the
+                    # pause gate, wait for resume, then re-run this step in full.
+                    _log.info(
+                        "Protocol paused during step %d; step will re-run on resume",
+                        step_pos,
+                    )
                     continue
 
-                error_message = f"Step {step_index} failed: {step.get_description()}"
+                error_message = f"Step {step_pos} failed: {step.get_description()}"
                 _log.error(error_message)
                 self._transition_to(FluidicsControllerState.FAILED)
-                self._publish_completed(name, False, step_index, error_message)
+                self._publish_completed(name, False, step_pos, error_message)
                 self._reset_to_idle()
                 return
 
             # All steps completed successfully
-            success = True
-            self._current_step_index = step_index
+            self._current_step_index = total
             _log.info(f"Protocol '{name}' completed successfully")
             self._transition_to(FluidicsControllerState.COMPLETED)
-            self._publish_completed(name, True, step_index, None)
+            self._publish_completed(name, True, total, None)
             self._reset_to_idle()
 
         except Exception as e:
@@ -942,7 +1067,9 @@ class FluidicsController(StateMachine[FluidicsControllerState]):
             duration_seconds=duration,
             solution=solution,
             progress_interval=1.0,
-            cancel_token=None,  # We handle cancellation via abort()
+            # Honor orchestrator-level cancellation directly (belt-and-suspenders
+            # over the abort() flag path). None for a plain non-blocking run.
+            cancel_token=self._active_cancel_token,
         )
 
     def _execute_wash(self, step: FluidicsProtocolStep) -> bool:

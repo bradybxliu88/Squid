@@ -39,7 +39,8 @@ from qtpy.QtWidgets import (
 from squid.core.events import (
     RunFluidicsProtocolCommand,
     LoadFluidicsProtocolsCommand,
-    StopFluidicsCommand,
+    EmergencyStopFluidicsCommand,
+    ClearFluidicsEmergencyStopCommand,
     SkipFluidicsStepCommand,
     FluidicsOperationStarted,
     FluidicsOperationCompleted,
@@ -661,6 +662,23 @@ class FluidicsWidget(QWidget):
         )
         self.btn_emergency_stop.clicked.connect(self._emergency_stop)
         exec_row.addWidget(self.btn_emergency_stop)
+
+        # Re-arm after a latched emergency stop. Hidden until an e-stop latches;
+        # the operator must consciously click this before fluidics will run again.
+        self.btn_clear_estop = QPushButton("Clear E-Stop")
+        self.btn_clear_estop.setMinimumHeight(36)
+        self.btn_clear_estop.setStyleSheet(
+            "QPushButton { background-color: #b7950b; color: white; font-weight: bold; "
+            "border-radius: 4px; padding: 6px 12px; }"
+            "QPushButton:hover { background-color: #d4ac0d; }"
+        )
+        self.btn_clear_estop.setToolTip(
+            "Re-arm the fluidics after an emergency stop. Required before a new "
+            "protocol can run."
+        )
+        self.btn_clear_estop.clicked.connect(self._clear_emergency_stop)
+        self.btn_clear_estop.setVisible(False)
+        exec_row.addWidget(self.btn_clear_estop)
         exec_row.addStretch()
         sequences_layout.addLayout(exec_row)
 
@@ -1455,17 +1473,37 @@ class FluidicsWidget(QWidget):
         threading.Thread(target=do_empty, daemon=True).start()
 
     def _emergency_stop(self) -> None:
-        """Emergency stop all fluidics operations."""
+        """Emergency stop all fluidics operations (latched).
+
+        Immediately halts the pump and LATCHES the controller so no new protocol
+        can start until the operator clicks "Clear E-Stop". Deliberately does NOT
+        call ``reset_abort()`` here — doing so would immediately re-arm and defeat
+        the latch (the previous bug).
+        """
         self._log_status("EMERGENCY STOP")
+        # Immediate hardware halt (lock-free abort -> pump terminateCmd). Do NOT
+        # reset_abort — leave it latched.
         if self._service is not None:
             self._service.abort()
-            self._service.reset_abort()
+        # Latch the controller so a new protocol is refused until re-armed.
         if self._event_bus is not None:
-            self._event_bus.publish(StopFluidicsCommand())
+            self._event_bus.publish(EmergencyStopFluidicsCommand())
         self._is_protocol_running = False
+
+        # Surface the re-arm control.
+        if hasattr(self, "btn_clear_estop"):
+            self.btn_clear_estop.setVisible(True)
 
         # Reset progress UI
         self._reset_progress_ui()
+
+    def _clear_emergency_stop(self) -> None:
+        """Re-arm the fluidics after a latched emergency stop."""
+        self._log_status("Clearing emergency stop (re-arm)")
+        if self._event_bus is not None:
+            self._event_bus.publish(ClearFluidicsEmergencyStopCommand())
+        if hasattr(self, "btn_clear_estop"):
+            self.btn_clear_estop.setVisible(False)
 
     def _skip_current_step(self) -> None:
         """Skip to the next step in the protocol."""

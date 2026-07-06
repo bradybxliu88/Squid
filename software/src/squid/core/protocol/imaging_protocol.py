@@ -78,6 +78,15 @@ class FocusLockConfig(BaseModel):
     # per_fov_settle_s: sleep between piezo seed move and acquire attempt.
     per_fov_max_attempts: int = 2
     per_fov_settle_s: float = 0.2
+    # Per-FOV bounded piezo sweep re-acquire (Tier 2.5). When the strict lock and
+    # single-shot both fail (chamber shifted in Z beyond the AF window at the
+    # seed), sweep ±per_fov_sweep_range_um around the seed in per_fov_sweep_step_um
+    # increments to re-find the reflection spot and re-lock. Enabled by default
+    # because it directly addresses inter-round chamber drift; disable to fall
+    # straight to the degraded seed-only fallback as before.
+    per_fov_sweep_enabled: bool = True
+    per_fov_sweep_range_um: float = 20.0
+    per_fov_sweep_step_um: float = 2.0
 
 
 class ImagingAcquisitionConfig(BaseModel):

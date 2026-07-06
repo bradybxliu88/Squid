@@ -1331,6 +1331,25 @@ class StopFluidicsCommand(Event):
 
 
 @dataclass
+class EmergencyStopFluidicsCommand(Event):
+    """Command to LATCH an emergency stop on the fluidics.
+
+    Immediately halts the pump (mid-move) and refuses any further protocol until
+    a ClearFluidicsEmergencyStopCommand re-arms it. Distinct from
+    StopFluidicsCommand, which is graceful and auto-re-armable on the next run.
+    """
+
+    pass
+
+
+@dataclass
+class ClearFluidicsEmergencyStopCommand(Event):
+    """Command to re-arm the fluidics after a latched emergency stop."""
+
+    pass
+
+
+@dataclass
 class SkipFluidicsStepCommand(Event):
     """Command to skip the current step and move to the next one.
 
@@ -1465,6 +1484,13 @@ class FocusLockSettings:
     # Used by FOCUS_LOCK_PER_FOV mode (PerFOVFocusLockStrategy)
     per_fov_max_attempts: int = 2
     per_fov_settle_s: float = 0.2
+    # Tier 2.5 bounded piezo sweep re-acquire (kept in sync with
+    # imaging_protocol.FocusLockConfig, whose model_dump() is splatted into this
+    # dataclass in imaging_executor). Enables re-grabbing a chamber that shifted
+    # in Z beyond the AF window at the seed.
+    per_fov_sweep_enabled: bool = True
+    per_fov_sweep_range_um: float = 20.0
+    per_fov_sweep_step_um: float = 2.0
 
 
 @dataclass
