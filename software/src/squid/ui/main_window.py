@@ -831,6 +831,10 @@ class HighContentScreeningGui(QMainWindow):
             self.orchestratorControlPanel.validation_invalidated.connect(
                 self.preRunChecklistPanel.on_validation_invalidated
             )
+            # "Go set this" jump buttons on the checklist -> switch to the tool's tab.
+            self.preRunChecklistPanel.navigate_requested.connect(
+                self._orch_navigate_to_tool
+            )
             # EventBus does not replay, so seed the current objective (no
             # ObjectiveChanged is emitted for the default objective at startup).
             try:
@@ -943,6 +947,30 @@ class HighContentScreeningGui(QMainWindow):
             )
 
         self.imageDisplayTabs.addTab(orchestrator_dockArea, "Orchestrator")
+
+    def _orch_navigate_to_tool(self, tab_title: str) -> None:
+        """Best-effort: switch the sub-tab that hosts the named tool so the
+        operator can set an out-of-file requirement (laser AF, stage FOV capture)
+        without hunting for it. Guarded — a missing tab is a silent no-op."""
+        try:
+            if not tab_title:
+                return
+            for tabw in (
+                getattr(self, "cameraTabWidget", None),
+                getattr(self, "recordTabWidget", None),
+                getattr(self, "imageDisplayTabs", None),
+            ):
+                if tabw is None:
+                    continue
+                try:
+                    for i in range(tabw.count()):
+                        if tabw.tabText(i) == tab_title:
+                            tabw.setCurrentIndex(i)
+                            return
+                except Exception:
+                    continue
+        except Exception:
+            self.log.debug("orchestrator navigate-to-tool failed", exc_info=True)
 
     def _on_orch_state_changed(self, old_state: str, new_state: str) -> None:
         """Mirror the orchestrator run state into the always-visible status bar."""

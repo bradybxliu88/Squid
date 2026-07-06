@@ -18,12 +18,111 @@ is advisory only.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 AUTO = "auto"
 MANUAL = "manual"
+
+# Severity tags for the read-only "Run environment" notes (pure strings so the
+# Qt panel can map them to colours without importing anything).
+SEV_INFO = "info"
+SEV_WARN = "warn"
+
+# FOV coordinate files older than this are flagged for re-capture — a stale CSV
+# from a previous coverslip is a common, silent mistake.
+_FOV_STALE_SECONDS = 24 * 3600
+
+
+def format_image_format_note(option) -> Tuple[str, str]:
+    """Describe the AUTHORITATIVE image save format for an orchestrated run.
+
+    ``option`` may be a ``FileSavingOption`` enum, its ``.name``/``.value``, or a
+    plain string. Returns ``(text, severity)``. This is the value the orchestrated
+    writer actually keys off (``_def.FILE_SAVING_OPTION``) — NOT the Acquisition
+    tab's "Format" dropdown, which is ignored under orchestrator control, so
+    surfacing it here removes a genuinely invisible footgun.
+    """
+    name = getattr(option, "name", None) or getattr(option, "value", None) or str(option or "")
+    name = str(name).upper()
+    if not name:
+        return ("Image format: (unknown)", SEV_INFO)
+    text = (
+        f"Image format: {name}  ·  set in Preferences ▸ Configuration "
+        "(not the Acquisition 'Format' dropdown, which is ignored for orchestrated runs)."
+    )
+    if name != "INDIVIDUAL_IMAGES":
+        text += "  Resume-from-checkpoint is only available for INDIVIDUAL_IMAGES."
+    return (text, SEV_INFO)
+
+
+def format_fluidics_config_note(
+    bundle_path,
+    live_path,
+    run_fluidics: bool,
+    same_file: Optional[bool],
+) -> Tuple[str, str]:
+    """Describe whether the LIVE fluidics config (what actually drives the pump/
+    valves) matches the one the bundle references.
+
+    ``same_file`` is ``True``/``False`` when it could be determined, else ``None``
+    (treated as "verify"). The live map is read once at startup from
+    ``_def.FLUIDICS_CONFIG_PATH``; the orchestrator only existence-checks the
+    bundle's ``resources.fluidics_config_file``, so the two can silently diverge —
+    a wrong-reagent / wrong-port hazard. Returns ``(text, severity)``; empty text
+    means "nothing to show".
+    """
+    if not run_fluidics:
+        return ("", SEV_INFO)
+    live = str(live_path or "").strip()
+    bundle = str(bundle_path or "").strip()
+    if not bundle:
+        if live:
+            return (f"Live fluidics config: {live} (drives the pump/valves; loaded at startup).", SEV_INFO)
+        return ("", SEV_INFO)
+    if same_file is True:
+        shown = os.path.basename(live) or live
+        return (f"✓ Live fluidics config matches the bundle ({shown}).", SEV_INFO)
+    return (
+        "⚠ The live pump/valve map is loaded at startup from:\n"
+        f"    {live or '(default)'}\n"
+        f"The bundle references:  {bundle}\n"
+        "If these are not the same file, the reagent→port mapping may differ. "
+        "Applying a change needs a restart or Fluidics ▸ Initialize.",
+        SEV_WARN,
+    )
+
+
+def format_fov_freshness_note(
+    name,
+    mtime_epoch: Optional[float],
+    now_epoch: float,
+) -> Tuple[str, str]:
+    """Describe how fresh the FOV coordinate file is.
+
+    ``mtime_epoch`` is the file's modification time (or ``None`` if unknown).
+    Files older than a day are flagged for re-capture (coordinates are
+    coverslip-specific). Returns ``(text, severity)``.
+    """
+    label = str(name or "FOV file")
+    if mtime_epoch is None:
+        return (f"FOV file: {label}", SEV_INFO)
+    try:
+        import time as _time
+
+        stamp = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(mtime_epoch))
+    except Exception:
+        stamp = "?"
+    age = now_epoch - mtime_epoch
+    if age > _FOV_STALE_SECONDS:
+        return (
+            f"⚠ FOV file: {label} — last modified {stamp}. "
+            "Coordinates are coverslip-specific; re-capture if this is from a previous run.",
+            SEV_WARN,
+        )
+    return (f"FOV file: {label} — captured {stamp}.", SEV_INFO)
 
 
 @dataclass

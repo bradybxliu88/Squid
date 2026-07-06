@@ -157,6 +157,83 @@ def test_checklist_seed_objective(qtbot, bus):
     w.seed_objective(None)  # no-op, no crash
 
 
+# ----------------------------------------- Run-environment notes + jump/detail
+def test_checklist_shows_image_format_note(qtbot, bus):
+    from squid.ui.widgets.orchestrator.prerun_checklist_panel import PreRunChecklistPanel
+
+    w = PreRunChecklistPanel(event_bus=bus)
+    qtbot.addWidget(w)
+    # The authoritative format is surfaced at construction, independent of a load.
+    assert w._format_label.text()  # non-empty
+    assert "Image format" in w._format_label.text()
+
+
+def test_checklist_fluidics_divergence_note_on_load(qtbot, bus, tmp_path):
+    from squid.ui.widgets.orchestrator.prerun_checklist_panel import PreRunChecklistPanel
+
+    w = PreRunChecklistPanel(event_bus=bus)
+    qtbot.addWidget(w)
+    with patch("_def.RUN_FLUIDICS", True), patch(
+        "_def.FLUIDICS_CONFIG_PATH", "./merfish_config/MERFISH_config.json"
+    ):
+        w.on_protocol_loaded(
+            {
+                "output_directory": str(tmp_path),
+                "resources": {"fluidics_config_file": str(tmp_path / "bundle_MERFISH.json")},
+            }
+        )
+    # Different files -> warning surfaced and visible.
+    assert not w._fluidics_config_label.isHidden()
+    assert "reagent" in w._fluidics_config_label.text().lower()
+
+
+def test_checklist_fov_freshness_note_on_load(qtbot, bus, tmp_path):
+    from squid.ui.widgets.orchestrator.prerun_checklist_panel import PreRunChecklistPanel
+
+    w = PreRunChecklistPanel(event_bus=bus)
+    qtbot.addWidget(w)
+    fov = tmp_path / "fov_positions.csv"
+    fov.write_text("region,x_mm,y_mm\n5,1,2\n")
+    w.on_protocol_loaded(
+        {"output_directory": str(tmp_path), "resources": {"fov_file": str(fov)}}
+    )
+    assert not w._fov_file_label.isHidden()
+    assert "fov_positions.csv" in w._fov_file_label.text()
+
+
+def test_checklist_laser_af_stamps_time_detail(qtbot, bus):
+    from squid.ui.widgets.orchestrator.prerun_checklist_panel import PreRunChecklistPanel
+
+    w = PreRunChecklistPanel(event_bus=bus)
+    qtbot.addWidget(w)
+    w._on_laser_af_reference(LaserAFReferenceSet(success=True))
+    assert w._checkboxes["laser_af_reference"].isChecked()
+    # A visible freshness stamp ("set HH:MM") accompanies the checkmark.
+    assert w._detail_labels["laser_af_reference"].text().startswith("set ")
+
+
+def test_checklist_detail_labels_track_events(qtbot, bus):
+    from squid.ui.widgets.orchestrator.prerun_checklist_panel import PreRunChecklistPanel
+
+    w = PreRunChecklistPanel(event_bus=bus)
+    qtbot.addWidget(w)
+    w._on_scan_coords(ScanCoordinatesUpdated(total_regions=1, total_fovs=25, region_ids=("5",)))
+    assert "25" in w._detail_labels["fov_present"].text()
+    w._on_objective(ObjectiveChanged(position=1, objective_name="60x"))
+    assert "60x" in w._detail_labels["objective_selected"].text()
+
+
+def test_checklist_jump_button_emits_navigate(qtbot, bus):
+    from squid.ui.widgets.orchestrator.prerun_checklist_panel import PreRunChecklistPanel
+
+    w = PreRunChecklistPanel(event_bus=bus)
+    qtbot.addWidget(w)
+    seen = []
+    w.navigate_requested.connect(seen.append)
+    w._on_jump_clicked("Laser AF")
+    assert seen == ["Laser AF"]
+
+
 def test_checklist_manual_toggle(qtbot, bus):
     from squid.ui.widgets.orchestrator.prerun_checklist_panel import PreRunChecklistPanel
 

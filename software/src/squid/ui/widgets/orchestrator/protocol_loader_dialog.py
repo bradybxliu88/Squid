@@ -3,6 +3,7 @@ Protocol Loader Dialog for selecting and validating experiment protocols.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -31,6 +32,18 @@ import squid.core.logging
 _log = squid.core.logging.get_logger(__name__)
 
 _RECENTS_MAX = 8
+
+
+def _norm_dir(path) -> str:
+    """Normalize a directory path for tolerant equality (case/sep-insensitive).
+
+    Used only to decide whether the operator's output folder still matches the
+    protocol's ``output_directory``; never for I/O.
+    """
+    try:
+        return os.path.normcase(os.path.normpath(str(Path(str(path)).expanduser())))
+    except Exception:
+        return str(path)
 
 
 def _recents_path() -> Path:
@@ -102,6 +115,9 @@ class ProtocolLoaderDialog(QDialog):
         self._current_protocol: Optional[ExperimentProtocol] = None
         self._fov_positions: Dict[str, List[Tuple[float, float, float]]] = {}
         self._fov_path: Optional[str] = None
+        # The protocol's output_directory (expanded) once a protocol is loaded;
+        # authoritative save-root that the output field mirrors by default.
+        self._protocol_output_dir: Optional[str] = None
         self._event_bus = event_bus if event_bus is not None else getattr(parent, "_bus", None)
 
         self.setWindowTitle("Load Experiment Protocol")
@@ -148,18 +164,42 @@ class ProtocolLoaderDialog(QDialog):
 
         layout.addWidget(preview_group)
 
-        # Output path selection
+        # Output path selection.
+        #
+        # The protocol's output_directory is authoritative: on load we mirror it
+        # into this field and pass THAT single value as start_experiment(base_path).
+        # An explicit override is allowed but flagged, so the run can never
+        # silently save to a folder the protocol does not name.
         output_group = QGroupBox("Output Directory")
-        output_layout = QHBoxLayout(output_group)
+        output_group_layout = QVBoxLayout(output_group)
 
+        output_layout = QHBoxLayout()
         self._output_edit = QLineEdit()
         self._output_edit.setText(self._default_path)
         self._output_edit.setPlaceholderText("Select output directory...")
+        # Connect AFTER the initial setText so the default doesn't fire a refresh
+        # before the divergence widgets exist.
+        self._output_edit.textChanged.connect(lambda _t: self._refresh_output_divergence())
         output_layout.addWidget(self._output_edit)
 
         output_browse_btn = QPushButton("Browse...")
         output_browse_btn.clicked.connect(self._on_output_browse_clicked)
         output_layout.addWidget(output_browse_btn)
+        output_group_layout.addLayout(output_layout)
+
+        divergence_row = QHBoxLayout()
+        self._output_divergence_label = QLabel("")
+        self._output_divergence_label.setWordWrap(True)
+        self._output_divergence_label.setStyleSheet("color: #888; font-size: 11px;")
+        divergence_row.addWidget(self._output_divergence_label, 1)
+        self._use_protocol_folder_btn = QPushButton("Use protocol folder")
+        self._use_protocol_folder_btn.setToolTip(
+            "Reset the output folder to the one named in the protocol's output_directory."
+        )
+        self._use_protocol_folder_btn.clicked.connect(self._on_use_protocol_folder)
+        self._use_protocol_folder_btn.setVisible(False)
+        divergence_row.addWidget(self._use_protocol_folder_btn, 0)
+        output_group_layout.addLayout(divergence_row)
 
         layout.addWidget(output_group)
 
@@ -267,6 +307,56 @@ class ProtocolLoaderDialog(QDialog):
         )
         if path:
             self._output_edit.setText(path)
+            self._validate_inputs()
+
+    def _refresh_output_divergence(self) -> None:
+        """Keep the output-folder warning in sync with the protocol's authoritative
+        ``output_directory``. Shows a reset button only when they diverge."""
+        lbl = getattr(self, "_output_divergence_label", None)
+        btn = getattr(self, "_use_protocol_folder_btn", None)
+        if lbl is None or btn is None:
+            return
+        try:
+            field = self._output_edit.text().strip()
+            proto = self._protocol_output_dir
+            if not proto:
+                # No protocol output_directory to reconcile against.
+                if self._current_protocol is not None and not field:
+                    lbl.setText("Protocol has no output_directory — set one above; the run saves here.")
+                    lbl.setStyleSheet("color: #d8a53a; font-size: 11px;")
+                else:
+                    lbl.setText("")
+                btn.setVisible(False)
+                return
+            if not field:
+                # An empty field does NOT default anywhere (Load/Start won't
+                # proceed) — tell the operator how to fill it, don't imply a
+                # fallback that doesn't exist.
+                lbl.setText(
+                    "No output folder set — click 'Use protocol folder' or Browse. "
+                    f"The protocol names:\n{proto}"
+                )
+                lbl.setStyleSheet("color: #d8a53a; font-size: 11px;")
+                btn.setVisible(True)
+                return
+            if _norm_dir(field) != _norm_dir(proto):
+                lbl.setText(
+                    "⚠ Saving to a different folder than the protocol specifies:\n"
+                    f"{proto}\nThe run will use the folder above."
+                )
+                lbl.setStyleSheet("color: #d8a53a; font-size: 11px;")
+                btn.setVisible(True)
+            else:
+                lbl.setText("✓ Matches the protocol's output_directory.")
+                lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
+                btn.setVisible(False)
+        except Exception:
+            _log.debug("output divergence refresh failed", exc_info=True)
+
+    def _on_use_protocol_folder(self) -> None:
+        """Reset the output field to the protocol's authoritative output_directory."""
+        if self._protocol_output_dir:
+            self._output_edit.setText(self._protocol_output_dir)
             self._validate_inputs()
 
     def _on_fov_browse_clicked(self) -> None:
@@ -407,13 +497,16 @@ class ProtocolLoaderDialog(QDialog):
             self._show_preview()
             self._validate_channels()
 
-            # Auto-fill output directory from protocol if specified
-            if hasattr(self._current_protocol, 'output_directory') and self._current_protocol.output_directory:
-                output_dir = str(self._current_protocol.output_directory)
-                # Expand ~ to home directory
-                output_dir = str(Path(output_dir).expanduser())
-                if not self._output_edit.text():
-                    self._output_edit.setText(output_dir)
+            # Output directory: the protocol's output_directory is authoritative.
+            # Mirror it into the field on load (the operator may still override,
+            # which is flagged by _refresh_output_divergence), and this single
+            # value is what becomes start_experiment(base_path).
+            self._protocol_output_dir = None
+            if getattr(self._current_protocol, "output_directory", None):
+                output_dir = str(Path(str(self._current_protocol.output_directory)).expanduser())
+                self._protocol_output_dir = output_dir
+                self._output_edit.setText(output_dir)
+            self._refresh_output_divergence()
 
             # Auto-load the run-level FOV file for preview if specified.
             if self._current_protocol.fov_file:
@@ -432,6 +525,8 @@ class ProtocolLoaderDialog(QDialog):
 
         except ProtocolValidationError as e:
             self._current_protocol = None
+            self._protocol_output_dir = None
+            self._refresh_output_divergence()  # clear a stale '✓ Matches' from a prior load
             self._preview_text.setPlainText(f"Error loading protocol:\n{e}")
             self._validation_label.setText(
                 f'<span style="color: red;">Validation failed</span>'
@@ -440,6 +535,8 @@ class ProtocolLoaderDialog(QDialog):
 
         except Exception as e:
             self._current_protocol = None
+            self._protocol_output_dir = None
+            self._refresh_output_divergence()  # clear a stale '✓ Matches' from a prior load
             self._preview_text.setPlainText(f"Error: {e}")
             self._start_btn.setEnabled(False)
 

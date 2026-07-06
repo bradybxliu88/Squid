@@ -3,8 +3,13 @@
 from squid.ui.widgets.orchestrator.prerun_checklist_model import (
     AUTO,
     MANUAL,
+    SEV_INFO,
+    SEV_WARN,
     PreRunChecklistModel,
     default_items,
+    format_fluidics_config_note,
+    format_fov_freshness_note,
+    format_image_format_note,
 )
 
 
@@ -136,3 +141,85 @@ def test_unchecked_required_titles_empty_when_ready():
             model.set_manual(item.item_id, True)
     assert model.is_ready() is True
     assert model.unchecked_required_titles() == []
+
+
+# ------------------------------------------------ Run-environment note helpers
+def test_image_format_note_multipage_names_source_and_resume_caveat():
+    text, sev = format_image_format_note("MULTI_PAGE_TIFF")
+    assert "MULTI_PAGE_TIFF" in text
+    assert "Preferences" in text  # authoritative source
+    assert "ignored" in text  # the Acquisition dropdown decoy
+    assert "INDIVIDUAL_IMAGES" in text  # resume caveat
+    assert sev == SEV_INFO
+
+
+def test_image_format_note_individual_has_no_resume_caveat():
+    text, sev = format_image_format_note("INDIVIDUAL_IMAGES")
+    assert "Resume-from-checkpoint" not in text
+    assert sev == SEV_INFO
+
+
+def test_image_format_note_accepts_enum_like_object():
+    class _Enum:  # mimics FileSavingOption.OME_TIFF
+        name = "OME_TIFF"
+
+    text, sev = format_image_format_note(_Enum())
+    assert "OME_TIFF" in text
+    assert "Resume-from-checkpoint" in text  # not individual images
+
+
+def test_image_format_note_handles_none():
+    text, sev = format_image_format_note(None)
+    assert sev == SEV_INFO
+    assert text  # non-empty, does not raise
+
+
+def test_fluidics_note_disabled_is_empty():
+    assert format_fluidics_config_note("a.json", "b.json", False, None) == ("", SEV_INFO)
+
+
+def test_fluidics_note_same_file_is_ok():
+    text, sev = format_fluidics_config_note(
+        "/x/MERFISH_config.json", "/x/MERFISH_config.json", True, True
+    )
+    assert sev == SEV_INFO
+    assert "matches" in text.lower()
+
+
+def test_fluidics_note_divergent_warns_with_both_paths():
+    text, sev = format_fluidics_config_note(
+        "/bundle/MERFISH_config.json", "./merfish_config/MERFISH_config.json", True, False
+    )
+    assert sev == SEV_WARN
+    assert "/bundle/MERFISH_config.json" in text
+    assert "Initialize" in text
+
+
+def test_fluidics_note_unknown_sameness_warns():
+    _, sev = format_fluidics_config_note("a.json", "b.json", True, None)
+    assert sev == SEV_WARN
+
+
+def test_fluidics_note_no_bundle_shows_live_only():
+    text, sev = format_fluidics_config_note("", "live.json", True, None)
+    assert "live.json" in text
+    assert sev == SEV_INFO
+
+
+def test_fov_freshness_recent_is_info():
+    text, sev = format_fov_freshness_note("fov.csv", 1000.0, 1000.0 + 60)
+    assert sev == SEV_INFO
+    assert "fov.csv" in text
+
+
+def test_fov_freshness_old_warns_recapture():
+    now = 1_000_000.0
+    text, sev = format_fov_freshness_note("fov.csv", now - 48 * 3600, now)
+    assert sev == SEV_WARN
+    assert "re-capture" in text.lower()
+
+
+def test_fov_freshness_missing_mtime_is_info():
+    text, sev = format_fov_freshness_note("fov.csv", None, 1000.0)
+    assert sev == SEV_INFO
+    assert "fov.csv" in text
