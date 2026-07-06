@@ -232,3 +232,76 @@ def test_intervention_buttons_delegate_to_orchestrator(panel):
 
     panel._on_intervention_abort_clicked()
     panel._orchestrator.resolve_intervention.assert_called_with("abort")
+
+
+def test_load_protocol_from_inputs_sets_state_and_loads(panel, tmp_path):
+    protocol_path = tmp_path / "inputs.yaml"
+    protocol_path.write_text(
+        "\n".join(
+            [
+                "name: Inputs Load",
+                'version: "2.0"',
+                "imaging_protocols:",
+                "  standard:",
+                "    channels: [BF]",
+                "rounds:",
+                "  - name: Round 1",
+                "    steps:",
+                "      - step_type: imaging",
+                "        protocol: standard",
+            ]
+        )
+    )
+    fovs = {"region0": [(0.0, 0.0, 0.0)]}
+
+    # The shared entry point used by both the docked panel and the modal dialog.
+    panel.load_protocol_from_inputs(str(protocol_path), str(tmp_path), "exp1", fovs)
+
+    assert panel._protocol_path == str(protocol_path)
+    assert panel._base_path == str(tmp_path)
+    assert panel._experiment_id == "exp1"
+    assert panel._fov_positions == fovs
+    assert panel._protocol_data is not None
+    assert panel._protocol_data["name"] == "Inputs Load"
+
+
+def test_use_external_loader_repoints_load_button(panel):
+    calls = []
+    panel.use_external_loader(lambda: calls.append(True))
+    panel._load_btn.setEnabled(True)
+    panel._load_btn.click()
+    # The button now reveals the docked loader instead of opening the modal.
+    assert calls == [True]
+
+
+def test_load_protocol_from_inputs_refused_during_run(panel, tmp_path):
+    protocol_path = tmp_path / "midrun.yaml"
+    protocol_path.write_text(
+        "\n".join(
+            [
+                "name: Midrun",
+                'version: "2.0"',
+                "imaging_protocols:",
+                "  standard:",
+                "    channels: [BF]",
+                "rounds:",
+                "  - name: Round 1",
+                "    steps:",
+                "      - step_type: imaging",
+                "        protocol: standard",
+            ]
+        )
+    )
+
+    # The docked loader is an always-visible tab; loading must be refused mid-run
+    # (the old modal was gated by the disabled Load button).
+    panel._orch_state = "RUNNING"
+    panel.load_protocol_from_inputs(str(protocol_path), str(tmp_path), "exp", {})
+    assert panel._protocol_data is None  # refused
+
+    # Once idle, the same inputs load normally.
+    panel._orch_state = "IDLE"
+    panel.load_protocol_from_inputs(
+        str(protocol_path), str(tmp_path), "exp", {"r": [(0.0, 0.0, 0.0)]}
+    )
+    assert panel._protocol_data is not None

@@ -888,6 +888,63 @@ class HighContentScreeningGui(QMainWindow):
                 "Pre-run checklist / file editor panels not created", exc_info=True
             )
 
+        # --- Additive: docked (non-modal) protocol loader ---
+        # Folds the old pop-up Load dialog into the tab so setup happens in one
+        # place. Guarded so a failure here can never block the tab; if it fails,
+        # the "Load Protocol" button keeps its default modal behaviour.
+        try:
+            from squid.ui.widgets.orchestrator.protocol_loader_dialog import (
+                ProtocolLoaderPanel,
+            )
+
+            self.orchLoaderPanel = ProtocolLoaderPanel(
+                event_bus=self._ui_event_bus, parent=self
+            )
+            dock_loader = dock.Dock("Load Protocol", autoOrientation=False)
+            dock_loader.showTitleBar()
+            dock_loader.addWidget(self.orchLoaderPanel)
+            dock_loader.setStretch(x=100, y=100)
+            # Tab it with Run Controls so setup is one place: Load here, then
+            # Validate/Start in Run Controls.
+            orchestrator_dockArea.addDock(dock_loader, "below", relativeTo=dock_controls)
+            try:
+                dock_loader.label.setToolTip(
+                    "Select/preview a protocol, set the output folder + FOV file, "
+                    "then 'Load into Orchestrator'. Replaces the old pop-up dialog."
+                )
+            except Exception:
+                pass
+
+            self._orchestrator_loader_dock = dock_loader
+            self._orchestrator_controls_dock = dock_controls
+
+            def _reveal_orch_loader():
+                try:
+                    # Pick up any protocol loaded earlier this session (the panel
+                    # is long-lived, so its Recent list is otherwise stale).
+                    self.orchLoaderPanel.refresh_recents()
+                    dock_loader.raiseDock()
+                    self.orchLoaderPanel.setFocus()
+                except Exception:
+                    pass
+
+            # Repoint the "Load Protocol" button to reveal this dock (not a modal).
+            self.orchestratorControlPanel.use_external_loader(_reveal_orch_loader)
+            # Committing in the panel loads into the control panel + foregrounds
+            # Run Controls (see _on_orch_loader_committed).
+            self.orchLoaderPanel.load_requested.connect(self._on_orch_loader_committed)
+
+            # Show the loader first — it's the first setup step.
+            try:
+                dock_loader.raiseDock()
+            except Exception:
+                pass
+            self.log.info("Orchestrator: docked protocol loader created OK")
+        except Exception:
+            self.log.warning(
+                "Orchestrator docked protocol loader not created", exc_info=True
+            )
+
         # --- Run visibility + safety wiring (guarded; never blocks tab load) ---
         try:
             self._orchestrator_dockArea = orchestrator_dockArea
@@ -948,6 +1005,28 @@ class HighContentScreeningGui(QMainWindow):
 
         self.imageDisplayTabs.addTab(orchestrator_dockArea, "Orchestrator")
 
+    def _on_orch_loader_committed(self) -> None:
+        """The docked protocol loader committed a protocol: load it into the
+        control panel and foreground Run Controls so Validate/Start is visible."""
+        try:
+            panel = getattr(self, "orchLoaderPanel", None)
+            if panel is None:
+                return
+            self.orchestratorControlPanel.load_protocol_from_inputs(
+                panel.get_protocol_path(),
+                panel.get_output_path(),
+                panel.get_experiment_id(),
+                panel.get_fov_positions(),
+            )
+            controls_dock = getattr(self, "_orchestrator_controls_dock", None)
+            if controls_dock is not None:
+                try:
+                    controls_dock.raiseDock()
+                except Exception:
+                    pass
+        except Exception:
+            self.log.debug("orchestrator loader-committed handling failed", exc_info=True)
+
     def _orch_navigate_to_tool(self, tab_title: str) -> None:
         """Best-effort: switch the sub-tab that hosts the named tool so the
         operator can set an out-of-file requirement (laser AF, stage FOV capture)
@@ -975,6 +1054,17 @@ class HighContentScreeningGui(QMainWindow):
     def _on_orch_state_changed(self, old_state: str, new_state: str) -> None:
         """Mirror the orchestrator run state into the always-visible status bar."""
         _ = old_state
+        # Re-establish the old load-time gate for the docked loader: the modal
+        # dialog was only reachable via the Load button (disabled mid-run), but
+        # the docked panel is an always-visible tab — so lock it during a run so
+        # a protocol can't be (re)loaded over a live acquisition.
+        loader = getattr(self, "orchLoaderPanel", None)
+        if loader is not None:
+            try:
+                active = new_state in ("RUNNING", "PAUSED", "WAITING_INTERVENTION")
+                loader.setEnabled(not active)
+            except Exception:
+                pass
         label = getattr(self, "_orch_status_label", None)
         if label is None:
             return

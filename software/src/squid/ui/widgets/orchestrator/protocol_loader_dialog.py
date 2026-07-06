@@ -7,9 +7,10 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QDialog,
+    QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
@@ -90,22 +91,31 @@ def _save_recent(path: str) -> None:
         _log.debug("failed to save recent protocol", exc_info=True)
 
 
-class ProtocolLoaderDialog(QDialog):
-    """Dialog for selecting and previewing experiment protocols.
+class ProtocolLoaderPanel(QWidget):
+    """Non-modal protocol loader (browse/recent, preview, output dir, FOV, id).
+
+    Hosted as a dock in the Orchestrator tab (the primary "one place" UX) and
+    also embedded by the thin ``ProtocolLoaderDialog`` wrapper for the fallback
+    modal path. Emits ``load_requested`` when the operator commits a valid
+    protocol; the host then reads the getters and loads it into the control
+    panel. The panel never starts a run — that stays on the Run Controls Start.
 
     Features:
     - Browse for protocol files
     - Recently used protocols list
     - Protocol preview (name, description, rounds)
     - Channel validation
-    - Output path selection
+    - Output path selection (protocol output_directory is authoritative)
     """
+
+    # Emitted when the operator commits a valid protocol (the "Load" button).
+    load_requested = pyqtSignal()
 
     def __init__(
         self,
         available_channels: Optional[List[str]] = None,
         default_path: str = "",
-        parent: Optional[QDialog] = None,
+        parent: Optional[QWidget] = None,
         event_bus: Optional[object] = None,
     ):
         super().__init__(parent)
@@ -120,13 +130,10 @@ class ProtocolLoaderDialog(QDialog):
         self._protocol_output_dir: Optional[str] = None
         self._event_bus = event_bus if event_bus is not None else getattr(parent, "_bus", None)
 
-        self.setWindowTitle("Load Experiment Protocol")
-        self.setMinimumSize(600, 500)
-
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        """Setup the dialog UI."""
+        """Build the loader UI."""
         layout = QVBoxLayout(self)
 
         # Recent protocols (quick re-load of a frequently used protocol).
@@ -237,26 +244,19 @@ class ProtocolLoaderDialog(QDialog):
         self._validation_label.setWordWrap(True)
         layout.addWidget(self._validation_label)
 
-        # Buttons
+        # Load button. This only LOADS the protocol into the Orchestrator; the
+        # run is started later from the Run Controls' Start button. Labelled
+        # "Load into Orchestrator" so operators don't think it launches the run.
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
-
-        # This dialog only LOADS the protocol into the Orchestrator; the run is
-        # started later from the control panel's Start button. Label it "Load"
-        # so operators don't think clicking here launches the acquisition.
-        self._start_btn = QPushButton("Load Protocol")
+        self._start_btn = QPushButton("Load into Orchestrator")
         self._start_btn.setEnabled(False)
         self._start_btn.clicked.connect(self._on_start_clicked)
         self._start_btn.setToolTip(
             "Load this protocol, its FOV file, and output folder into the "
-            "Orchestrator. You then Validate and Start from the control panel."
+            "Orchestrator. You then Validate and Start from the Run Controls."
         )
         button_layout.addWidget(self._start_btn)
-
         layout.addLayout(button_layout)
 
     def _populate_recents(self) -> None:
@@ -275,6 +275,13 @@ class ProtocolLoaderDialog(QDialog):
                 self._recent_combo.blockSignals(False)
             except Exception:
                 pass
+
+    def refresh_recents(self) -> None:
+        """Re-read the recent-protocols list from disk. The docked panel is
+        long-lived (unlike the old per-click modal), so a protocol loaded earlier
+        this session must be picked up without an app restart. Called by the host
+        when the loader dock is revealed."""
+        self._populate_recents()
 
     def _on_recent_selected(self, index: int) -> None:
         """Load the protocol chosen from the recent list."""
@@ -657,7 +664,8 @@ class ProtocolLoaderDialog(QDialog):
         self._start_btn.setEnabled(valid)
 
     def _on_start_clicked(self) -> None:
-        """Handle start button click."""
+        """Commit the loaded protocol: create the output folder, remember it, and
+        signal the host to load it into the Orchestrator."""
         if self._current_protocol is None:
             return
 
@@ -672,15 +680,10 @@ class ProtocolLoaderDialog(QDialog):
             )
             return
 
-        experiment_id = (
-            self._id_edit.text().strip()
-            or self._current_protocol.name
-        )
-
         # Remember this protocol for the "Recent" list next time.
         _save_recent(self._path_edit.text().strip())
 
-        self.accept()
+        self.load_requested.emit()
 
     def get_protocol(self) -> Optional[ExperimentProtocol]:
         """Get the loaded protocol."""
@@ -732,3 +735,79 @@ class ProtocolLoaderDialog(QDialog):
     def fov_positions(self) -> Dict[str, List[Tuple[float, float, float]]]:
         """FOV positions dict."""
         return self.get_fov_positions()
+
+
+class ProtocolLoaderDialog(QDialog):
+    """Thin modal wrapper around :class:`ProtocolLoaderPanel`.
+
+    Kept for the fallback modal-load path and backward compatibility; the
+    primary UX is the docked ``ProtocolLoaderPanel`` in the Orchestrator tab.
+    The panel's "Load into Orchestrator" button accepts this dialog, so
+    ``dialog.exec_()`` returns truthy exactly when a protocol was committed.
+    """
+
+    def __init__(
+        self,
+        available_channels: Optional[List[str]] = None,
+        default_path: str = "",
+        parent: Optional[QWidget] = None,
+        event_bus: Optional[object] = None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Load Experiment Protocol")
+        self.setMinimumSize(600, 500)
+        bus = event_bus if event_bus is not None else getattr(parent, "_bus", None)
+        self._panel = ProtocolLoaderPanel(
+            available_channels=available_channels,
+            default_path=default_path,
+            parent=self,
+            event_bus=bus,
+        )
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._panel)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        layout.addLayout(button_row)
+
+        # The panel's Load button commits -> accept the dialog.
+        self._panel.load_requested.connect(self.accept)
+
+    # ---- delegate the public API to the embedded panel ----
+    def get_protocol(self) -> Optional[ExperimentProtocol]:
+        return self._panel.get_protocol()
+
+    def get_protocol_path(self) -> str:
+        return self._panel.get_protocol_path()
+
+    def get_output_path(self) -> str:
+        return self._panel.get_output_path()
+
+    def get_experiment_id(self) -> str:
+        return self._panel.get_experiment_id()
+
+    def get_fov_positions(self) -> Dict[str, List[Tuple[float, float, float]]]:
+        return self._panel.get_fov_positions()
+
+    def get_fov_path(self) -> Optional[str]:
+        return self._panel.get_fov_path()
+
+    @property
+    def protocol_path(self) -> str:
+        return self._panel.get_protocol_path()
+
+    @property
+    def base_path(self) -> str:
+        return self._panel.get_output_path()
+
+    @property
+    def experiment_id(self) -> str:
+        return self._panel.get_experiment_id()
+
+    @property
+    def fov_positions(self) -> Dict[str, List[Tuple[float, float, float]]]:
+        return self._panel.get_fov_positions()

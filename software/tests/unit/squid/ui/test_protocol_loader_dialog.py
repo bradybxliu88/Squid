@@ -1,9 +1,13 @@
 """Tests for the protocol loader dialog."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from squid.core.events import ClearScanCoordinatesCommand, LoadScanCoordinatesCommand
-from squid.ui.widgets.orchestrator.protocol_loader_dialog import ProtocolLoaderDialog, _norm_dir
+from squid.ui.widgets.orchestrator.protocol_loader_dialog import (
+    ProtocolLoaderDialog,
+    ProtocolLoaderPanel,
+    _norm_dir,
+)
 
 
 def _imaging_protocol_text(output_directory: str) -> str:
@@ -52,7 +56,7 @@ def test_load_protocol_prefills_output_directory_and_fovs(qtbot, tmp_path):
         )
     )
 
-    dialog = ProtocolLoaderDialog()
+    dialog = ProtocolLoaderPanel()
     qtbot.addWidget(dialog)
 
     dialog._load_protocol(str(protocol_path))
@@ -87,7 +91,7 @@ def test_load_protocol_publishes_preview_fovs(qtbot, tmp_path):
         )
     )
 
-    dialog = ProtocolLoaderDialog(event_bus=event_bus)
+    dialog = ProtocolLoaderPanel(event_bus=event_bus)
     qtbot.addWidget(dialog)
 
     dialog._load_protocol(str(protocol_path))
@@ -115,7 +119,7 @@ def test_output_override_is_flagged_and_revertible(qtbot, tmp_path):
     protocol = tmp_path / "protocol.yaml"
     protocol.write_text(_imaging_protocol_text("outputs"))
 
-    dlg = ProtocolLoaderDialog()
+    dlg = ProtocolLoaderPanel()
     qtbot.addWidget(dlg)
     dlg._load_protocol(str(protocol))
 
@@ -157,7 +161,7 @@ def test_output_dir_missing_from_protocol_prompts_but_does_not_crash(qtbot, tmp_
             ]
         )
     )
-    dlg = ProtocolLoaderDialog(default_path=str(tmp_path))
+    dlg = ProtocolLoaderPanel(default_path=str(tmp_path))
     qtbot.addWidget(dlg)
     dlg._load_protocol(str(protocol))
     # No protocol output_directory -> no reset button, no crash.
@@ -172,7 +176,7 @@ def test_failed_reload_clears_stale_output_match(qtbot, tmp_path):
     protocol = tmp_path / "protocol.yaml"
     protocol.write_text(_imaging_protocol_text("outputs"))
 
-    dlg = ProtocolLoaderDialog()
+    dlg = ProtocolLoaderPanel()
     qtbot.addWidget(dlg)
     dlg._load_protocol(str(protocol))
     assert "Matches" in dlg._output_divergence_label.text()
@@ -192,7 +196,7 @@ def test_empty_output_field_message_is_honest(qtbot, tmp_path):
     protocol = tmp_path / "protocol.yaml"
     protocol.write_text(_imaging_protocol_text("outputs"))
 
-    dlg = ProtocolLoaderDialog()
+    dlg = ProtocolLoaderPanel()
     qtbot.addWidget(dlg)
     dlg._load_protocol(str(protocol))
     dlg._output_edit.setText("")  # operator clears the auto-filled field
@@ -202,3 +206,58 @@ def test_empty_output_field_message_is_honest(qtbot, tmp_path):
     assert "will default" not in txt
     assert "no output folder" in txt
     assert dlg._use_protocol_folder_btn.isHidden() is False
+
+
+def test_panel_emits_load_requested_and_creates_output_dir(qtbot, tmp_path):
+    outputs = tmp_path / "outputs"  # intentionally NOT pre-created
+    (tmp_path / "fovs.csv").write_text("region,x (mm),y (mm)\nr1,1.0,2.0\n")
+    protocol = tmp_path / "protocol.yaml"
+    protocol.write_text(_imaging_protocol_text("outputs"))
+
+    panel = ProtocolLoaderPanel()
+    qtbot.addWidget(panel)
+    panel._load_protocol(str(protocol))
+    assert panel._start_btn.isEnabled() is True
+
+    seen = []
+    panel.load_requested.connect(lambda: seen.append(True))
+    panel._on_start_clicked()
+
+    # Commit signals the host and creates the output folder.
+    assert seen == [True]
+    assert outputs.exists()
+
+
+def test_dialog_wrapper_delegates_and_accepts_on_commit(qtbot, tmp_path):
+    from PyQt5.QtWidgets import QDialog
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    (tmp_path / "fovs.csv").write_text("region,x (mm),y (mm)\nr1,1.0,2.0\n")
+    protocol = tmp_path / "protocol.yaml"
+    protocol.write_text(_imaging_protocol_text("outputs"))
+
+    dialog = ProtocolLoaderDialog()
+    qtbot.addWidget(dialog)
+    dialog._panel._load_protocol(str(protocol))
+
+    # Delegated getters reflect the embedded panel's state.
+    assert _norm_dir(dialog.get_output_path()) == _norm_dir(str(outputs))
+    assert dialog.get_fov_path() == str(tmp_path / "fovs.csv")
+    assert dialog.base_path == dialog.get_output_path()
+
+    # The panel's Load button commit accepts the wrapper dialog.
+    dialog._panel._on_start_clicked()
+    assert dialog.result() == QDialog.Accepted
+
+
+def test_panel_refresh_recents_picks_up_new_entries(qtbot):
+    import squid.ui.widgets.orchestrator.protocol_loader_dialog as mod
+
+    panel = ProtocolLoaderPanel()
+    qtbot.addWidget(panel)
+    # The long-lived docked panel must re-read recents from disk on demand.
+    with patch.object(mod, "_load_recents", return_value=["/x/new_protocol.yaml"]):
+        panel.refresh_recents()
+    datas = [panel._recent_combo.itemData(i) for i in range(panel._recent_combo.count())]
+    assert "/x/new_protocol.yaml" in datas

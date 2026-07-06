@@ -313,6 +313,7 @@ class OrchestratorControlPanel(EventBusWidget):
         self._experiment_id: Optional[str] = None
         self._fov_positions: Dict[str, List[Tuple[float, float, float]]] = {}
         self._validated: bool = False  # True after successful validation
+        self._orch_state: str = "IDLE"  # last observed orchestrator run state
         # Start-from position (set by tree navigation)
         self._start_round_index: int = 0
         self._start_step_index: int = 0
@@ -792,6 +793,7 @@ class OrchestratorControlPanel(EventBusWidget):
     @pyqtSlot(str, str)
     def _on_state_changed_ui(self, old_state: str, new_state: str) -> None:
         del old_state
+        self._orch_state = new_state
         self._status_label.setText(new_state)
         self._update_status_style(new_state)
         try:
@@ -976,17 +978,63 @@ class OrchestratorControlPanel(EventBusWidget):
     # ========================================================================
 
     def _on_load_clicked(self) -> None:
+        """Fallback modal load (used when no docked loader is wired)."""
         from squid.ui.widgets.orchestrator.protocol_loader_dialog import ProtocolLoaderDialog
 
         dialog = ProtocolLoaderDialog(parent=self, event_bus=self._bus)
         if dialog.exec_():
-            self._protocol_path = dialog.get_protocol_path()
-            self._base_path = dialog.get_output_path()
-            self._experiment_id = dialog.get_experiment_id()
-            self._fov_positions = dialog.get_fov_positions()
+            self.load_protocol_from_inputs(
+                dialog.get_protocol_path(),
+                dialog.get_output_path(),
+                dialog.get_experiment_id(),
+                dialog.get_fov_positions(),
+            )
 
-            if self._protocol_path and self._base_path:
-                self._load_protocol(self._protocol_path)
+    def load_protocol_from_inputs(
+        self,
+        protocol_path: str,
+        base_path: str,
+        experiment_id: str,
+        fov_positions: Dict[str, List[Tuple[float, float, float]]],
+    ) -> None:
+        """Load a protocol whose inputs came from an external loader (the docked
+        ProtocolLoaderPanel or the modal dialog). This is the single shared entry
+        point for both the docked and modal load paths.
+
+        Refuses while a run is active — the docked loader is an always-visible
+        tab (unlike the old modal, which was gated by the disabled Load button),
+        so this re-establishes the "no (re)load mid-run" guard at the logic layer.
+        """
+        if self._orch_state in ("RUNNING", "PAUSED", "WAITING_INTERVENTION"):
+            _log.warning(
+                "Ignoring protocol load while a run is active (state=%s).",
+                self._orch_state,
+            )
+            return
+        self._protocol_path = protocol_path
+        self._base_path = base_path
+        self._experiment_id = experiment_id
+        self._fov_positions = fov_positions or {}
+        if self._protocol_path and self._base_path:
+            self._load_protocol(self._protocol_path)
+
+    def use_external_loader(self, reveal_callable) -> None:
+        """Repoint the 'Load Protocol' button to reveal an external (docked)
+        loader instead of opening the modal dialog. Called by main_window once
+        the docked ProtocolLoaderPanel exists; if the dock was not created the
+        button keeps its default modal behaviour."""
+        try:
+            self._load_btn.clicked.disconnect(self._on_load_clicked)
+        except Exception:
+            pass
+        try:
+            self._load_btn.clicked.connect(lambda: reveal_callable())
+            self._load_btn.setToolTip(
+                "Show the Load Protocol panel (select protocol, output folder, "
+                "and FOV file), then Validate and Start."
+            )
+        except Exception:
+            _log.debug("failed to repoint load button", exc_info=True)
 
     def _load_protocol(self, protocol_path: str) -> None:
         from pathlib import Path
