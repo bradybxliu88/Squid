@@ -4,7 +4,7 @@ channels:
   enabled: true
   display_color: '#FFFFFF'
   camera_settings:
-    exposure_time_ms: 12.0
+    exposure_time_ms: 14.0
     gain_mode: 0.0
   z_offset_um: 0.0
   illumination_settings:
@@ -26,21 +26,21 @@ channels:
     gain_mode: 10.0
   z_offset_um: 0.0
   illumination_settings:
-    intensity: 57.0
+    intensity: 61.0
 - name: Fluorescence 488 nm Ex
   enabled: true
   display_color: '#FFFFFF'
   camera_settings:
-    exposure_time_ms: 25.0
+    exposure_time_ms: 100.0
     gain_mode: 10.0
   z_offset_um: 0.0
   illumination_settings:
-    intensity: 62.0
+    intensity: 100.0
 - name: Fluorescence 638 nm Ex
   enabled: true
   display_color: '#FFFFFF'
   camera_settings:
-    exposure_time_ms: 100.0
+    exposure_time_ms: 250.0
     gain_mode: 10.0
   z_offset_um: 0.0
   illumination_settings:

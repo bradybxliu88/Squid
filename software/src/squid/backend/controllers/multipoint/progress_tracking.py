@@ -229,6 +229,7 @@ class ProgressTracker:
                 y_mm=y_mm,
                 fov_width_mm=fov_width_mm,
                 fov_height_mm=fov_height_mm,
+                experiment_id=self._experiment_id,
             )
         )
 

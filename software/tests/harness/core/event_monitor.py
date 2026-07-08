@@ -170,6 +170,44 @@ class EventMonitor:
                         if w[2] is not result_holder
                     ]
 
+    def wait_for_count(
+        self,
+        event_type: Type[E],
+        count: int,
+        timeout_s: float = 30.0,
+        predicate: Optional[Callable[[E], bool]] = None,
+    ) -> int:
+        """
+        Wait until at least ``count`` events of a type have been recorded.
+
+        Use this instead of a fixed ``sleep()`` when a test needs to act once the
+        acquisition has made observable progress (e.g. "abort after the first
+        image is captured"). Returns the count reached, so callers can assert on
+        it; on timeout it returns however many were seen (which will be < count).
+
+        Args:
+            event_type: Event class to count.
+            count: Target number of matching events to wait for.
+            timeout_s: Maximum time to wait in seconds.
+            predicate: Optional filter applied to each event before counting.
+
+        Returns:
+            The number of matching events observed (>= count on success).
+        """
+        deadline = time.monotonic() + timeout_s
+        poll_s = 0.01
+        while True:
+            with self._lock:
+                seen = sum(
+                    1
+                    for r in self._events
+                    if r.event_type == event_type
+                    and (predicate is None or predicate(r.event))
+                )
+            if seen >= count or time.monotonic() >= deadline:
+                return seen
+            time.sleep(poll_s)
+
     def wait_for_all(
         self,
         event_types: List[Type[Event]],

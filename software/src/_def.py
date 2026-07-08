@@ -979,6 +979,27 @@ LASER_AF_FILTER_SIGMA = None
 LASER_AF_INITIALIZE_CROP_WIDTH = 1200
 LASER_AF_INITIALIZE_CROP_HEIGHT = 800
 
+# --- Z-stack centering & laser-AF outlier guard (per-machine tunables) ----------
+# Signed um shift added to the z-stack start so the true SAMPLE focal plane (which
+# sits a fixed offset from the reflection-AF reference/coverslip plane) lands at
+# stack center. Negative shifts the stack toward lower piezo Z. 0 = unchanged.
+AF_FOCUS_OFFSET_UM = 0.0
+# Reject a per-FOV laser-AF result that deviates from the predicted focal plane
+# (temporal same-FOV prior, else spatial neighbor prior) by more than the
+# residual tolerance, then retry (seeded to the prediction) and finally fall back
+# to the predicted plane. Tolerance should sit between normal AF scatter (~few um)
+# and aliased-lock jumps (~20-35 um).
+AF_GUARD_ENABLED = True
+AF_GUARD_MAX_RESIDUAL_UM = 10.0
+AF_GUARD_MAX_RETRIES = 1
+
+# Fraction of a run's FOVs that may FAIL during acquisition before the whole run
+# is reported FAILED (rather than a silent success). FOVs that fail acquisition
+# are always logged; this only governs when the failure count flips the final
+# SUCCESS/FAILED verdict. 0.0 = any failed FOV fails the run; 0.1 = tolerate up
+# to 10% (isolated transients on a large grid) but flag systematic failure.
+ACQUISITION_MAX_FAILED_FOV_FRACTION = 0.1
+
 MULTIPOINT_REFLECTION_AUTOFOCUS_ENABLE_BY_DEFAULT = False
 MULTIPOINT_CONTRAST_AUTOFOCUS_ENABLE_BY_DEFAULT = False
 

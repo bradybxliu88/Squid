@@ -1198,6 +1198,12 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             display_resolution_scaling=self._config.display_resolution_scaling,
             z_stacking_config=self._config.zstack.stacking_direction,
             z_range=self._config.zstack.z_range,
+            af_focus_offset_um=getattr(
+                self._config.zstack, "af_focus_offset_um", _def.AF_FOCUS_OFFSET_UM
+            ),
+            af_guard_enabled=getattr(_def, "AF_GUARD_ENABLED", True),
+            af_guard_max_residual_um=getattr(_def, "AF_GUARD_MAX_RESIDUAL_UM", 10.0),
+            af_guard_max_retries=getattr(_def, "AF_GUARD_MAX_RETRIES", 1),
             skip_saving=self._config.skip_saving,
             acquisition_order=self._config.acquisition_order,
             # Downsampled view generation parameters

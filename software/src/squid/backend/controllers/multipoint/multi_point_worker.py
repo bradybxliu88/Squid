@@ -75,6 +75,7 @@ from squid.backend.controllers.multipoint.position_zstack import (
     ZStackExecutor,
 )
 from squid.backend.controllers.multipoint.focus_operations import AutofocusExecutor
+from squid.backend.controllers.multipoint.focus_guard import FocusGuard
 from squid.backend.controllers.multipoint.backpressure import (
     BackpressureController,
     BackpressureStats,
@@ -249,6 +250,13 @@ class MultiPointWorker:
         self.autofocus_mode = acquisition_parameters.autofocus_mode
         self.autofocus_interval_fovs = acquisition_parameters.autofocus_interval_fovs
         self.focus_lock_settings = acquisition_parameters.focus_lock_settings
+
+        # Focus centering + laser-AF outlier guard (see AcquisitionParameters).
+        self.af_focus_offset_um = float(getattr(acquisition_parameters, "af_focus_offset_um", 0.0) or 0.0)
+        self._af_guard_enabled = bool(getattr(acquisition_parameters, "af_guard_enabled", True))
+        self._af_guard_max_residual_um = float(getattr(acquisition_parameters, "af_guard_max_residual_um", 10.0))
+        self._af_guard_max_retries = int(getattr(acquisition_parameters, "af_guard_max_retries", 1))
+        self._focus_guard_records: List[dict] = []
         self.use_piezo = acquisition_parameters.use_piezo
         self.display_resolution_scaling = (
             acquisition_parameters.display_resolution_scaling
@@ -495,6 +503,24 @@ class MultiPointWorker:
             fovs_per_af=self.autofocus_interval_fovs,
         )
         self._autofocus_executor.set_apply_config_callback(self._select_config)
+
+        # Laser-AF outlier guard: predicts each FOV's focal plane from accepted
+        # history and flags aliased-lock outliers so we can retry / fall back.
+        self._focus_guard = (
+            FocusGuard(
+                tolerance_um=self._af_guard_max_residual_um,
+                temporal_tolerance_um=self._af_guard_max_residual_um,
+            )
+            if self._af_guard_enabled
+            else None
+        )
+
+        # Per-FOV outcome tallies, accumulated across all time points, so the final
+        # run verdict reflects FOVs that failed DURING acquisition (a failed
+        # acquire_at_position only marks the task FAILED; without this it never
+        # reaches the SUCCESS/FAILED verdict and the run reports a silent success).
+        self._failed_fov_total: int = 0
+        self._completed_fov_total: int = 0
 
         # Z-stack executor
         self._zstack_config = ZStackConfig(
@@ -1146,6 +1172,15 @@ class MultiPointWorker:
             _guard("finish_jobs", self._finish_jobs)
             if acquisition_error is None and self._fatal_error is not None:
                 acquisition_error = self._fatal_error
+
+            # Fold FOVs that failed DURING acquisition into the run verdict. A
+            # per-FOV acquire failure only marks that task FAILED; on its own it
+            # never reaches the SUCCESS/FAILED decision, so a run could report a
+            # clean success while silently dropping data.
+            fov_failure_error = self._evaluate_failed_fov_verdict()
+            if acquisition_error is None and not self._aborted and fov_failure_error is not None:
+                acquisition_error = fov_failure_error
+
             # Publish acquisition finished event via ProgressTracker. This MUST
             # always run so the orchestrator's completion wait can return.
             try:
@@ -1532,6 +1567,7 @@ class MultiPointWorker:
             self.coordinates_pd.to_csv(
                 os.path.join(current_path, "coordinates.csv"), index=False, header=True
             )
+            self._write_focus_guard_log(current_path)
 
             utils.create_done_file(current_path)
             self._log.debug(f"Single time point took: {time.time() - start} [s]")
@@ -1593,7 +1629,17 @@ class MultiPointWorker:
         else:
             self._log.info(f"moving to coordinate {coordinate_mm}")
 
-        # Use PositionController for X/Y movement with stabilization (Z is piezo-only)
+        # Use PositionController for X/Y movement with stabilization (Z is piezo-only).
+        # NOTE: the per-FOV coordinate Z (coordinate_mm[2], the focus-map/region plane)
+        # is intentionally NOT applied to the coarse stage here. In BL's piezo-centric Z
+        # design, per-FOV focus is owned by the piezo: laser-reflection AF nulls the
+        # reflection displacement against a reference captured at a FIXED stage Z and
+        # corrects via the piezo (LaserAutofocusController._move_z), and the z-stack is
+        # piezo-driven. Moving the coarse stage per FOV would shift that reference
+        # geometry and fight the piezo/focus-lock. (This differs from Squid_widefield,
+        # which is stage-Z-focused and does move the stage here.) Applying the focus-map
+        # Z per FOV in piezo mode must instead route through the piezo - tracked
+        # separately as it needs hardware-in-the-loop validation.
         self._position_controller.move_to_coordinate(x_mm=x_mm, y_mm=y_mm)
 
         # Register FOV position via ProgressTracker (use actual moved-to position)
@@ -1608,6 +1654,38 @@ class MultiPointWorker:
     def move_to_z_level(self, z_mm: float) -> None:
         """Move to a Z level using PositionController."""
         self._position_controller.move_to_z(z_mm)
+
+    def _evaluate_failed_fov_verdict(self) -> Optional[Exception]:
+        """Decide whether the count of FOVs that FAILED during acquisition should
+        fail the whole run.
+
+        Always logs the failed/total count (so a failure is never silent), and
+        returns an Exception to fail the run only when the failed fraction exceeds
+        ACQUISITION_MAX_FAILED_FOV_FRACTION - an isolated transient on a large grid
+        must not trigger an orchestrator retry/pause on an unattended run, but a
+        systematic failure should. Returns None when there is nothing to fail on.
+        """
+        failed_fovs = getattr(self, "_failed_fov_total", 0)
+        if failed_fovs <= 0:
+            return None
+        completed_fovs = getattr(self, "_completed_fov_total", 0)
+        total_fovs = failed_fovs + completed_fovs
+        try:
+            fail_fraction = float(getattr(_def, "ACQUISITION_MAX_FAILED_FOV_FRACTION", 0.1))
+        except (TypeError, ValueError):
+            fail_fraction = 0.1
+        allowed = int(fail_fraction * total_fovs) if total_fovs > 0 else 0
+        self._log.error(
+            f"Acquisition finished with {failed_fovs}/{total_fovs} FOV(s) FAILED "
+            f"(allowed up to {allowed} at fraction {fail_fraction:g})."
+        )
+        if failed_fovs > allowed:
+            return RuntimeError(
+                f"{failed_fovs} of {total_fovs} FOV(s) failed during acquisition, "
+                f"exceeding the allowed {allowed} "
+                f"(ACQUISITION_MAX_FAILED_FOV_FRACTION={fail_fraction:g})."
+            )
+        return None
 
     def _summarize_runner_outputs(self, drain_all: bool = True) -> SummarizeResult:
         """Process job results from output queues.
@@ -1980,6 +2058,26 @@ class MultiPointWorker:
             # Any deferred tasks should have been restored and handled before exit.
             self._resumed_from_checkpoint = False
 
+            # Accumulate this time point's terminal FOV outcomes before the task
+            # list is reset for the next time point. The task list persists across
+            # time points (reset_for_timepoint clears each task's status), so we
+            # must tally here rather than reading failed_count() at end of run.
+            if self._fov_task_list is not None:
+                try:
+                    tp_failed = self._fov_task_list.failed_count()
+                    tp_completed = self._fov_task_list.completed_count()
+                except Exception:
+                    self._log.exception("Could not tally FOV outcomes for this time point")
+                    tp_failed = 0
+                    tp_completed = 0
+                self._failed_fov_total = getattr(self, "_failed_fov_total", 0) + tp_failed
+                self._completed_fov_total = getattr(self, "_completed_fov_total", 0) + tp_completed
+                if tp_failed > 0:
+                    self._log.error(
+                        f"Time point {self.time_point}: {tp_failed} FOV(s) FAILED during "
+                        f"acquisition ({tp_completed} completed)."
+                    )
+
     def acquire_at_position(
         self,
         region_id: str,
@@ -2011,6 +2109,10 @@ class MultiPointWorker:
                         context={"region_id": region_id},
                     )
                 )
+
+        # Validate the laser-AF result against the predicted focal plane and
+        # correct aliased-lock outliers before the z-stack is positioned.
+        self._apply_focus_guard(region_id, fov, fov_id)
 
         self._log.info(f"acquire_at_position: use_piezo={self.use_piezo}, NZ={self.NZ}")
         if self.use_piezo:
@@ -2350,19 +2452,26 @@ class MultiPointWorker:
             self._camera_service.set_exposure_time(exposure)
         gain = getattr(config, "analog_gain", None)
         if gain is not None:
+            # Analog gain is not supported by every camera. A failure here leaves
+            # the frame valid at the camera's default gain, so warn but continue
+            # rather than failing the FOV.
             try:
                 self._camera_service.set_analog_gain(gain)
             except Exception:
-                pass
+                self._log.warning(
+                    f"set_analog_gain({gain}) failed for channel "
+                    f"'{getattr(config, 'name', '?')}'; continuing at default gain.",
+                    exc_info=True,
+                )
 
         if self._illumination_service is not None:
             source = getattr(config, "illumination_source", None)
             intensity = getattr(config, "illumination_intensity", None)
             if source is not None and intensity is not None:
-                try:
-                    self._illumination_service.set_channel_power(int(source), float(intensity))
-                except Exception:
-                    pass
+                # Wrong illumination power mis-exposes every frame in this channel.
+                # Do NOT swallow it - let it propagate so the FOV is marked failed
+                # instead of silently saving garbage.
+                self._illumination_service.set_channel_power(int(source), float(intensity))
 
         if (
             self._filter_wheel_service
@@ -2371,17 +2480,21 @@ class MultiPointWorker:
         ):
             position = getattr(config, "emission_filter_position", None)
             if position is not None:
+                # The strobe delay offset only fine-tunes hardware-trigger timing;
+                # a failure degrades timing but not channel identity, so warn/continue.
                 try:
                     delay = 0
                     if self._trigger_mode == TriggerMode.HARDWARE:
                         delay = -int(self._camera_service.get_strobe_time())
                     self._filter_wheel_service.set_delay_offset_ms(delay)
                 except Exception:
-                    pass
-                try:
-                    self._filter_wheel_service.set_filter_wheel_position({1: int(position)})
-                except Exception:
-                    pass
+                    self._log.warning(
+                        "Filter-wheel set_delay_offset_ms failed; continuing.",
+                        exc_info=True,
+                    )
+                # A wrong emission filter means the saved frame is the wrong channel.
+                # Do NOT swallow it - let it propagate so the FOV is marked failed.
+                self._filter_wheel_service.set_filter_wheel_position({1: int(position)})
 
     def _turn_on_illumination(self, config: AcquisitionChannel) -> None:
         if self._illumination_service is None:
@@ -2389,10 +2502,9 @@ class MultiPointWorker:
         source = getattr(config, "illumination_source", None)
         if source is None:
             return
-        try:
-            self._illumination_service.turn_on_channel(int(source))
-        except Exception:
-            pass
+        # No illumination means a black frame. Do NOT swallow it - let it propagate
+        # so the FOV is marked failed instead of silently saving a dark image.
+        self._illumination_service.turn_on_channel(int(source))
 
     def _turn_off_illumination(self, config: AcquisitionChannel) -> None:
         if self._illumination_service is None:
@@ -2400,10 +2512,10 @@ class MultiPointWorker:
         source = getattr(config, "illumination_source", None)
         if source is None:
             return
-        try:
-            self._illumination_service.turn_off_channel(int(source))
-        except Exception:
-            pass
+        # A light that will not turn off contaminates the next channel with
+        # crosstalk. Surface it rather than swallowing (the already-captured frame
+        # is safe, and teardown force-lasers-off is the hardware safety net).
+        self._illumination_service.turn_off_channel(int(source))
 
     def _warmup_illumination(self) -> None:
         """Wake each excitation laser used this round before the FOV loop.
@@ -2510,24 +2622,198 @@ class MultiPointWorker:
             return False
 
     def prepare_z_stack(self) -> None:
-        """Prepare for z-stack by moving to start position (FROM CENTER mode)."""
-        # For FROM CENTER mode, move to bottom of z-stack.
-        if self.z_stacking_config != "FROM CENTER":
-            return
+        """Move the piezo to the z-stack start plane.
 
-        z_delta_um = -float(self.deltaZ) * round((self.NZ - 1) / 2.0)
-        if z_delta_um == 0:
+        Two independent shifts are combined:
+          * FROM CENTER centering: drop to the bottom of a stack centered on the
+            autofocus plane, ``-deltaZ * round((NZ-1)/2)``.
+          * ``af_focus_offset_um``: a signed shift that re-centers the stack on
+            the true SAMPLE focal plane, which sits a fixed offset below the
+            reflection-AF *reference* (coverslip) plane. Applies to every
+            stacking mode so the offset works for FROM BOTTOM / FROM TOP too.
+        """
+        offset_um = float(getattr(self, "af_focus_offset_um", 0.0) or 0.0)
+        center_delta_um = 0.0
+        if self.z_stacking_config == "FROM CENTER":
+            center_delta_um = -float(self.deltaZ) * round((self.NZ - 1) / 2.0)
+        total_delta_um = center_delta_um + offset_um
+        if total_delta_um == 0:
             return
 
         if self.use_piezo and self._piezo_service is not None:
-            start_piezo_um = self._piezo_service.get_position() + z_delta_um
+            start_piezo_um = self._piezo_service.get_position() + total_delta_um
             self._zstack_executor.reset_piezo(start_piezo_um)
             self.z_piezo_um = self._zstack_executor.z_piezo_um
             self._log.info(
-                "Prepared z-stack start on piezo: delta=%+.2f um start=%+.2f um",
-                z_delta_um,
+                "Prepared z-stack start on piezo: center_delta=%+.2f offset=%+.2f start=%.2f um",
+                center_delta_um,
+                offset_um,
                 self.z_piezo_um,
             )
+
+    # ------------------------------------------------------------------
+    # Laser-AF outlier guard
+    # ------------------------------------------------------------------
+    def _fov_world_xy(self, region_id: str, fov: int) -> Optional[Tuple[float, float]]:
+        """World (x_mm, y_mm) for a FOV, or None if unavailable."""
+        coords = self.scan_region_fov_coords_mm.get(region_id)
+        if not coords or fov < 0 or fov >= len(coords):
+            return None
+        c = coords[fov]
+        if len(c) < 2:
+            return None
+        return float(c[0]), float(c[1])
+
+    def _read_focus_um(self) -> Optional[float]:
+        """Absolute focal Z in um = stage Z + piezo (works whether AF moves piezo or stage)."""
+        z = 0.0
+        got = False
+        try:
+            z += float(self._stage_service.get_position().z_mm) * 1000.0
+            got = True
+        except Exception:
+            self._log.debug("Focus guard: stage Z read failed", exc_info=True)
+        if self.use_piezo and self._piezo_service is not None:
+            try:
+                z += float(self._piezo_service.get_position())
+                got = True
+            except Exception:
+                self._log.debug("Focus guard: piezo read failed", exc_info=True)
+        return z if got else None
+
+    def _nudge_focus_to(self, target_um: float) -> None:
+        """Move focus to an absolute Z (um) by correcting the piezo (or stage)."""
+        current = self._read_focus_um()
+        if current is None:
+            return
+        correction = float(target_um) - current
+        if abs(correction) < 1e-3:
+            return
+        if self.use_piezo and self._piezo_service is not None:
+            new_piezo = self._piezo_service.get_position() + correction
+            get_range = getattr(self._piezo_service, "get_range", None)
+            if callable(get_range):
+                try:
+                    lo, hi = get_range()
+                    new_piezo = max(float(lo), min(float(hi), new_piezo))
+                except Exception:
+                    pass
+            self._piezo_service.move_to(new_piezo)
+        else:
+            self._stage_service.move_z(correction / 1000.0)
+            self._stage_service.wait_for_idle()
+
+    def _apply_focus_guard(self, region_id: str, fov: int, fov_id: Optional[str] = None) -> None:
+        """Reject an aliased laser-AF lock: predict the focal plane from accepted
+        history, and on an outlier retry the AF (seeded to the prediction) or fall
+        back to the predicted plane. No-op unless in LASER_REFLECTION mode with the
+        guard enabled. See :class:`FocusGuard`.
+        """
+        guard = getattr(self, "_focus_guard", None)
+        if guard is None or self.autofocus_mode != AutofocusMode.LASER_REFLECTION:
+            return
+        max_retries = int(getattr(self, "_af_guard_max_retries", 1))
+        xy = self._fov_world_xy(region_id, fov)
+        if xy is None:
+            return
+        x_mm, y_mm = xy
+
+        measured = self._read_focus_um()
+        if measured is None:
+            return
+        decision = guard.evaluate(region_id, fov, x_mm, y_mm, measured)
+
+        retries = 0
+        if decision.rejected:
+            for _ in range(max(0, max_retries)):
+                retries += 1
+                # Seed to the prediction so the AF re-measures near the correct
+                # reflection instead of re-aliasing to the same wrong surface.
+                if decision.predicted_um is not None:
+                    self._nudge_focus_to(decision.predicted_um)
+                try:
+                    self.perform_autofocus(region_id, fov)
+                except Exception:
+                    self._log.exception("Focus guard: retry autofocus raised")
+                measured = self._read_focus_um()
+                if measured is None:
+                    break
+                decision = guard.evaluate(region_id, fov, x_mm, y_mm, measured)
+                if not decision.rejected:
+                    break
+
+        if decision.rejected and decision.predicted_um is not None:
+            # Retries exhausted — image at the predicted plane (best estimate).
+            self._nudge_focus_to(decision.predicted_um)
+            measured = decision.predicted_um
+            self._log.warning(
+                "Focus guard: FOV %s/%s laser-AF rejected as outlier "
+                "(measured=%.2f predicted=%.2f residual=%.2f tol=%.2f um, %s, retries=%d); "
+                "imaging at predicted plane",
+                region_id, fov, decision.measured_um, decision.predicted_um,
+                decision.residual_um if decision.residual_um is not None else float("nan"),
+                decision.tolerance_um, decision.source, retries,
+            )
+            if self._event_bus is not None:
+                self._event_bus.publish(
+                    AddWarningCommand(
+                        category="FOCUS",
+                        severity="MEDIUM",
+                        message=(
+                            f"Autofocus outlier corrected at region {region_id}, fov {fov}: "
+                            f"AF={decision.measured_um:.1f}um vs predicted {decision.predicted_um:.1f}um "
+                            f"(>{decision.tolerance_um:.0f}um); imaged at predicted plane"
+                        ),
+                        round_index=self._current_round_index,
+                        round_name=f"Round {self._current_round_index + 1}",
+                        time_point=self.time_point,
+                        operation_type="imaging",
+                        fov_id=fov_id,
+                        fov_index=fov,
+                        context={"region_id": region_id, "residual_um": decision.residual_um},
+                    )
+                )
+        else:
+            # Accepted (initially, or recovered by a retry) — trusted, feed the predictor.
+            guard.observe(region_id, fov, x_mm, y_mm, measured)
+            if decision.residual_um is not None and abs(decision.residual_um) > 0.5 * decision.tolerance_um:
+                self._log.info(
+                    "Focus guard: FOV %s/%s ok after check (residual=%.2f um, %s, retries=%d)",
+                    region_id, fov, decision.residual_um, decision.source, retries,
+                )
+
+        records = getattr(self, "_focus_guard_records", None)
+        if records is None:
+            records = self._focus_guard_records = []
+        records.append(
+            {
+                "region": region_id,
+                "fov": fov,
+                "x_mm": x_mm,
+                "y_mm": y_mm,
+                "measured_um": round(decision.measured_um, 3),
+                "predicted_um": (round(decision.predicted_um, 3) if decision.predicted_um is not None else None),
+                "residual_um": (round(decision.residual_um, 3) if decision.residual_um is not None else None),
+                "tolerance_um": decision.tolerance_um,
+                "source": decision.source,
+                "outlier": bool(decision.rejected),
+                "retries": retries,
+                "time_point": self.time_point,
+            }
+        )
+
+    def _write_focus_guard_log(self, current_path: str) -> None:
+        """Best-effort dump of per-FOV focus-guard decisions to focus_guard.csv."""
+        if not self._focus_guard_records:
+            return
+        try:
+            import pandas as pd
+
+            pd.DataFrame(self._focus_guard_records).to_csv(
+                os.path.join(current_path, "focus_guard.csv"), index=False, header=True
+            )
+        except Exception:
+            self._log.debug("Focus guard: failed to write focus_guard.csv", exc_info=True)
 
     def handle_z_offset(self, config: AcquisitionChannel, not_offset: bool) -> None:
         if config.z_offset is not None and config.z_offset != 0.0:
@@ -2664,6 +2950,7 @@ class MultiPointWorker:
                         y_mm=info.position.y_mm,
                         z_mm=info.position.z_mm,
                         region_id=info.region_id,
+                        experiment_id=self.experiment_ID or "",
                     )
                 )
 

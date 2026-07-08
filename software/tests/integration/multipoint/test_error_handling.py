@@ -65,14 +65,17 @@ class TestAbortHandling:
         # Start acquisition (non-blocking)
         sim.start()
 
-        # Wait briefly then abort
-        sim.sleep(0.3)
+        # Wait until at least one image is actually captured, then abort. Waiting
+        # for real progress (instead of a fixed sleep that guesses first-frame
+        # latency) keeps the "partial acquisition" assertion deterministic on
+        # slow/loaded machines. The 5x5x2x3 grid leaves ~149 frames uncaptured.
+        assert sim.wait_for_images(1) >= 1, "No image captured before abort"
         sim.stop()
 
         # Wait for acquisition to finish
         from squid.core.events import AcquisitionWorkerFinished
 
-        finish = sim.wait_for(AcquisitionWorkerFinished, timeout_s=30)
+        finish = sim.wait_for(AcquisitionWorkerFinished, timeout_s=60)
 
         assert finish is not None, "Acquisition did not finish after abort"
 
@@ -91,12 +94,15 @@ class TestAbortHandling:
         sim.set_channels(channels[:1])
 
         sim.start()
-        sim.sleep(0.2)
+        # Abort only once the run is genuinely in progress, so the ABORTING state
+        # transition is guaranteed to occur (a fixed sleep could abort before the
+        # worker started under load).
+        assert sim.wait_for_images(1) >= 1, "No image captured before abort"
         sim.stop()
 
         from squid.core.events import AcquisitionWorkerFinished, AcquisitionStateChanged
 
-        sim.wait_for(AcquisitionWorkerFinished, timeout_s=30)
+        sim.wait_for(AcquisitionWorkerFinished, timeout_s=60)
 
         # Wait a bit for final state change to be processed
         sim.sleep(0.3)
@@ -120,7 +126,8 @@ class TestAbortHandling:
         sim.set_channels(channels[:1])
 
         sim.start()
-        sim.sleep(0.1)
+        # Abort once the run is in progress rather than after a fixed sleep.
+        assert sim.wait_for_images(1) >= 1, "No image captured before abort"
 
         # Send multiple aborts
         sim.stop()
@@ -129,7 +136,7 @@ class TestAbortHandling:
 
         from squid.core.events import AcquisitionWorkerFinished
 
-        finish = sim.wait_for(AcquisitionWorkerFinished, timeout_s=30)
+        finish = sim.wait_for(AcquisitionWorkerFinished, timeout_s=60)
 
         # Should still complete gracefully
         assert finish is not None
@@ -163,7 +170,7 @@ class TestStateTransitions:
         # Don't add any coordinates
         sim.set_channels(channels[:1])
 
-        result = sim.run_and_wait(timeout_s=10)
+        result = sim.run_and_wait(timeout_s=30)
 
         # Should fail or complete with 0 images
         # (depends on implementation - may validate or just complete empty)

@@ -1655,12 +1655,17 @@ class CurrentFOVRegistered(Event):
     """Emitted when a new FOV is acquired during multipoint acquisition.
 
     Used by NavigationViewer to draw the scan grid and track progress.
+
+    experiment_id identifies the acquisition run that produced this event so
+    consumers on the shared EventBus can filter out FOVs from a different run.
+    Defaults to "" for callers that do not set it.
     """
 
     x_mm: float
     y_mm: float
     fov_width_mm: float = 0.0  # FOV width at time of acquisition
     fov_height_mm: float = 0.0  # FOV height at time of acquisition
+    experiment_id: str = ""
 
 
 @dataclass
@@ -1668,12 +1673,18 @@ class AcquisitionCoordinates(Event):
     """Emitted during acquisition with current position and region info.
 
     Used for tracking acquisition progress with spatial context.
+
+    experiment_id identifies the acquisition run that produced this event, so
+    consumers on the shared EventBus can filter out coordinates from a different
+    (e.g. previous) acquisition - mirroring AcquisitionWorkerFinished. Defaults
+    to "" for callers that do not set it.
     """
 
     x_mm: float
     y_mm: float
     z_mm: float
     region_id: int
+    experiment_id: str = ""
 
 
 # ============================================================================

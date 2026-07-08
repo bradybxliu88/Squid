@@ -49,6 +49,13 @@ from squid.core.events import (
 
 import tests.control.test_stubs as ts
 
+# Generous ceiling for "acquisition finished" waits. Simulated acquisitions are
+# bounded and deterministic, so this is a safety net against a genuine hang, not a
+# performance budget: wait_for_completion returns as soon as the event fires, so a
+# large ceiling costs nothing on a fast machine but prevents false failures under
+# load (heavy 2200x2200 sim camera, autofocus sweeps).
+ACQUISITION_COMPLETION_TIMEOUT_S = 120
+
 
 @dataclass
 class AcquisitionEventCollector:
@@ -122,9 +129,25 @@ class AcquisitionEventCollector:
     def total_images_captured(self) -> int:
         return len(self.coordinate_updates)
 
-    def wait_for_completion(self, timeout_s: float = 10.0) -> bool:
+    def wait_for_completion(
+        self, timeout_s: float = ACQUISITION_COMPLETION_TIMEOUT_S
+    ) -> bool:
         """Wait for acquisition to complete. Returns True if completed, False on timeout."""
         return self.worker_finished_event.wait(timeout_s)
+
+    def wait_for_images(self, count: int = 1, timeout_s: float = 60.0) -> int:
+        """Block until at least ``count`` images have been captured this run.
+
+        Robust replacement for ``sleep(<fixed>)`` before an abort: it waits for
+        real acquisition progress (one AcquisitionCoordinates event per image)
+        instead of guessing first-frame latency. Returns the count observed.
+        """
+        deadline = time.monotonic() + timeout_s
+        while True:
+            seen = self.total_images_captured
+            if seen >= count or time.monotonic() >= deadline:
+                return seen
+            time.sleep(0.01)
 
 
 def _get_valid_coordinates(mpc: MultiPointController):
@@ -171,7 +194,7 @@ class TestBasicAcquisitionScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=10)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
         assert collector.started_event.is_set()
 
@@ -194,7 +217,7 @@ class TestBasicAcquisitionScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=10)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
 
     def test_multi_fov_grid(self):
@@ -217,7 +240,7 @@ class TestBasicAcquisitionScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
         assert len(collector.fov_registrations) == 9
 
@@ -248,7 +271,7 @@ class TestZStackScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
 
     def test_zstack_from_center(self):
@@ -270,7 +293,7 @@ class TestZStackScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == nz
 
     def test_zstack_multi_channel(self):
@@ -294,7 +317,7 @@ class TestZStackScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
 
 
@@ -324,7 +347,7 @@ class TestTimeLapseScenarios:
         start_time = time.time()
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         elapsed = time.time() - start_time
 
         # Should take at least (nt-1) * dt seconds for intervals
@@ -355,7 +378,7 @@ class TestTimeLapseScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
 
 
@@ -381,7 +404,7 @@ class TestAutofocusScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == 2
 
     def test_acquisition_with_laser_af(self):
@@ -408,7 +431,7 @@ class TestAutofocusScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == 1
 
 
@@ -433,14 +456,16 @@ class TestAbortScenarios:
         mpc.run_acquisition()
 
         # Wait for acquisition to start
-        assert collector.started_event.wait(timeout=5)
+        assert collector.started_event.wait(timeout=ACQUISITION_COMPLETION_TIMEOUT_S)
 
-        # Wait a bit then abort
-        time.sleep(0.3)
+        # Abort once at least one image is captured (real progress), rather than
+        # after a fixed sleep that guesses first-frame latency. The 5x5x2x3 grid
+        # leaves plenty of frames uncaptured for the "partial" assertion below.
+        assert collector.wait_for_images(1) >= 1, "No image captured before abort"
         mpc.request_abort_aquisition()
 
         # Should complete (via abort) within reasonable time
-        assert collector.wait_for_completion(timeout_s=10)
+        assert collector.wait_for_completion()
 
         # Should have captured fewer images than expected
         expected_total = 5 * 5 * 2 * 3  # 25 FOVs × 2 channels × 3 z-levels
@@ -463,7 +488,7 @@ class TestAbortScenarios:
         collector = AcquisitionEventCollector()
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=10)
+        assert collector.wait_for_completion()
 
 
 class TestMultiRegionScenarios:
@@ -493,7 +518,7 @@ class TestMultiRegionScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=15)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
         assert len(collector.fov_registrations) == 4
 
@@ -522,7 +547,7 @@ class TestMultiRegionScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=20)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
 
 
@@ -545,7 +570,7 @@ class TestProgressTrackingScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=20)
+        assert collector.wait_for_completion()
 
         # Should have received progress updates
         assert len(collector.progress_updates) > 0
@@ -570,7 +595,7 @@ class TestProgressTrackingScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=10)
+        assert collector.wait_for_completion()
 
         # Should have state change events
         assert len(collector.state_changes) > 0
@@ -609,7 +634,7 @@ class TestComplexAcquisitionScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=60)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
 
     def test_timelapse_multiwell_zstack(self):
@@ -639,7 +664,7 @@ class TestComplexAcquisitionScenarios:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=30)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == expected_images
 
 
@@ -662,7 +687,7 @@ class TestEdgeCases:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=10)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == 1
 
     def test_single_timepoint(self):
@@ -681,7 +706,7 @@ class TestEdgeCases:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=10)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == 1
 
     def test_empty_scan_coordinates(self):
@@ -722,5 +747,5 @@ class TestEdgeCases:
 
         mpc.run_acquisition()
 
-        assert collector.wait_for_completion(timeout_s=30)
+        assert collector.wait_for_completion()
         assert collector.total_images_captured == nz

@@ -244,13 +244,15 @@ class TestAbortHandling:
         # Start non-blocking
         sim.start()
 
-        # Wait a bit then abort
-        time.sleep(0.5)
+        # Abort once at least one image is captured (real progress), rather than
+        # after a fixed sleep that guesses first-frame latency. The 5x5x2x3 grid
+        # leaves plenty of frames uncaptured for the "partial" assertion.
+        assert sim.wait_for_images(1) >= 1, "No image captured before abort"
         sim.stop()
 
         # Wait for completion
         from squid.core.events import AcquisitionWorkerFinished
-        finish = sim.wait_for(AcquisitionWorkerFinished, timeout_s=30)
+        finish = sim.wait_for(AcquisitionWorkerFinished, timeout_s=60)
 
         # Should complete (aborted) with fewer images than expected
         expected_total = 5 * 5 * min(2, len(channels)) * 3

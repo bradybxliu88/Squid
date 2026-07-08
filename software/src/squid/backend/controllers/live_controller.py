@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import Optional, Set, TYPE_CHECKING
@@ -121,6 +122,14 @@ class LiveController(StateMachine[LiveControllerState]):
         self.fps_trigger: float = 10
         self.timer_trigger_interval: float = (1.0 / self.fps_trigger) * 1000
         self._trigger_skip_count: int = 0
+        # Frozen-live-view auto-recovery: timestamp of the first of an unbroken
+        # run of "camera not ready" ticks while live. None means the live view is
+        # healthy. A sustained stall (readiness stuck, or callbacks disabled e.g.
+        # by the laser-AF controller and never re-enabled) means frames stopped
+        # arriving; we re-arm the camera instead of counting skips forever.
+        self._live_stall_since: Optional[float] = None
+        self._live_stall_recovery_min_s: float = 2.0
+        self._live_stall_recovery_max_s: float = 10.0
         self.timer_trigger: Optional[threading.Timer] = None
         self._illumination_off_pending: bool = False
 
@@ -483,9 +492,12 @@ class LiveController(StateMachine[LiveControllerState]):
                     self._log.debug(
                         f"Not ready for trigger, skipping (_trigger_skip_count={self._trigger_skip_count}, total frame time = {total_frame_time} [ms])."
                     )
+                self._handle_trigger_not_ready()
                 return False
 
+            # A successful trigger means the live view is healthy: clear stall tracking.
             self._trigger_skip_count = 0
+            self._live_stall_since = None
             if self.trigger_mode == TriggerMode.SOFTWARE and self.control_illumination:
                 if not self.illumination_on:
                     self.turn_on_illumination()
@@ -495,6 +507,79 @@ class LiveController(StateMachine[LiveControllerState]):
             self._camera_service.send_trigger()
 
             return True
+
+    def _handle_trigger_not_ready(self) -> None:
+        """Auto-recover a stalled live view on a 'camera not ready' tick.
+
+        A single skipped trigger is normal over-triggering. But an *unbroken* run
+        of skips while live means the live view has silently stopped receiving
+        frames (frozen/black) - historically this only recovered when the user
+        changed channel/exposure. Detect a sustained stall and re-arm the camera
+        automatically. Called while holding self._lock.
+        """
+        if not self.is_live:
+            return
+
+        now = time.time()
+        if self._live_stall_since is None:
+            self._live_stall_since = now
+            return
+
+        stalled_for = now - self._live_stall_since
+        if stalled_for < self._live_stall_recovery_threshold():
+            return
+
+        exposure_ms = float("nan")
+        try:
+            exposure_ms = self._camera_service.get_exposure_time()
+        except Exception:
+            pass
+        self._log.warning(
+            f"Live view stalled for {stalled_for:.1f}s with no camera frame "
+            f"(exposure={exposure_ms:.0f}ms) - re-arming camera trigger."
+        )
+        self._recover_stalled_live()
+        # Restart the stall clock so recovery is rate-limited to once per threshold.
+        self._live_stall_since = now
+
+    def _live_stall_recovery_threshold(self) -> float:
+        """Seconds of continuous 'not ready' to tolerate before treating the live
+        view as stalled.
+
+        Scales with the frame time so a legitimately long exposure is not mistaken
+        for a stall, but is clamped so a bogus/huge reported frame time cannot
+        disable recovery entirely.
+        """
+        frame_time_s = 0.0
+        try:
+            frame_time_s = self._camera_service.get_total_frame_time() / 1000.0
+        except Exception:
+            pass
+        return min(
+            self._live_stall_recovery_max_s,
+            max(self._live_stall_recovery_min_s, 3.0 * frame_time_s),
+        )
+
+    def _recover_stalled_live(self) -> None:
+        """Re-arm a stalled software-trigger live view (mirrors a manual
+        channel/exposure change). Re-enabling callbacks clears the most common
+        cause - callbacks disabled by the laser-AF controller and never restored -
+        and a restart of streaming clears a camera whose readiness is stuck."""
+        try:
+            self._camera_service.enable_callbacks(True)
+        except Exception:
+            self._log.exception("enable_callbacks failed during live-view stall recovery.")
+        # Some cameras expose an explicit trigger-readiness reset; use it if present.
+        reset_trigger_readiness = getattr(
+            self._camera_service, "reset_trigger_readiness", None
+        )
+        if callable(reset_trigger_readiness):
+            try:
+                reset_trigger_readiness()
+            except Exception:
+                self._log.exception(
+                    "reset_trigger_readiness failed during live-view stall recovery."
+                )
 
     def _stop_existing_timer(self) -> None:
         with self._lock:

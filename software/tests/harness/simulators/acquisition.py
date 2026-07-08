@@ -109,6 +109,10 @@ class AcquisitionSimulator(BaseSimulator):
         self._use_piezo = False
         self._skip_saving = True
 
+        # experiment_id of the most recent start(), used to filter this run's
+        # events off the shared EventBus (see wait_for_images / run_and_wait).
+        self._last_experiment_id: str = ""
+
         # Force creation of controllers/managers so they subscribe to EventBus
         # before we publish commands. This is needed because they're created lazily.
         _ = ctx.multipoint_controller
@@ -508,6 +512,7 @@ class AcquisitionSimulator(BaseSimulator):
         """
         import uuid
         exp_id = experiment_id or f"test_{uuid.uuid4().hex[:8]}"
+        self._last_experiment_id = exp_id
 
         # Get Z range from current position
         center = self._ctx.get_stage_center()
@@ -560,6 +565,27 @@ class AcquisitionSimulator(BaseSimulator):
     def stop(self) -> None:
         """Stop/abort the current acquisition."""
         self.publish(StopAcquisitionCommand())
+
+    def wait_for_images(self, count: int = 1, timeout_s: float = 60.0) -> int:
+        """
+        Block until at least ``count`` images have been captured this run.
+
+        Robust replacement for ``sleep(<fixed>)`` before an abort: it waits for
+        real acquisition progress (an ``AcquisitionCoordinates`` event per image)
+        instead of guessing how long the first frame takes, which is what made
+        the abort tests flaky on slow/loaded machines. Only images from the most
+        recent start() are counted (filtered by experiment_id), so a previous
+        run's trailing events on the shared EventBus cannot trigger an early abort.
+
+        Returns the number of images observed (>= count on success).
+        """
+        exp_id = self._last_experiment_id
+        predicate = (
+            (lambda e: e.experiment_id.startswith(exp_id)) if exp_id else None
+        )
+        return self.monitor.wait_for_count(
+            AcquisitionCoordinates, count, timeout_s=timeout_s, predicate=predicate
+        )
 
     def run_and_wait(
         self,
@@ -627,8 +653,18 @@ class AcquisitionSimulator(BaseSimulator):
             state_changes=filter_by_exp_id(
                 self.monitor.get_events(AcquisitionStateChanged), exp_id
             ),
-            coordinate_events=self.monitor.get_events(AcquisitionCoordinates),
-            fov_registrations=self.monitor.get_events(CurrentFOVRegistered),
+            # AcquisitionCoordinates and CurrentFOVRegistered now carry
+            # experiment_id, so filter them like the rest. The EventBus is a shared
+            # singleton across tests, and a previous acquisition's pipeline can emit
+            # trailing coordinate/FOV events into this monitor; filtering by our
+            # experiment_id prefix keeps total_images/total_fovs accurate instead of
+            # counting another run's events.
+            coordinate_events=filter_by_exp_id(
+                self.monitor.get_events(AcquisitionCoordinates), exp_id
+            ),
+            fov_registrations=filter_by_exp_id(
+                self.monitor.get_events(CurrentFOVRegistered), exp_id
+            ),
         )
 
         result.total_images = len(result.coordinate_events)

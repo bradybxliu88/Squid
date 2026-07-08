@@ -58,6 +58,22 @@ class AcquisitionParameters:
     skip_saving: bool = False
     acquisition_order: str = "channel_first"  # "channel_first" or "z_first"
 
+    # --- Focus centering & autofocus outlier guard -------------------------------
+    # Signed micrometer shift added to the z-stack start so the true SAMPLE focal
+    # plane (which sits a fixed offset from the reflection-AF *reference* plane —
+    # the coverslip) lands at the CENTER of the acquired stack. Negative shifts
+    # the whole stack toward lower piezo Z. Default 0 = unchanged behavior.
+    af_focus_offset_um: float = 0.0
+    # Reject a per-FOV laser-AF result that deviates from the predicted focal
+    # plane (temporal same-FOV prior, else spatial neighbor prior) by more than
+    # af_guard_max_residual_um, then retry (seeded to the prediction) up to
+    # af_guard_max_retries times and finally fall back to the predicted plane.
+    # Only active in AutofocusMode.LASER_REFLECTION. Tolerance should sit in the
+    # gap between normal AF scatter (~few um) and aliased-lock jumps (~20-35 um).
+    af_guard_enabled: bool = True
+    af_guard_max_residual_um: float = 10.0
+    af_guard_max_retries: int = 1
+
     # Downsampled view generation parameters
     generate_downsampled_views: bool = False
     save_downsampled_well_images: bool = False  # Save individual well TIFFs
