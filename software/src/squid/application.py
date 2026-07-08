@@ -864,11 +864,14 @@ class ApplicationContext:
         """Build fluidics driver based on configuration.
 
         Returns:
-            AbstractFluidicsController if configured and available, None otherwise.
+            AbstractFluidicsController if configured and available, None if fluidics is
+            disabled (RUN_FLUIDICS=False) or, in SIMULATION mode only, if the config is
+            missing.
 
-        Creates SimulatedFluidicsController in simulation mode or when
-        fluidics_v2 submodule is not available. Creates MERFISHFluidicsDriver
-        for real hardware.
+        Creates SimulatedFluidicsController in simulation mode and MERFISHFluidicsDriver
+        for real hardware. In HARDWARE mode this raises RuntimeError rather than silently
+        falling back to the simulator, so a run can never execute with fluidics quietly
+        disabled (pumps/valves idle while the GUI looks live).
         """
         import sys
         from pathlib import Path
@@ -888,15 +891,29 @@ class ApplicationContext:
         # application.py is at software/src/squid/application.py
         software_dir = Path(__file__).parent.parent.parent
 
-        # Get config file path
+        # Get config file path. A relative FLUIDICS_CONFIG_PATH (the shipped default is
+        # "./merfish_config/MERFISH_config.json") must resolve against software/ -- NOT the
+        # process CWD -- because the launchers (launch.bat / launch_hardware.bat) cd into
+        # software/src before starting, where a CWD-relative path silently misses and fluidics
+        # would be disabled with only a log warning.
         fluidics_config_path = getattr(_config, "FLUIDICS_CONFIG_PATH", None)
         if fluidics_config_path:
             config_path = Path(fluidics_config_path)
+            if not config_path.is_absolute():
+                config_path = (software_dir / config_path).resolve()
         else:
             # Default to configurations/fluidics_simulation.json
             config_path = software_dir / "configurations" / "fluidics_simulation.json"
 
         if not config_path.exists():
+            if not self._simulation:
+                raise RuntimeError(
+                    f"Fluidics config not found: {config_path}. RUN_FLUIDICS is enabled for a "
+                    "HARDWARE run but the fluidics config is missing, so real fluidics cannot "
+                    "start. Refusing to launch with fluidics SILENTLY DISABLED. Fix "
+                    "FLUIDICS_CONFIG_PATH in the active configuration (or make it absolute), or "
+                    "set RUN_FLUIDICS=False to run without fluidics."
+                )
             self._log.warning(f"Fluidics config not found: {config_path}")
             return None
 
@@ -915,47 +932,45 @@ class ApplicationContext:
                 self._log.error("Failed to initialize SimulatedFluidicsController")
                 return None
 
-        # Real hardware mode - try to use MERFISHFluidicsDriver
+        # Real hardware mode - use MERFISHFluidicsDriver. Do NOT silently fall back to the
+        # simulator on failure: a hardware run that believes fluidics is live but is actually
+        # simulated would execute every reagent / pump / valve step as a no-op while the GUI
+        # looks normal -- the worst possible failure for an unattended MERFISH run. Fail LOUD.
+        fluidics_v2_path = software_dir / "fluidics_v2" / "software"
+        if fluidics_v2_path.exists() and str(fluidics_v2_path) not in sys.path:
+            sys.path.insert(0, str(fluidics_v2_path))
+
         try:
-            # Add fluidics_v2 to path
-            fluidics_v2_path = software_dir / "fluidics_v2" / "software"
-            if fluidics_v2_path.exists() and str(fluidics_v2_path) not in sys.path:
-                sys.path.insert(0, str(fluidics_v2_path))
-
             from squid.backend.drivers.fluidics import MERFISHFluidicsDriver
+        except ImportError as e:
+            raise RuntimeError(
+                f"Real fluidics driver unavailable (fluidics_v2 not importable: {e}). "
+                "RUN_FLUIDICS is enabled for a HARDWARE run; refusing to silently fall back to "
+                "the simulator (pumps/valves would sit idle while the GUI looks live). Ensure "
+                "software/fluidics_v2/software/fluidics is present -- ship a directory copy, NOT "
+                "a git clone -- or set RUN_FLUIDICS=False."
+            ) from e
 
+        try:
             driver = MERFISHFluidicsDriver(
                 config_path=str(config_path),
                 simulation=False,
             )
-            if driver.initialize():
-                self._log.info("MERFISHFluidicsDriver initialized successfully")
-                return driver
-            else:
-                self._log.error("Failed to initialize MERFISHFluidicsDriver")
-                return None
-
-        except ImportError as e:
-            self._log.warning(
-                f"fluidics_v2 module not available: {e}. "
-                f"Falling back to SimulatedFluidicsController"
-            )
-            # Fall back to simulation
-            from squid.backend.drivers.fluidics import SimulatedFluidicsController
-
-            driver = SimulatedFluidicsController(
-                config_path=str(config_path),
-                simulate_timing=False,
-            )
-            if driver.initialize():
-                return driver
-            else:
-                self._log.error("Failed to initialize fallback SimulatedFluidicsController")
-                return None
-
         except Exception as e:
-            self._log.exception(f"Error initializing fluidics driver: {e}")
-            return None
+            raise RuntimeError(
+                f"Failed to construct MERFISHFluidicsDriver for a HARDWARE run: {e}. Refusing to "
+                "launch with fluidics silently disabled; check the fluidics config and hardware "
+                "connections, or set RUN_FLUIDICS=False."
+            ) from e
+
+        if not driver.initialize():
+            raise RuntimeError(
+                "MERFISHFluidicsDriver.initialize() failed for a HARDWARE run. Check pump/valve "
+                "serial connections and the fluidics config; refusing to launch with fluidics "
+                "silently disabled."
+            )
+        self._log.info("MERFISHFluidicsDriver initialized successfully")
+        return driver
 
     def _build_services(self) -> None:
         """Build service layer."""
