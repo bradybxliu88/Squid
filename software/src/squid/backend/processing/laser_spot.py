@@ -11,7 +11,10 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+import squid.core.logging
 import squid.core.utils.hardware_utils as utils
+
+_log = squid.core.logging.get_logger(__name__)
 
 
 @dataclass
@@ -108,7 +111,17 @@ def detect_spot(
             params=params,
             filter_sigma=filter_sigma,
         )
+    except utils.SpotDetectionParamsError:
+        # A caller bug (e.g. a misspelled key), not a missing spot: log it loudly so it is not mistaken for "no spot".
+        _log.exception("Invalid laser spot detection parameters")
+        return None
+    except ValueError as e:
+        # Routine "no usable spot in this frame" (no peaks, too many peaks, spot at the edge). This can repeat on
+        # every frame while focus lock has lost the spot, so keep it at debug level.
+        _log.debug(f"No laser spot detected: {e}")
+        return None
     except Exception:
+        _log.exception("Laser spot detection failed")
         return None
 
     if result is None:

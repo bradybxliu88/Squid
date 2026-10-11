@@ -20,6 +20,7 @@ from squid.core.utils.hardware_utils import (
     calculate_focus_measure,
     find_spot_location,
     SpotDetectionMode,
+    SpotDetectionParamsError,
     get_available_disk_space,
     threaded_operation_helper,
 )
@@ -107,6 +108,12 @@ def test_invalid_inputs():
     # Test invalid mode
     with pytest.raises(ValueError):
         find_spot_location(np.zeros((480, 640), dtype=np.uint8), mode="invalid")
+
+    # Test unknown parameter (the old, wrong key names must not be silently ignored)
+    with pytest.raises(ValueError, match="peak_width"):
+        find_spot_location(create_test_image([(320, 240)]), params={"peak_width": 5})
+    with pytest.raises(SpotDetectionParamsError, match="peak_prominence"):
+        find_spot_location(create_test_image([(320, 240)]), params={"y_window": 50, "peak_prominence": 0.5})
 
 
 def test_spot_detection_parameters():

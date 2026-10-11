@@ -1,13 +1,17 @@
 """Tests for the laser_spot module."""
 
+import logging
+
 import numpy as np
 import pytest
 
+from _def import SpotDetectionMode
 from squid.backend.processing.laser_spot import (
     DisplacementResult,
     SpotDetectionResult,
     compute_correlation,
     compute_displacement,
+    detect_spot,
     extract_spot_crop,
     is_spot_in_range,
     normalize_crop_for_reference,
@@ -250,3 +254,46 @@ class TestIsSpotInRange:
             spot_x=95, reference_x=100, pixel_to_um=0.5, max_range_um=10.0
         )
         assert result is True
+
+
+def _single_spot_image(x_px: float = 300.0, y_px: int = 128, shape=(256, 640)) -> np.ndarray:
+    x = np.arange(shape[1])
+    profile = np.exp(-((x - x_px) ** 2) / (2 * 5.0**2))
+    gy = np.exp(-((np.arange(shape[0]) - y_px) ** 2) / (2 * 5.0**2))
+    return np.round(255 * np.outer(gy, profile)).astype(np.uint8)
+
+
+_VALID_PARAMS = {
+    "y_window": 96,
+    "x_window": 20,
+    "min_peak_width": 10,
+    "min_peak_distance": 10,
+    "min_peak_prominence": 0.2,
+    "spot_spacing": 100,
+}
+
+
+class TestDetectSpot:
+    """Tests for detect_spot error handling."""
+
+    def test_detects_single_spot(self):
+        result = detect_spot(_single_spot_image(x_px=300.0), params=_VALID_PARAMS, mode=SpotDetectionMode.SINGLE)
+        assert result is not None
+        assert result.x == pytest.approx(300.0, abs=1.0)
+
+    def test_no_spot_returns_none_and_logs_at_debug(self, caplog):
+        blank = np.zeros((256, 640), dtype=np.uint8)
+        with caplog.at_level(logging.DEBUG):
+            assert detect_spot(blank, params=_VALID_PARAMS, mode=SpotDetectionMode.SINGLE) is None
+        records = [r for r in caplog.records if "No laser spot detected" in r.getMessage()]
+        assert records and all(r.levelno == logging.DEBUG for r in records)
+
+    def test_unknown_param_key_returns_none_and_logs_error(self, caplog):
+        """A misspelled key must not be reported as a silent 'no spot'."""
+        params = dict(_VALID_PARAMS)
+        params["peak_width"] = params.pop("min_peak_width")
+        with caplog.at_level(logging.DEBUG):
+            assert detect_spot(_single_spot_image(), params=params, mode=SpotDetectionMode.SINGLE) is None
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert errors
+        assert "peak_width" in (errors[0].exc_text or "")
