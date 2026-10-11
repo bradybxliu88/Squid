@@ -60,7 +60,8 @@ class _FakeCameraService:
 
 
 class _FakePeripheralService:
-    pass
+    def wait_for_idle(self, timeout_s: float) -> None:
+        return None  # the MCU is idle
 
 
 class _FakeLaserAFController:

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from squid.backend.controllers.live_controller import LiveController
+from squid.backend.controllers.live_controller import LiveController, LiveControllerState
 from squid.core.events import EventBus
 
 
@@ -94,3 +94,20 @@ def test_held_trigger_does_not_rearm_after_live_stopped():
 
     start_new_timer.assert_not_called()
 
+
+def test_stop_live_survives_a_wedged_mcu_illumination_off_timeout():
+    # Starting an acquisition stops live first; with a wedged MCU the illumination-off wait
+    # times out. stop_live() must still stop live (trigger timer cancelled, stream stopped)
+    # without raising, so MultiPointController.run_acquisition can go on to wait for the MCU.
+    controller, camera_service, _ = _controller(peripheral_busy=False)
+    with patch.object(controller, "_start_new_timer"):
+        controller.start_live()
+    assert controller.is_live is True
+
+    with patch.object(controller, "turn_off_illumination", side_effect=TimeoutError("illumination-off wait")):
+        controller.stop_live()  # must not raise
+
+    assert controller.is_live is False
+    assert controller.state is LiveControllerState.STOPPED
+    assert controller.timer_trigger is None
+    camera_service.stop_streaming.assert_called_once()

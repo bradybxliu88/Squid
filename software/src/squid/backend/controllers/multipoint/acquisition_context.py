@@ -20,9 +20,9 @@ class AcquisitionContext:
     callbacks_enabled: bool
     start_position: Optional["Pos"]
 
-    def restore(self, resume_live: bool = True) -> None:
-        """Restore stage position, camera callbacks, and optionally live mode."""
-        if self.start_position is not None:
+    def restore(self, resume_live: bool = True, restore_position: bool = True) -> None:
+        """Restore stage position (unless restore_position is False), camera callbacks, and optionally live mode."""
+        if restore_position and self.start_position is not None:
             self.stage_service.move_x_to(self.start_position.x_mm)
             self.stage_service.move_y_to(self.start_position.y_mm)
 

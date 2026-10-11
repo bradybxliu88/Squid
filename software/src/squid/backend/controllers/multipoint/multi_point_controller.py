@@ -101,7 +101,14 @@ class AcquisitionControllerState(Enum):
     FAILED = auto()  # Error occurred
 
 
+class _McuBusyAtStartError(RuntimeError):
+    """The microcontroller never went idle before the acquisition start; the stage has not moved."""
+
+
 class MultiPointController(StateMachine[AcquisitionControllerState]):
+    # A wedged MCU clears a few seconds after live triggers stop.
+    _MCU_IDLE_WAIT_S: float = 15.0
+
     def __init__(
         self,
         live_controller: LiveController,
@@ -885,6 +892,10 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             )
             self._start_position = self._acquisition_context.start_position
 
+            # Live triggers have stopped by now. A wedged MCU (see LiveController.trigger_acquisition)
+            # clears a few seconds later: wait it out before anything moves the stage.
+            self._wait_for_mcu_idle_before_start()
+
             if self._config.zstack.z_range is None:
                 z_range = (
                     self._start_position.z_mm,
@@ -1120,12 +1131,17 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             # Publish NDViewer start event for push-mode display
             self._publish_ndviewer_start(acquisition_params)
             return True
-        except Exception:
-            self._log.exception("Failed to start acquisition")
+        except Exception as exc:
+            mcu_busy = isinstance(exc, _McuBusyAtStartError)
+            if mcu_busy:
+                self._log.error(str(exc))
+            else:
+                self._log.exception("Failed to start acquisition")
             # Stop per-acquisition logging if it was started
             self._stop_per_acquisition_log()
             if self._acquisition_context is not None:
-                self._acquisition_context.restore(resume_live=False)
+                # With a busy MCU the stage has not moved yet, and a move sent now would only time out again.
+                self._acquisition_context.restore(resume_live=False, restore_position=not mcu_busy)
                 self._acquisition_context = None
                 self._start_position = None
             # Always try to notify listeners that we're no longer running
@@ -1150,6 +1166,19 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 self._force_state(AcquisitionControllerState.IDLE, reason="cleanup after failed start")
             self._active_worker_experiment_id = None
             return False
+
+    def _wait_for_mcu_idle_before_start(self) -> None:
+        """Block until the MCU is idle so the worker's first stage move doesn't time out.
+
+        Raises _McuBusyAtStartError (aborting the start through the FAILED path) if it stays busy.
+        """
+        try:
+            self._peripheral_service.wait_for_idle(timeout_s=self._MCU_IDLE_WAIT_S)
+        except TimeoutError as exc:
+            raise _McuBusyAtStartError(
+                f"Microcontroller still busy after {self._MCU_IDLE_WAIT_S:g} s - home the stage or "
+                "power-cycle the controller. Aborting the acquisition start."
+            ) from exc
 
     def build_params(
         self,
