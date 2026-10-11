@@ -4,6 +4,7 @@ import math
 from typing import Optional, TYPE_CHECKING
 
 import _def as _def
+from squid.backend.microcontroller import movement_sign_to_homing_direction
 from squid.core.abc import AbstractStage, Pos, StageStage
 from squid.core.config import StageConfig, AxisConfig
 
@@ -214,18 +215,10 @@ class CephlaStage(AbstractStage):
             2.0 * math.pi, self.get_config().THETA_AXIS.MAX_SPEED / 5.0
         )
 
-        x_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().X_AXIS.MOVEMENT_SIGN
-        )
-        y_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().Y_AXIS.MOVEMENT_SIGN
-        )
-        z_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().Z_AXIS.MOVEMENT_SIGN
-        )
-        theta_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().THETA_AXIS.MOVEMENT_SIGN
-        )
+        x_dir = movement_sign_to_homing_direction(self.get_config().X_AXIS.MOVEMENT_SIGN)
+        y_dir = movement_sign_to_homing_direction(self.get_config().Y_AXIS.MOVEMENT_SIGN)
+        z_dir = movement_sign_to_homing_direction(self.get_config().Z_AXIS.MOVEMENT_SIGN)
+        theta_dir = movement_sign_to_homing_direction(self.get_config().THETA_AXIS.MOVEMENT_SIGN)
 
         if x and y:
             self._microcontroller.home_xy(

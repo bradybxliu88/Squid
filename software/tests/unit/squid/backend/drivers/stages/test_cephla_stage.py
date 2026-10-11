@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from squid.backend.drivers.stages.cephla import CephlaStage
+from squid.backend.microcontroller import HomingDirection
 from squid.core.config import AxisConfig, DirectionSign, StageConfig
 
 
@@ -90,3 +91,83 @@ def test_stage_service_get_config_with_cephla_stage():
     stage, _ = _make_stage(config)
 
     assert StageService(stage, EventBus()).get_config() is config
+
+
+def _homing_calls(micro: MagicMock) -> list:
+    """The home_* and wait calls, in order, ignoring anything else the stage asked of the mock."""
+    return [c for c in micro.mock_calls if c[0].startswith("home_") or c[0] == "wait_till_operation_is_completed"]
+
+
+# --- home() -----------------------------------------------------------------------------------------
+
+
+def test_home_xyz_sends_homing_commands_in_order():
+    """Regression: home() referenced squid.backend.microcontroller without importing it, so it raised
+    NameError before any homing command reached the microcontroller."""
+    stage, micro = _make_stage()
+
+    stage.home(x=True, y=True, z=True, theta=False)
+
+    micro.home_xy.assert_called_once_with(
+        homing_direction_x=HomingDirection.HOMING_DIRECTION_BACKWARD,
+        homing_direction_y=HomingDirection.HOMING_DIRECTION_BACKWARD,
+    )
+    # Z has MOVEMENT_SIGN -1 in this config, which maps to the forward homing direction.
+    micro.home_z.assert_called_once_with(homing_direction=HomingDirection.HOMING_DIRECTION_FORWARD)
+    micro.home_x.assert_not_called()
+    micro.home_y.assert_not_called()
+    micro.home_theta.assert_not_called()
+
+    names = [c[0] for c in _homing_calls(micro)]
+    assert names[:4] == [
+        "home_xy",
+        "wait_till_operation_is_completed",
+        "home_z",
+        "wait_till_operation_is_completed",
+    ]
+
+
+@pytest.mark.parametrize(
+    "x, y, expected",
+    [
+        (True, False, "home_x"),
+        (False, True, "home_y"),
+    ],
+)
+def test_home_single_xy_axis_uses_single_axis_command(x, y, expected):
+    stage, micro = _make_stage()
+
+    stage.home(x=x, y=y, z=False, theta=False)
+
+    getattr(micro, expected).assert_called_once_with(homing_direction=HomingDirection.HOMING_DIRECTION_BACKWARD)
+    micro.home_xy.assert_not_called()
+    micro.home_z.assert_not_called()
+
+
+def test_home_theta_uses_theta_movement_sign():
+    config = _stage_config(THETA_AXIS=_axis(movement_sign=-1, max_speed=1.0))
+    stage, micro = _make_stage(config)
+
+    stage.home(x=False, y=False, z=False, theta=True)
+
+    micro.home_theta.assert_called_once_with(homing_direction=HomingDirection.HOMING_DIRECTION_FORWARD)
+
+
+def test_home_non_blocking_does_not_wait():
+    stage, micro = _make_stage()
+
+    stage.home(x=True, y=True, z=True, theta=False, blocking=False)
+
+    micro.home_xy.assert_called_once()
+    micro.home_z.assert_called_once()
+    micro.wait_till_operation_is_completed.assert_not_called()
+
+
+def test_home_blocking_waits_with_positive_timeouts():
+    stage, micro = _make_stage()
+
+    stage.home(x=True, y=True, z=True, theta=True)
+
+    waits = [c for c in _homing_calls(micro) if c[0] == "wait_till_operation_is_completed"]
+    assert len(waits) == 3  # one each for xy, z and theta
+    assert all(wait.args[0] >= 3 for wait in waits)  # _calc_move_timeout's floor
