@@ -20,7 +20,6 @@ from _def import (
     DOWNSAMPLED_VIEW_IDLE_TIMEOUT_S,
     DOWNSAMPLED_VIEW_JOB_TIMEOUT_S,
     FILE_ID_PADDING,
-    FILE_SAVING_OPTION,
     FileSavingOption,
     MULTIPOINT_PIEZO_DELAY_MS,
     SCAN_STABILIZATION_TIME_MS_X,
@@ -30,7 +29,6 @@ from _def import (
     SIMULATED_DISK_IO_ENABLED,
     TriggerMode,
     USE_UNIFIED_MOSAIC_VIEW,
-    ZARR_USE_6D_FOV_DIMENSION,
 )
 import squid.core.utils.hardware_utils as utils
 from squid.backend.controllers.autofocus import AutoFocusController
@@ -49,6 +47,7 @@ from squid.backend.controllers.multipoint.job_processing import (
     CaptureInfo,
     SaveImageJob,
     SaveOMETiffJob,
+    SaveSettings,
     SaveZarrJob,
     ZarrWriterInfo,
     ZarrWriteResult,
@@ -132,6 +131,15 @@ from squid.core.events import (
 _log = squid.core.logging.get_logger(__name__)
 
 
+def save_job_classes_for_format(file_saving_option: FileSavingOption) -> List[Type[Job]]:
+    """The saving job classes that implement the given file saving format."""
+    if file_saving_option == FileSavingOption.OME_TIFF:
+        return [SaveOMETiffJob]
+    if file_saving_option == FileSavingOption.ZARR_V3:
+        return [SaveZarrJob]
+    return [SaveImageJob]
+
+
 class SummarizeResult(NamedTuple):
     """Result from processing job output queues."""
 
@@ -170,6 +178,7 @@ class MultiPointWorker:
         laser_engine_service: Optional["LaserEngineService"] = None,
         stream_handler: Optional[object] = None,
         alignment_widget: Optional[object] = None,
+        save_settings: Optional[SaveSettings] = None,
     ):
         self._log = squid.core.logging.get_logger(__class__.__name__)
         self._timing = utils.TimingManager("MultiPointWorker Timer Manager")
@@ -376,17 +385,14 @@ class MultiPointWorker:
             physical_size_y_um=self._pixel_size_um,
         )
 
-        # Determine job classes based on file saving option
-        job_classes: List[Type[Job]] = []
-        use_ome_tiff = FILE_SAVING_OPTION == FileSavingOption.OME_TIFF
-        use_zarr_v3 = FILE_SAVING_OPTION == FileSavingOption.ZARR_V3
-        if not self.skip_saving:
-            if use_ome_tiff:
-                job_classes.append(SaveOMETiffJob)
-            elif use_zarr_v3:
-                job_classes.append(SaveZarrJob)
-            else:
-                job_classes.append(SaveImageJob)
+        # The saving settings in effect now, for the whole acquisition. They can be changed at runtime (Preferences),
+        # so they are read here rather than bound at import, and every job carries them to the saving subprocess.
+        self._save_settings: SaveSettings = save_settings if save_settings is not None else SaveSettings()
+        file_saving_option = self._save_settings.file_saving_option
+        use_ome_tiff = file_saving_option == FileSavingOption.OME_TIFF
+        use_zarr_v3 = file_saving_option == FileSavingOption.ZARR_V3
+        use_6d_fov = self._save_settings.zarr_use_6d_fov_dimension
+        job_classes: List[Type[Job]] = [] if self.skip_saving else save_job_classes_for_format(file_saving_option)
 
         if extra_job_classes:
             job_classes.extend(extra_job_classes)
@@ -436,7 +442,7 @@ class MultiPointWorker:
                 c_size=len(self.selected_configurations),
                 z_size=self.NZ,
                 is_hcs=is_hcs,
-                use_6d_fov=ZARR_USE_6D_FOV_DIMENSION,
+                use_6d_fov=use_6d_fov,
                 region_fov_counts=region_fov_counts,
                 pixel_size_um=self._pixel_size_um,
                 z_step_um=self._physical_size_z_um,
@@ -447,7 +453,7 @@ class MultiPointWorker:
             )
             if is_hcs:
                 mode_str = "HCS plate hierarchy"
-            elif ZARR_USE_6D_FOV_DIMENSION:
+            elif use_6d_fov:
                 mode_str = "per-region 6D (non-standard)"
             else:
                 mode_str = "per-FOV 5D (OME-NGFF compliant)"
@@ -1637,7 +1643,7 @@ class MultiPointWorker:
                     ):
                         r = job_result.result
                         # For 5D mode, convert local FOV to flat index across regions
-                        if self._use_zarr_v3 and ZARR_USE_6D_FOV_DIMENSION:
+                        if self._use_zarr_v3 and self._save_settings.zarr_use_6d_fov_dimension:
                             fov_idx = r.fov
                         else:
                             fov_idx = self._region_fov_offsets.get(r.region_idx, 0) + r.fov
@@ -2459,7 +2465,9 @@ class MultiPointWorker:
                             continue  # Skip if not a well-based acquisition
                     else:
                         job = job_class(
-                            capture_info=info, capture_image=JobImage(image_array=image)
+                            capture_info=info,
+                            capture_image=JobImage(image_array=image),
+                            save_settings=self._save_settings,
                         )
                     if job_runner is not None:
                         if not job_runner.dispatch(job):
@@ -2479,7 +2487,7 @@ class MultiPointWorker:
                             self._process_downsampled_view_result(result)
                         elif result is not None and isinstance(result, ZarrWriteResult):
                             # For 5D mode, convert local FOV to flat index across regions
-                            if self._use_zarr_v3 and ZARR_USE_6D_FOV_DIMENSION:
+                            if self._use_zarr_v3 and self._save_settings.zarr_use_6d_fov_dimension:
                                 fov_idx = result.fov
                             else:
                                 fov_idx = self._region_fov_offsets.get(result.region_idx, 0) + result.fov
@@ -2495,7 +2503,7 @@ class MultiPointWorker:
             # Only register when using individual image saving - OME-TIFF uses different paths
             if (
                 self._progress_tracker is not None
-                and FILE_SAVING_OPTION == FileSavingOption.INDIVIDUAL_IMAGES
+                and self._save_settings.file_saving_option == FileSavingOption.INDIVIDUAL_IMAGES
             ):
                 filepath = utils_acquisition.get_image_filepath(
                     save_directory=info.save_directory,
@@ -2599,6 +2607,7 @@ class MultiPointWorker:
         job = DownsampledViewJob(
             capture_info=info,
             capture_image=JobImage(image_array=image),
+            save_settings=self._save_settings,
             well_id=well_id,
             well_row=well_row,
             well_col=well_col,

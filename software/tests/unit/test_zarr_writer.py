@@ -22,6 +22,7 @@ from squid.backend.controllers.multipoint.job_processing import (
     CaptureInfo,
     JobImage,
     JobRunner,
+    SaveSettings,
     ZarrWriteResult,
     ZarrWriterInfo,
     SaveZarrJob,
@@ -2221,3 +2222,31 @@ class TestZarrWriterFovPositions:
             zarr_json = json.load(f)
 
         assert "fov_positions" not in zarr_json["attributes"]["_squid"]
+
+
+def test_save_zarr_job_uses_the_settings_it_carries(tmp_path, monkeypatch):
+    """The job runs in a subprocess whose _def can predate a change made in Preferences (ported from aa9107d9)."""
+    import _def
+
+    monkeypatch.setattr(_def, "ZARR_CHUNK_MODE", ZarrChunkMode.FULL_FRAME)
+    monkeypatch.setattr(_def, "ZARR_COMPRESSION", ZarrCompression.FAST)
+    monkeypatch.setattr(_def, "SIMULATED_DISK_IO_ENABLED", False)
+    SaveZarrJob.clear_writers()
+
+    job = SaveZarrJob(
+        capture_info=make_test_capture_info(),
+        capture_image=JobImage(image_array=np.ones((512, 512), dtype=np.uint16)),
+        save_settings=SaveSettings(zarr_chunk_mode=ZarrChunkMode.TILED_256, zarr_compression=ZarrCompression.BEST),
+    )
+    job.zarr_writer_info = ZarrWriterInfo(
+        base_path=str(tmp_path), t_size=1, c_size=1, z_size=1, channel_names=["BF"], pixel_size_um=1.0
+    )
+    try:
+        job.run()
+    finally:
+        SaveZarrJob.clear_writers()
+
+    with open(tmp_path / "zarr" / "A1" / "fov_0.ome.zarr" / "zarr.json") as f:
+        written = json.load(f)["attributes"]["_squid"]
+    assert written["chunk_mode"] == ZarrChunkMode.TILED_256.value
+    assert written["compression"] == ZarrCompression.BEST.value

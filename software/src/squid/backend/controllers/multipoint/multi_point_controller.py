@@ -31,6 +31,7 @@ from squid.backend.managers import ScanCoordinates
 from squid.backend.controllers.autofocus import LaserAutofocusController
 from squid.backend.controllers.live_controller import LiveController
 from squid.backend.controllers.multipoint.multi_point_worker import MultiPointWorker
+from squid.backend.controllers.multipoint.job_processing import SaveSettings
 from squid.backend.managers import ObjectiveStore
 from squid.core.state_machine import StateMachine, InvalidStateTransition
 from squid.core.mode_gate import GlobalMode, GlobalModeGate
@@ -1082,6 +1083,10 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 laser_autofocus=self.laserAutoFocusController,
                 focus_lock=self._focus_lock_controller,
             )
+            # One snapshot of the runtime-changeable saving settings for this acquisition, shared by the worker (job
+            # classes, the jobs it dispatches to the saving subprocess) and the NDViewer push-mode decision below, so
+            # the two cannot disagree when Preferences changes the format between acquisitions.
+            save_settings = SaveSettings()
             self.multiPointWorker = MultiPointWorker(
                 auto_focus_controller=self.autofocusController,
                 laser_auto_focus_controller=self.laserAutoFocusController,
@@ -1108,6 +1113,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 focus_lock_controller=self._focus_lock_controller,
                 dependencies=dependencies,
                 alignment_widget=self._alignment_widget,
+                save_settings=save_settings,
             )
             self.multiPointWorker.set_current_round_index(self._current_round_index)
             # Set start FOV index for resume support
@@ -1131,7 +1137,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             self._active_worker_experiment_id = acquisition_params.experiment_ID
             self.thread.start()
             # Publish NDViewer start event for push-mode display
-            self._publish_ndviewer_start(acquisition_params)
+            self._publish_ndviewer_start(acquisition_params, save_settings)
             return True
         except Exception as exc:
             mcu_busy = isinstance(exc, _McuBusyAtStartError)
@@ -1634,13 +1640,23 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             )
         )
 
-    def _publish_ndviewer_start(self, acquisition_params: "AcquisitionParameters") -> None:
+    def _publish_ndviewer_start(
+        self,
+        acquisition_params: "AcquisitionParameters",
+        save_settings: Optional[SaveSettings] = None,
+    ) -> None:
         """Publish NDViewerStartAcquisition event for push-mode display.
 
         Builds FOV labels from scan position information and publishes
         the event to configure NDViewer for real-time image display.
         For ZARR_V3 format, publishes NDViewerStartZarrAcquisition instead.
+
+        save_settings is the snapshot the acquisition's worker saves with; when omitted, the
+        settings in effect now are used.
         """
+        if save_settings is None:
+            save_settings = SaveSettings()
+        file_saving_option = save_settings.file_saving_option
         self._log.info("_publish_ndviewer_start called")
         if not self._event_bus:
             self._log.warning("_publish_ndviewer_start: no event_bus, skipping")
@@ -1649,13 +1665,13 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
         # NDViewer push mode is only meaningful when frames are registered incrementally.
         # OME-TIFF and multi-page TIFF paths do not emit NDViewerImageRegistered events,
         # so starting push mode there can leave stale UI state between runs.
-        if _def.FILE_SAVING_OPTION not in (
+        if file_saving_option not in (
             _def.FileSavingOption.INDIVIDUAL_IMAGES,
             _def.FileSavingOption.ZARR_V3,
         ):
             self._log.info(
                 "Skipping NDViewer push start for file mode %s",
-                _def.FILE_SAVING_OPTION.value,
+                file_saving_option.value,
             )
             self._ndviewer_mode = "inactive"
             return
@@ -1687,9 +1703,15 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
                 fov_labels.append(f"{region_id}:{fov_idx}")
 
         # For ZARR_V3 format, publish zarr-specific start event
-        if _def.FILE_SAVING_OPTION == _def.FileSavingOption.ZARR_V3:
+        if file_saving_option == _def.FileSavingOption.ZARR_V3:
             self._publish_ndviewer_start_zarr(
-                acquisition_params, channels, fov_labels, height, width, experiment_id
+                acquisition_params,
+                channels,
+                fov_labels,
+                height,
+                width,
+                experiment_id,
+                zarr_use_6d_fov_dimension=save_settings.zarr_use_6d_fov_dimension,
             )
             return
 
@@ -1717,6 +1739,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
         height: int,
         width: int,
         experiment_id: str,
+        zarr_use_6d_fov_dimension: bool,
     ) -> None:
         """Publish NDViewerStartZarrAcquisition or NDViewerStartZarrAcquisition6D."""
         from squid.backend.io.writers.zarr_writer import (
@@ -1735,7 +1758,7 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             well_pattern.match(name) for name in scan_info.scan_region_names
         )
 
-        use_6d = _def.ZARR_USE_6D_FOV_DIMENSION and not is_hcs
+        use_6d = zarr_use_6d_fov_dimension and not is_hcs
 
         if use_6d:
             # 6D mode: one zarr store per region with FOV dimension

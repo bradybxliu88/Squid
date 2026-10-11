@@ -97,6 +97,21 @@ class JobImage:
     image_array: Optional[np.array]
 
 
+@dataclass(frozen=True)
+class SaveSettings:
+    """The saving settings that can be changed while the software is running (e.g. from Preferences).
+
+    The values are read from _def where this is created - once per acquisition, before the worker picks its saving
+    job classes - and reach the saving subprocess with each job. Jobs must not read them from _def: the JobRunner
+    subprocess has its own copy of it, from when the subprocess was started.
+    """
+
+    file_saving_option: _def.FileSavingOption = field(default_factory=lambda: _def.FILE_SAVING_OPTION)
+    zarr_chunk_mode: _def.ZarrChunkMode = field(default_factory=lambda: _def.ZARR_CHUNK_MODE)
+    zarr_compression: _def.ZarrCompression = field(default_factory=lambda: _def.ZARR_COMPRESSION)
+    zarr_use_6d_fov_dimension: bool = field(default_factory=lambda: bool(_def.ZARR_USE_6D_FOV_DIMENSION))
+
+
 T = TypeVar("T")
 
 
@@ -106,6 +121,7 @@ class Job(abc.ABC, Generic[T]):
     capture_image: JobImage
 
     job_id: str = field(default_factory=lambda: str(uuid4()))
+    save_settings: SaveSettings = field(default_factory=SaveSettings)
 
     def image_array(self) -> np.array:
         if self.capture_image.image_array is not None:
@@ -210,7 +226,7 @@ class SaveImageJob(Job):
 
     def save_image(self, image: np.ndarray, info: CaptureInfo, is_color: bool) -> bool:
         # NOTE(imo): We silently fall back to individual image saving here.  We should warn or do something.
-        if _def.FILE_SAVING_OPTION == _def.FileSavingOption.MULTI_PAGE_TIFF:
+        if self.save_settings.file_saving_option == _def.FileSavingOption.MULTI_PAGE_TIFF:
             metadata: Dict[str, Any] = {
                 "z_level": info.z_index,
                 "channel": info.configuration.name,
@@ -783,8 +799,8 @@ class SaveZarrJob(Job):
                 channel_names=self.zarr_writer_info.channel_names,
                 channel_colors=self.zarr_writer_info.channel_colors,
                 channel_wavelengths=self.zarr_writer_info.channel_wavelengths,
-                chunk_mode=_def.ZARR_CHUNK_MODE,
-                compression=_def.ZARR_COMPRESSION,
+                chunk_mode=self.save_settings.zarr_chunk_mode,
+                compression=self.save_settings.zarr_compression,
                 is_hcs=is_hcs or not use_6d_fov,  # 5D for HCS and non-HCS default
             )
             try:

@@ -22,7 +22,13 @@ from squid.backend.controllers.multipoint.multi_point_utils import (
     AcquisitionParameters,
     ScanPositionInformation,
 )
-from squid.backend.controllers.multipoint.job_processing import JobResult
+from squid.backend.controllers.multipoint.job_processing import (
+    JobResult,
+    SaveImageJob,
+    SaveOMETiffJob,
+    SaveSettings,
+    SaveZarrJob,
+)
 
 
 def _make_params() -> AcquisitionParameters:
@@ -64,6 +70,7 @@ def _make_worker(
     peripheral_service: MagicMock | None = None,
     event_bus: EventBus | None = None,
     abort_on_failed_jobs: bool = True,
+    save_settings: SaveSettings | None = None,
 ) -> MultiPointWorker:
     """Helper to build a worker with injectable services."""
     objective_store = SimpleNamespace(
@@ -94,6 +101,7 @@ def _make_worker(
         peripheral_service=peripheral_service,
         event_bus=event_bus,
         abort_on_failed_jobs=abort_on_failed_jobs,
+        save_settings=save_settings,
     )
 
 
@@ -290,3 +298,74 @@ def test_channel_z_offset_moves_piezo_not_stage() -> None:
     piezo.move_relative.assert_called_once_with(-50.0)
     assert worker._current_z_offset_um == 0.0
     worker._position_controller.move_z_relative.assert_not_called()
+
+
+def _saving_job_classes(worker: MultiPointWorker) -> list:
+    return [job_class for job_class, _ in worker._job_runners]
+
+
+def test_saving_settings_are_read_when_the_worker_is_created(monkeypatch) -> None:
+    """Preferences changes _def at runtime; an import-time binding would keep the format from startup."""
+    monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.OME_TIFF)
+    worker = _make_worker()
+
+    assert _saving_job_classes(worker) == [SaveOMETiffJob]
+    assert worker._save_settings.file_saving_option == _def.FileSavingOption.OME_TIFF
+
+    # A change after the worker exists applies to the next acquisition, not this one.
+    monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.ZARR_V3)
+    assert worker._save_settings.file_saving_option == _def.FileSavingOption.OME_TIFF
+    assert _saving_job_classes(_make_worker()) == [SaveZarrJob]
+
+
+def test_worker_uses_the_snapshot_it_is_given(monkeypatch) -> None:
+    monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.OME_TIFF)
+    settings = SaveSettings(file_saving_option=_def.FileSavingOption.MULTI_PAGE_TIFF)
+
+    worker = _make_worker(save_settings=settings)
+
+    assert worker._save_settings is settings
+    assert _saving_job_classes(worker) == [SaveImageJob]
+
+
+def test_zarr_6d_setting_is_read_when_the_worker_is_created(monkeypatch) -> None:
+    monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.ZARR_V3)
+    monkeypatch.setattr(_def, "ZARR_USE_6D_FOV_DIMENSION", True)
+
+    worker = _make_worker()
+
+    assert worker._zarr_writer_info is not None
+    assert worker._zarr_writer_info.use_6d_fov is True
+
+
+def test_dispatched_jobs_carry_the_worker_snapshot(monkeypatch) -> None:
+    """Every job takes the acquisition's settings to the saving subprocess, whatever _def says by then."""
+    settings = SaveSettings(file_saving_option=_def.FileSavingOption.MULTI_PAGE_TIFF, zarr_use_6d_fov_dimension=False)
+    worker = _make_worker(save_settings=settings)
+    monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.OME_TIFF)  # Preferences, mid-acquisition
+
+    dispatched = []
+
+    class RecordingRunner:
+        def dispatch(self, job):
+            dispatched.append(job)
+            return True
+
+    worker._job_runners = [(SaveImageJob, RecordingRunner())]
+    info = SimpleNamespace(
+        position=SimpleNamespace(x_mm=0.0, y_mm=0.0, z_mm=0.0),
+        z_index=0,
+        time_point=0,
+        region_id="0",
+        fov=0,
+        file_id="0_0_0",
+        save_directory="/tmp",
+        configuration=SimpleNamespace(name="BF"),
+    )
+    worker._current_capture_info.set(info)
+    frame = SimpleNamespace(frame=np.zeros((4, 4), dtype=np.uint16), frame_id=1, timestamp=0.0, is_color=lambda: False)
+
+    worker._process_camera_frame(frame)
+
+    assert len(dispatched) == 1
+    assert dispatched[0].save_settings is settings
