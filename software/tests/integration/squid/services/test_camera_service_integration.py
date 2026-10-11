@@ -9,6 +9,8 @@ from squid.core.events import (
     BinningChanged,
     ROIChanged,
     PixelFormatChanged,
+    SensorModeChanged,
+    SetSensorModeCommand,
 )
 from squid.backend.services import CameraService
 from squid.core.config import CameraPixelFormat
@@ -79,3 +81,21 @@ def test_pixel_format_event(simulated_camera):
 
     assert simulated_camera.get_pixel_format() == CameraPixelFormat.MONO8
     assert pixel_events and pixel_events[0].pixel_format == CameraPixelFormat.MONO8
+
+
+@pytest.mark.integration
+def test_sensor_mode_command_round_trip(simulated_camera):
+    bus = EventBus()
+    service = CameraService(simulated_camera, bus)
+
+    events = []
+    bus.subscribe(SensorModeChanged, lambda e: events.append(e))
+
+    assert service.get_available_sensor_modes() == ["standard", "fast"]
+    bus.publish(SetSensorModeCommand(sensor_mode="fast"))
+    bus.publish(SetSensorModeCommand(sensor_mode="warp_speed"))  # rejected by the camera
+    bus.drain()
+
+    assert simulated_camera.get_sensor_mode() == "fast"
+    assert [e.sensor_mode for e in events] == ["fast", "fast"]
+    assert events[0].exposure_limits_ms == simulated_camera.get_exposure_limits()

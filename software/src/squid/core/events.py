@@ -1925,6 +1925,17 @@ class SetPixelFormatCommand(Event):
 
 
 @dataclass
+class SetSensorModeCommand(Event):
+    """Command to set the camera sensor mode.
+
+    The mode is a driver-defined name from AbstractCamera.get_available_sensor_modes()
+    (e.g. "Ultra Quiet" / "Standard" / "Fast" for the Hamamatsu READOUTSPEED property).
+    """
+
+    sensor_mode: str
+
+
+@dataclass
 class SetCameraTemperatureCommand(Event):
     """Command to set camera temperature."""
 
@@ -1970,6 +1981,20 @@ class AutoWhiteBalanceChanged(Event):
     """Notification that auto white balance mode changed."""
 
     enabled: bool
+
+
+@dataclass
+class SensorModeChanged(Event):
+    """Notification of the camera's current sensor mode after a sensor mode change attempt.
+
+    Published on failure too (with the mode the camera actually remained in), so the UI can
+    revert a rejected selection. A sensor mode (e.g. readout speed) change can shift the valid
+    exposure range, so the new exposure limits are included for listeners to refresh their
+    exposure controls.
+    """
+
+    sensor_mode: Optional[str]
+    exposure_limits_ms: Optional[Tuple[float, float]] = None
 
 
 # ============================================================================

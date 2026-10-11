@@ -808,6 +808,9 @@ class CAMERA_CONFIG:
     CROP_HEIGHT_UNBINNED = 4168
     BINNING_FACTOR_DEFAULT = 2
     PIXEL_FORMAT_DEFAULT = "MONO12"
+    # Driver-defined sensor mode applied at camera init (e.g. "Ultra Quiet" / "Standard" / "Fast" for
+    # Hamamatsu READOUTSPEED). None leaves the camera at its power-on mode.
+    SENSOR_MODE_DEFAULT = None
     TEMPERATURE_DEFAULT = 20
     FAN_SPEED_DEFAULT = 1
     BLACKLEVEL_VALUE_DEFAULT = 3

@@ -20,6 +20,7 @@ from squid.ui.widgets.camera._common import (
     QSlider,
     QVBoxLayout,
     Qt,
+    SensorModeChanged,
     SetMicroscopeModeCommand,
     SetTriggerFPSCommand,
     SetTriggerModeCommand,
@@ -291,6 +292,18 @@ class LiveControlWidget(EventBusFrame):
         self.dropdown_triggerManu.blockSignals(True)
         self.dropdown_triggerManu.setCurrentText(event.mode)
         self.dropdown_triggerManu.blockSignals(False)
+
+    @handles(SensorModeChanged)
+    def _on_sensor_mode_changed(self, event: SensorModeChanged) -> None:
+        """Refresh the exposure limits: a sensor mode (readout speed) change can shift the valid range.
+
+        setRange clamps the current value and emits valueChanged, which feeds the normal exposure
+        update path, so a clamped exposure propagates to the channel configuration and camera.
+        """
+        if event.exposure_limits_ms is None:
+            return
+        self._exposure_limits = event.exposure_limits_ms
+        self.entry_exposureTime.setRange(*event.exposure_limits_ms)
 
     @handles(TriggerFPSChanged)
     def _on_trigger_fps_changed(self, event: TriggerFPSChanged) -> None:

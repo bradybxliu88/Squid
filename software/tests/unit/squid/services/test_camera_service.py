@@ -1,7 +1,10 @@
 # tests/squid/services/test_camera_service.py
 """Tests for CameraService."""
 
-from unittest.mock import Mock
+import threading
+from unittest.mock import MagicMock, Mock
+
+import pytest
 
 
 class TestCameraService:
@@ -440,3 +443,125 @@ class TestCameraService:
         result = service.get_pixel_size_binned_um()
 
         assert result == 6.5
+
+
+class TestCameraServiceSensorMode:
+    """Sensor mode get/set, command handling and state events (ports upstream 875eda71)."""
+
+    @staticmethod
+    def _make(mode_gate=None):
+        from squid.backend.services.camera_service import CameraService
+        from squid.core.events import EventBus, SensorModeChanged
+
+        mock_camera = Mock()
+        mock_camera.get_available_sensor_modes.return_value = ["Ultra Quiet", "Standard", "Fast"]
+        mock_camera.get_sensor_mode.return_value = "Standard"
+        mock_camera.get_exposure_limits.return_value = (0.5, 1000.0)
+        bus = EventBus()
+        service = CameraService(mock_camera, bus, mode_gate=mode_gate)
+        received = []
+        bus.subscribe(SensorModeChanged, received.append)
+        return service, mock_camera, bus, received
+
+    def test_getters_delegate_to_camera(self):
+        service, _, _, _ = self._make()
+
+        assert service.get_available_sensor_modes() == ["Ultra Quiet", "Standard", "Fast"]
+        assert service.get_sensor_mode() == "Standard"
+
+    def test_set_sensor_mode_publishes_mode_and_exposure_limits(self):
+        service, mock_camera, bus, received = self._make()
+
+        def apply(mode):
+            mock_camera.get_sensor_mode.return_value = mode
+            mock_camera.get_exposure_limits.return_value = (2.0, 1000.0)
+
+        mock_camera.set_sensor_mode.side_effect = apply
+
+        service.set_sensor_mode("Ultra Quiet")
+        bus.drain()
+
+        mock_camera.set_sensor_mode.assert_called_once_with("Ultra Quiet")
+        assert len(received) == 1
+        assert received[0].sensor_mode == "Ultra Quiet"
+        assert received[0].exposure_limits_ms == (2.0, 1000.0)
+
+    def test_set_sensor_mode_failure_publishes_actual_mode_and_reraises(self):
+        service, mock_camera, bus, received = self._make()
+        mock_camera.set_sensor_mode.side_effect = ValueError("unknown mode")
+
+        with pytest.raises(ValueError):
+            service.set_sensor_mode("Warp")
+        bus.drain()
+
+        # The camera stayed in its mode; the UI uses this to revert its selection.
+        assert [e.sensor_mode for e in received] == ["Standard"]
+
+    def test_handles_set_sensor_mode_command(self):
+        from squid.core.events import SetSensorModeCommand
+
+        service, mock_camera, bus, received = self._make()
+
+        bus.publish(SetSensorModeCommand(sensor_mode="Fast"))
+        bus.drain()
+
+        mock_camera.set_sensor_mode.assert_called_once_with("Fast")
+        assert len(received) == 1
+
+    def test_command_failure_is_logged_not_raised(self):
+        from squid.core.abc import CameraError
+        from squid.core.events import SetSensorModeCommand
+
+        service, mock_camera, bus, received = self._make()
+        mock_camera.set_sensor_mode.side_effect = CameraError("READOUTSPEED write failed")
+
+        # Called directly (not via the bus) so an escaping exception would fail the test.
+        service._on_set_sensor_mode_command(SetSensorModeCommand(sensor_mode="Fast"))
+        bus.drain()
+
+        assert [e.sensor_mode for e in received] == ["Standard"]
+
+    def test_command_blocked_by_mode_gate_republishes_current_mode(self):
+        from squid.core.events import SetSensorModeCommand
+        from squid.core.mode_gate import GlobalModeGate
+
+        mode_gate = MagicMock(spec=GlobalModeGate)
+        mode_gate.blocked_for_ui_hardware_commands.return_value = True
+        service, mock_camera, bus, received = self._make(mode_gate=mode_gate)
+
+        bus.publish(SetSensorModeCommand(sensor_mode="Fast"))
+        bus.drain()
+
+        mock_camera.set_sensor_mode.assert_not_called()
+        assert [e.sensor_mode for e in received] == ["Standard"]
+
+    def test_mode_change_is_serialized_with_triggers(self):
+        """The driver pauses streaming during a mode change; CameraService's lock keeps a
+        concurrent trigger from reaching the camera until the change (and the exposure/strobe
+        refresh) has finished. This is why upstream's per-camera trigger lock is not needed."""
+        service, mock_camera, _, _ = self._make()
+        in_mode_change = threading.Event()
+        release_mode_change = threading.Event()
+        order = []
+
+        def slow_set_sensor_mode(mode):
+            order.append("mode_change_start")
+            in_mode_change.set()
+            assert release_mode_change.wait(5.0)
+            order.append("mode_change_end")
+
+        mock_camera.set_sensor_mode.side_effect = slow_set_sensor_mode
+        mock_camera.send_trigger.side_effect = lambda illumination_time=None: order.append("trigger")
+
+        setter = threading.Thread(target=service.set_sensor_mode, args=("Fast",))
+        setter.start()
+        assert in_mode_change.wait(5.0)
+        trigger = threading.Thread(target=service.send_trigger)
+        trigger.start()
+        trigger.join(0.2)
+        assert trigger.is_alive(), "trigger reached the camera while the mode change was in flight"
+
+        release_mode_change.set()
+        setter.join(5.0)
+        trigger.join(5.0)
+        assert order == ["mode_change_start", "mode_change_end", "trigger"]

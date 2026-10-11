@@ -22,13 +22,15 @@ from squid.core.events import (
     SetCameraTemperatureCommand,
     SetBlackLevelCommand,
     SetAutoWhiteBalanceCommand,
+    SetSensorModeCommand,
     # New state events
     CameraTemperatureChanged,
     BlackLevelChanged,
     AutoWhiteBalanceChanged,
+    SensorModeChanged,
 )
 
-from squid.core.abc import AbstractCamera, CameraGainRange, CameraAcquisitionMode
+from squid.core.abc import AbstractCamera, CameraError, CameraGainRange, CameraAcquisitionMode
 
 
 class CameraService(BaseService):
@@ -73,6 +75,7 @@ class CameraService(BaseService):
             self.subscribe(SetCameraTemperatureCommand, self._on_set_temperature_command)
             self.subscribe(SetBlackLevelCommand, self._on_set_black_level_command)
             self.subscribe(SetAutoWhiteBalanceCommand, self._on_set_auto_wb_command)
+            self.subscribe(SetSensorModeCommand, self._on_set_sensor_mode_command)
 
     @gated_command
     def _on_set_exposure_command(self, event: SetExposureTimeCommand):
@@ -116,6 +119,18 @@ class CameraService(BaseService):
     def _on_set_auto_wb_command(self, event: SetAutoWhiteBalanceCommand):
         """Handle SetAutoWhiteBalanceCommand event."""
         self.set_auto_white_balance(event.enabled)
+
+    def _on_set_sensor_mode_blocked(self, event: SetSensorModeCommand) -> None:
+        # The UI selection has already moved; re-publish the actual mode so it reverts.
+        self._publish_sensor_mode_state()
+
+    @gated_command(on_blocked=_on_set_sensor_mode_blocked)
+    def _on_set_sensor_mode_command(self, event: SetSensorModeCommand):
+        """Handle SetSensorModeCommand event."""
+        try:
+            self.set_sensor_mode(event.sensor_mode)
+        except (CameraError, ValueError, NotImplementedError):
+            self._log.exception(f"Failed to set sensor mode '{event.sensor_mode}'")
 
     def set_exposure_time(self, exposure_time_ms: float) -> None:
         """
@@ -295,6 +310,47 @@ class CameraService(BaseService):
         with self._lock:
             self._camera.set_black_level(level)
         self.publish(BlackLevelChanged(level=level))
+
+    # ============================================================
+    # Sensor mode methods
+    # ============================================================
+
+    def get_available_sensor_modes(self) -> Sequence[str]:
+        """Get the driver-defined sensor mode names (empty if mode selection is unsupported)."""
+        with self._lock:
+            return self._camera.get_available_sensor_modes()
+
+    def get_sensor_mode(self) -> Optional[str]:
+        """Get the active sensor mode, or None if mode selection is unsupported."""
+        with self._lock:
+            return self._camera.get_sensor_mode()
+
+    def set_sensor_mode(self, mode: str) -> None:
+        """Set the camera sensor mode (a name from get_available_sensor_modes()).
+
+        The driver pauses streaming and re-applies exposure (refreshing strobe timing) while this
+        service's lock is held, so triggers sent through the service cannot interleave with the
+        change. SensorModeChanged is published afterwards - also when the driver rejects the
+        mode, so listeners see the mode the camera is actually in - and the driver's error is
+        then re-raised.
+        """
+        self._log.info(f"Setting sensor mode: {mode}")
+        try:
+            with self._lock:
+                self._camera.set_sensor_mode(mode)
+        finally:
+            self._publish_sensor_mode_state()
+
+    def _publish_sensor_mode_state(self) -> None:
+        """Publish the camera's actual sensor mode and (mode-dependent) exposure limits."""
+        try:
+            with self._lock:
+                sensor_mode = self._camera.get_sensor_mode()
+                exposure_limits = self._camera.get_exposure_limits()
+        except Exception:
+            self._log.exception("Failed to read back the camera sensor mode state")
+            return
+        self.publish(SensorModeChanged(sensor_mode=sensor_mode, exposure_limits_ms=exposure_limits))
 
     # ============================================================
     # Read-only camera properties

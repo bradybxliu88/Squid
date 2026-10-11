@@ -20,6 +20,7 @@ from squid.ui.widgets.camera._common import (
     QSpinBox,
     QVBoxLayout,
     ROIChanged,
+    SensorModeChanged,
     SetAnalogGainCommand,
     SetAutoWhiteBalanceCommand,
     SetBinningCommand,
@@ -28,6 +29,7 @@ from squid.ui.widgets.camera._common import (
     SetExposureTimeCommand,
     SetPixelFormatCommand,
     SetROICommand,
+    SetSensorModeCommand,
     Signal,
     handles,
     squid,
@@ -55,6 +57,8 @@ class CameraSettingsWidget(EventBusFrame):
         resolution: tuple[int, int] = (64, 64),
         binning_options: Optional[list[tuple[int, int]]] = None,
         current_binning: Optional[tuple[int, int]] = None,
+        sensor_modes: Optional[list[str]] = None,
+        current_sensor_mode: Optional[str] = None,
         include_gain_exposure_time: bool = False,
         include_camera_temperature_setting: bool = False,
         include_camera_auto_wb_setting: bool = False,
@@ -81,6 +85,9 @@ class CameraSettingsWidget(EventBusFrame):
         self._resolution = resolution
         self._binning_options = binning_options or []
         self._current_binning = current_binning
+        # Driver-defined sensor modes; empty means the camera does not support mode selection.
+        self._sensor_modes = list(sensor_modes or [])
+        self._current_sensor_mode = current_sensor_mode
 
         self.add_components(
             include_gain_exposure_time,
@@ -213,6 +220,18 @@ class CameraSettingsWidget(EventBusFrame):
         self.dropdown_binning.currentTextChanged.connect(self._publish_binning)
         format_line.addWidget(QLabel("Binning"))
         format_line.addWidget(self.dropdown_binning)
+
+        # Sensor mode dropdown: only shown when the camera implements mode selection.
+        self.dropdown_sensorMode: Optional[QComboBox] = None
+        if self._sensor_modes:
+            self.dropdown_sensorMode = QComboBox()
+            self.dropdown_sensorMode.addItems(self._sensor_modes)
+            if self._current_sensor_mode is not None:
+                self.dropdown_sensorMode.setCurrentText(self._current_sensor_mode)
+            self.dropdown_sensorMode.setSizePolicy(QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed))
+            self.dropdown_sensorMode.currentTextChanged.connect(self._publish_sensor_mode)
+            format_line.addWidget(QLabel("Sensor Mode"))
+            format_line.addWidget(self.dropdown_sensorMode)
         self.camera_layout.addLayout(format_line)
 
         if include_camera_temperature_setting:
@@ -334,6 +353,22 @@ class CameraSettingsWidget(EventBusFrame):
         self.dropdown_pixelFormat.setCurrentText(event.pixel_format.name)
         self.dropdown_pixelFormat.blockSignals(False)
 
+    @handles(SensorModeChanged)
+    def _on_sensor_mode_changed(self, event: SensorModeChanged) -> None:
+        """Sync the dropdown with the camera's actual mode and refresh exposure limits.
+
+        The service publishes this after every change attempt, so a rejected selection reverts.
+        Readout speed can change the valid exposure range; like the spinbox's normal edits, a
+        clamp of the current value propagates as an exposure command.
+        """
+        if self.dropdown_sensorMode is not None and event.sensor_mode is not None:
+            self.dropdown_sensorMode.blockSignals(True)
+            self.dropdown_sensorMode.setCurrentText(event.sensor_mode)
+            self.dropdown_sensorMode.blockSignals(False)
+        if event.exposure_limits_ms is not None:
+            self._exposure_limits = event.exposure_limits_ms
+            self.entry_exposureTime.setRange(*event.exposure_limits_ms)
+
     @handles(BlackLevelChanged)
     def _on_black_level_changed(self, event: BlackLevelChanged) -> None:
         """Handle black level changed event."""
@@ -372,6 +407,10 @@ class CameraSettingsWidget(EventBusFrame):
         binning_x = int(binning_parts[0])
         binning_y = int(binning_parts[1])
         self._publish(SetBinningCommand(binning_x=binning_x, binning_y=binning_y))
+
+    def _publish_sensor_mode(self, sensor_mode: str) -> None:
+        """Publish sensor mode change via event bus."""
+        self._publish(SetSensorModeCommand(sensor_mode=sensor_mode))
 
     def _publish_temperature(self) -> None:
         """Publish temperature change via event bus."""
