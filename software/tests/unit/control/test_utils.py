@@ -12,9 +12,12 @@ def test_squid_repo_info():
     assert get_squid_repo_state_description()
 
 
+import cv2
 import numpy as np
 import pytest
+from _def import FocusMeasureOperator
 from squid.core.utils.hardware_utils import (
+    calculate_focus_measure,
     find_spot_location,
     SpotDetectionMode,
     get_available_disk_space,
@@ -222,3 +225,46 @@ def test_threaded_operation_helper():
     # Verify results
     assert operation_result == [("value1", "value2")]
     assert callback_result == [(True, None)]
+
+
+def _binary_amplitude_image(dtype, shape=(256, 256), seed=0):
+    """Random (non-periodic) 0/dtype-max image: every pixel edge at full contrast, so maximally sharp."""
+    rng = np.random.default_rng(seed)
+    return ((rng.random(shape) > 0.5) * np.iinfo(dtype).max).astype(dtype)
+
+
+@pytest.mark.parametrize("sigma", [1, 2])
+@pytest.mark.parametrize("method", list(FocusMeasureOperator))
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_focus_measure_sharp_scores_higher_than_blurred(dtype, method, sigma):
+    sharp = _binary_amplitude_image(dtype)
+    blurred = cv2.GaussianBlur(sharp, (0, 0), sigma)
+
+    assert calculate_focus_measure(sharp, method) > calculate_focus_measure(blurred, method)
+
+
+def test_focus_measure_lape_non_negative_for_uint8():
+    sharp = _binary_amplitude_image(np.uint8)
+
+    assert calculate_focus_measure(sharp, FocusMeasureOperator.LAPE) >= 0
+    assert calculate_focus_measure(cv2.GaussianBlur(sharp, (0, 0), 1), FocusMeasureOperator.LAPE) >= 0
+
+
+def test_focus_measure_lape_independent_of_dtype_for_identical_values():
+    as_uint8 = _binary_amplitude_image(np.uint8)
+    as_uint16 = as_uint8.astype(np.uint16)
+
+    assert calculate_focus_measure(as_uint8, FocusMeasureOperator.LAPE) == pytest.approx(
+        calculate_focus_measure(as_uint16, FocusMeasureOperator.LAPE), rel=1e-9
+    )
+
+
+def test_focus_measure_lape_rgb_uint8_matches_gray():
+    """RGB frames are converted to gray first; the 8-bit gray result must not wrap either."""
+    gray = _binary_amplitude_image(np.uint8)
+    rgb = np.stack([gray, gray, gray], axis=-1)
+
+    assert calculate_focus_measure(rgb, FocusMeasureOperator.LAPE) == pytest.approx(
+        calculate_focus_measure(gray, FocusMeasureOperator.LAPE), rel=1e-9
+    )
+    assert calculate_focus_measure(rgb, FocusMeasureOperator.LAPE) > 0
