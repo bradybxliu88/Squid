@@ -41,6 +41,8 @@ class SimulatedCameraBase(AbstractCamera):
     # Configs with larger crop dimensions will be clamped to these bounds
     FULL_SENSOR_WIDTH = 3088
     FULL_SENSOR_HEIGHT = 2064
+    # Fake driver-defined sensor modes so sensor mode selection is exercisable in --simulation and tests.
+    SENSOR_MODES: Tuple[str, ...] = ("standard", "fast")
 
     @staticmethod
     def debug_log(method):
@@ -109,6 +111,16 @@ class SimulatedCameraBase(AbstractCamera):
         self.set_black_level(0)
         self._acquisition_mode = None
         self.set_acquisition_mode(CameraAcquisitionMode.SOFTWARE_TRIGGER)
+        self._sensor_mode: str = self.SENSOR_MODES[0]
+        default_sensor_mode = self._config.default_sensor_mode
+        if default_sensor_mode in self.SENSOR_MODES:
+            self.set_sensor_mode(default_sensor_mode)
+        elif default_sensor_mode:
+            # Machine INIs name modes after the real driver (e.g. Hamamatsu "Standard"); running
+            # such a config in --simulation must not fail camera init.
+            self._log.warning(
+                f"Ignoring default sensor mode '{default_sensor_mode}': not a simulated mode {list(self.SENSOR_MODES)}"
+            )
         # Use crop dimensions from config if provided, otherwise use full sensor
         # Clamp to sensor bounds to avoid unexpectedly large frames
         roi_w = self._config.crop_width if self._config.crop_width else self._full_sensor_width
@@ -314,6 +326,17 @@ class SimulatedCameraBase(AbstractCamera):
     @debug_log
     def get_black_level(self) -> float:
         return self._black_level
+
+    def get_available_sensor_modes(self) -> Sequence[str]:
+        return list(self.SENSOR_MODES)
+
+    def get_sensor_mode(self) -> Optional[str]:
+        return self._sensor_mode
+
+    def set_sensor_mode(self, mode: str) -> None:
+        if mode not in self.SENSOR_MODES:
+            raise ValueError(f"Unknown sensor mode '{mode}'. Valid modes: {list(self.SENSOR_MODES)}")
+        self._sensor_mode = mode
 
     @debug_log
     def _set_acquisition_mode_imp(self, acquisition_mode: CameraAcquisitionMode):

@@ -463,7 +463,12 @@ class FocusMapWidget(EventBusFrame):
             return
         current = self.point_combo.currentIndex()
         next_index = (current + 1) % len(self.focus_points)
-        self.point_combo.setCurrentIndex(next_index)
+        # setCurrentIndex emits currentIndexChanged -> goto_selected_point; block it so we move once, not twice.
+        self.point_combo.blockSignals(True)
+        try:
+            self.point_combo.setCurrentIndex(next_index)
+        finally:
+            self.point_combo.blockSignals(False)
         self.goto_selected_point()
 
     def goto_selected_point(self) -> None:

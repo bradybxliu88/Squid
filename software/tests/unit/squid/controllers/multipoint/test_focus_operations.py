@@ -33,11 +33,13 @@ class FakeLaserAFController:
     def __init__(self):
         self.move_to_target_calls = []
         self.should_fail = False
+        self.move_result = True
 
-    def move_to_target(self, target: float) -> None:
+    def move_to_target(self, target: float) -> bool:
         if self.should_fail:
             raise Exception("Laser AF failed")
         self.move_to_target_calls.append(target)
+        return self.move_result
 
 
 class FakeFocusLockController:
@@ -215,6 +217,18 @@ class TestAutofocusExecutor:
         result = executor.perform_autofocus()
 
         assert result is False
+
+    def test_perform_laser_autofocus_soft_failure_returns_false(self):
+        """move_to_target returning False (no reference, NaN, out of range, cross-correlation) is an AF failure."""
+        laser_af = FakeLaserAFController()
+        laser_af.move_result = False
+        executor = AutofocusExecutor(laser_af_controller=laser_af)
+        executor.configure(autofocus_mode=AutofocusMode.LASER_REFLECTION)
+
+        result = executor.perform_autofocus()
+
+        assert result is False
+        assert laser_af.move_to_target_calls == [0]
 
     def test_is_focus_lock_active_when_active(self):
         """Test is_focus_lock_active returns True when focus lock is active."""

@@ -78,6 +78,9 @@ from squid.backend.drivers.stages.serial import (
 # We have a few top level functions here, so we have this module level log instance.  Classes should make their own!
 _log = squid.core.logging.get_logger("microcontroller")
 
+# Mapping of execution status bytes to human-readable names for logging
+_CMD_EXECUTION_STATUS_NAMES = {value: name for name, value in vars(CMD_EXECUTION_STATUS).items() if name.isupper()}
+
 # Mapping of command type bytes to human-readable names for logging
 _CMD_NAMES = {
     CMD_SET.MOVE_X: "MOVE_X",
@@ -275,16 +278,10 @@ class Microcontroller:
         # Skip this warning in simulation - the simulated serial doesn't behave the same
         if self._is_simulated:
             return
-        now = time.time()
-        last_read = float(
-            self._last_successful_read_time
-        )  # Just in case it gets update, capture it for printing below.
-        if now - last_read > Microcontroller.STALE_READ_TIMEOUT:
+        if time.time() - self._last_successful_read_time > Microcontroller.STALE_READ_TIMEOUT:
             if not self._stale_warning_issued:
                 self._stale_warning_issued = True
-                self.log.warning(
-                    f"Read thread is stale, it has been {now - last_read} [s] since a valid packet. Last cmd id from the mcu was {self._cmd_id_mcu}, our last sent cmd id was {self._cmd_id}"
-                )
+                self.log.warning(f"Read thread is stale. {self._mcu_state()}")
 
     def close(self) -> None:
         self.terminate_reading_received_packet_thread = True
@@ -1030,9 +1027,7 @@ class Microcontroller:
         self._warn_if_reads_stale()
 
     def abort_current_command(self, reason: str) -> None:
-        cmd_type = self.last_command[1] if self.last_command is not None else -1
-        cmd_name = _CMD_NAMES.get(cmd_type, f"UNKNOWN({cmd_type})")
-        self.log.error(f"[MCU] !!! Command {self._cmd_id} ({cmd_name}) ABORTED: {reason}")
+        self.log.error(f"[MCU] !!! Command {self._cmd_id} ({self._last_command_name()}) ABORTED: {reason}")
         self.last_command_aborted_error = CommandAborted(
             reason=reason, command_id=self._cmd_id
         )
@@ -1151,10 +1146,9 @@ class Microcontroller:
                     if self.mcu_cmd_execution_in_progress:
                         self.mcu_cmd_execution_in_progress = False
                         elapsed_ms = (time.time() - self.last_command_send_timestamp) * 1000
-                        cmd_type = self.last_command[1] if self.last_command is not None else -1
-                        cmd_name = _CMD_NAMES.get(cmd_type, f"UNKNOWN({cmd_type})")
                         self.log.debug(
-                            f"[MCU] <<< command {self._cmd_id} ({cmd_name}) complete (took {elapsed_ms:.1f}ms)"
+                            f"[MCU] <<< command {self._cmd_id} ({self._last_command_name()}) complete"
+                            f" (took {elapsed_ms:.1f}ms)"
                         )
                 elif (
                     self.mcu_cmd_execution_in_progress
@@ -1302,12 +1296,34 @@ class Microcontroller:
             )
 
             if still_busy():
-                raise TimeoutError(
-                    f"Current mcu operation timed out after {timeout_limit_s} [s]."
-                )
+                raise TimeoutError(f"Current mcu operation timed out after {timeout_limit_s} [s]. {self._mcu_state()}")
 
             if self.last_command_aborted_error is not None:
                 raise self.last_command_aborted_error
+
+    def _last_command_name(self) -> str:
+        cmd_type = self.last_command[1] if self.last_command is not None else -1
+        return _CMD_NAMES.get(cmd_type, f"UNKNOWN({cmd_type})")
+
+    def _mcu_state(self) -> str:
+        """Describe the last thing the mcu told us, for wait-timeout and stale-read messages."""
+        status = self._cmd_execution_status
+        status_name = _CMD_EXECUTION_STATUS_NAMES.get(status, status)
+        since_read_s = time.time() - self._last_successful_read_time
+        state = (
+            f"Sent cmd {self._cmd_id} ({self._last_command_name()}); mcu reports cmd {self._cmd_id_mcu}"
+            f" status={status_name}; {since_read_s:.1f} [s] since a valid packet."
+        )
+        if since_read_s > Microcontroller.STALE_READ_TIMEOUT:
+            return state + " The mcu has gone quiet - check the serial connection."
+        if self._cmd_id_mcu == self._cmd_id and status == CMD_EXECUTION_STATUS.IN_PROGRESS:
+            # Matches none of the read loop's recovery branches (ids match, so no ack-timeout resend; no
+            # error status, so no abort), and every later blocking command will hit the same wall.
+            return state + (
+                " The mcu is still talking but reports this command as in progress, so the firmware never"
+                " finished a move and every command after it will time out too. Home the stage to clear it."
+            )
+        return state
 
     @staticmethod
     def _int_to_payload(signed_int: int, number_of_bytes: int) -> int:

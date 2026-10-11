@@ -121,6 +121,7 @@ class Dragonfly:
         """
         command = f"AT_PS_POS,1,{position}"
         self._send_command(command)
+        self.current_port_selection_dichroic = position  # get_camera_port() reads this
         return position
 
     def get_port_selection_dichroic(self) -> int:
@@ -274,16 +275,12 @@ class Dragonfly:
 
     def get_emission_filter_info(self, port: int) -> list[str]:
         response = self._send_command(f"AT_FW_COMPO,{port},?")
-        available = response.split(",")[
-            1
-        ]  # Not sure about the format of the response. Need to confirm.
+        available = response.split(",")[1]  # Not sure about the format of the response. Need to confirm.
         if available == "0":
             return []
         else:
             info = []
-            for i in range(
-                1, 8
-            ):  # Assume there are 8 positions on the emission filter wheel
+            for i in range(1, 9):  # There are 8 positions on the emission filter wheel
                 info.append(str(i) + ":" + self._get_component_info("FW", port, i))
             return info
 
@@ -396,10 +393,10 @@ class Dragonfly_Simulation:
         """Set filter wheel rotation speed"""
         self.log.debug(f"Set filter wheel port {port} speed to {speed}")
 
-    def set_field_aperture_wheel_position(self, port: int, position: int):
-        """Set aperture position"""
-        self.field_aperture_positions[port] = position
-        self.log.debug(f"Set field aperture port {port} to position {position}")
+    def set_field_aperture_wheel_position(self, position: int):
+        """Set aperture position (same signature as the hardware: the unit has one aperture wheel)"""
+        self.field_aperture_positions[1] = position
+        self.log.debug(f"Set field aperture to position {position}")
 
     def get_field_aperture_wheel_position(self) -> int:
         """Get current aperture position"""

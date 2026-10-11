@@ -334,11 +334,16 @@ class AutofocusExecutor:
             return False
 
         try:
-            self._laser_af.move_to_target(0)
-            return True
+            succeeded = self._laser_af.move_to_target(0)
         except Exception as exc:
             _log.error(f"Laser AF failed: {exc}")
             return False
+        if not succeeded:
+            # move_to_target reports soft failures (no reference, NaN displacement, displacement out of range,
+            # cross-correlation mismatch) by returning False rather than raising.
+            _log.warning("Laser AF failed: move_to_target did not reach the reference plane")
+            return False
+        return True
 
     # Focus lock helper methods for MultiPointWorker
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Set, TYPE_CHECKING
 
+import _def
 import squid.core.abc
 import squid.core.logging
 import squid.core.utils.hardware_utils as utils
@@ -386,7 +387,14 @@ class AcquisitionPlanner:
         with tempfile.TemporaryDirectory() as temp_dir:
             size_before = utils.get_directory_disk_usage(Path(temp_dir))
             utils_acquisition.save_image(
-                test_image, "test", temp_dir, config, is_color
+                test_image,
+                "test",
+                temp_dir,
+                config,
+                is_color,
+                tiff_compression_level=utils_acquisition.tiff_compression_level_for_format(
+                    _def.FILE_SAVING_OPTION, _def.TIFF_COMPRESSION_LEVEL
+                ),
             )
             size_after = utils.get_directory_disk_usage(Path(temp_dir))
             return size_after - size_before

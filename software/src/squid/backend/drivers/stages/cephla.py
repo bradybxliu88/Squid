@@ -4,6 +4,7 @@ import math
 from typing import Optional, TYPE_CHECKING
 
 import _def as _def
+from squid.backend.microcontroller import movement_sign_to_homing_direction
 from squid.core.abc import AbstractStage, Pos, StageStage
 from squid.core.config import StageConfig, AxisConfig
 
@@ -19,8 +20,8 @@ class CephlaStage(AbstractStage):
         # We arbitrarily guess that if a move takes 3x the naive "infinite acceleration" time, then it
         # probably timed out.  But always use a minimum timeout of at least 3 seconds.
         #
-        # Also protect against divide by zero.
-        return max((3, 3 * abs(distance) / min(0.1, abs(max_speed))))
+        # The max(0.1, ...) protects against divide by zero.
+        return max((3, 3 * abs(distance) / max(0.1, abs(max_speed))))
 
     def __init__(
         self,
@@ -145,6 +146,17 @@ class CephlaStage(AbstractStage):
             )
 
     def move_z_to(self, abs_mm: float, blocking: bool = True):
+        # Clamp to the configured Z soft limits before commanding the move. The firmware's absolute MOVETO_Z
+        # records the requested target unclamped but parks the motor at the soft limit, so an out-of-range target
+        # never reports complete: the MCU stays IN_PROGRESS and every later blocking command times out until the
+        # stage is re-homed. (e.g. an objective-turret Z restore to the post-home Z=0.0, which is below
+        # MIN_POSITION, or a focus-map plane extrapolated below the floor.) This mirrors the MIN_POSITION clamp on
+        # the backlash pre-move below.
+        clamped_abs_mm = self.get_config().Z_AXIS.clamp_position(abs_mm)
+        if clamped_abs_mm != abs_mm:
+            self._log.debug(f"Clamped Z move target {abs_mm} mm to soft limit {clamped_abs_mm} mm.")
+        abs_mm = clamped_abs_mm
+
         # From Hongquan, we want the z axis to rest on the "up" (wrt gravity) direction of gravity. So if we
         # are moving in the negative (down) z direction, we need to move past our mark a bit then
         # back up.  If we are already moving in the "up" position, we can move straight there.
@@ -214,18 +226,10 @@ class CephlaStage(AbstractStage):
             2.0 * math.pi, self.get_config().THETA_AXIS.MAX_SPEED / 5.0
         )
 
-        x_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().X_AXIS.MOVEMENT_SIGN
-        )
-        y_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().Y_AXIS.MOVEMENT_SIGN
-        )
-        z_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().Z_AXIS.MOVEMENT_SIGN
-        )
-        theta_dir = squid.backend.microcontroller.movement_sign_to_homing_direction(
-            self.get_config().THETA_AXIS.MOVEMENT_SIGN
-        )
+        x_dir = movement_sign_to_homing_direction(self.get_config().X_AXIS.MOVEMENT_SIGN)
+        y_dir = movement_sign_to_homing_direction(self.get_config().Y_AXIS.MOVEMENT_SIGN)
+        z_dir = movement_sign_to_homing_direction(self.get_config().Z_AXIS.MOVEMENT_SIGN)
+        theta_dir = movement_sign_to_homing_direction(self.get_config().THETA_AXIS.MOVEMENT_SIGN)
 
         if x and y:
             self._microcontroller.home_xy(

@@ -7,7 +7,6 @@ Created on Mon May  7 19:44:40 2018
 
 import numpy as np
 import cv2
-from numpy import square, mean
 
 # color is a vector HSV whose size is 3
 
@@ -248,14 +247,6 @@ def YTracking_Objective_Function(image, color):
         return std[0][0] ** 2
     else:
         return 0
-
-
-def calculate_focus_measure(image):
-    if len(image.shape) == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)  # optional
-    lap = cv2.Laplacian(image, cv2.CV_16S)
-    focus_measure = mean(square(lap))
-    return focus_measure
 
 
 # test part

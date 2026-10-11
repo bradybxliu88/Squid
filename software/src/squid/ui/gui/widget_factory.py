@@ -56,6 +56,8 @@ def create_hardware_widgets(gui: "HighContentScreeningGui") -> None:
     resolution = (64, 64)
     binning_options = []
     current_binning = None
+    sensor_modes = []
+    current_sensor_mode = None
     if camera_service is not None:
         cam = camera_service._camera if hasattr(camera_service, "_camera") else None
         try:
@@ -90,6 +92,12 @@ def create_hardware_widgets(gui: "HighContentScreeningGui") -> None:
         except Exception:
             binning_options = []
             current_binning = None
+        try:
+            sensor_modes = list(camera_service.get_available_sensor_modes())
+            current_sensor_mode = camera_service.get_sensor_mode() if sensor_modes else None
+        except Exception:
+            sensor_modes = []
+            current_sensor_mode = None
     if CAMERA_TYPE in ["Toupcam", "Tucsen", "Kinetix"]:
         gui.cameraSettingWidget = widgets.CameraSettingsWidget(
             gui._ui_event_bus,
@@ -101,6 +109,8 @@ def create_hardware_widgets(gui: "HighContentScreeningGui") -> None:
             resolution=resolution,
             binning_options=binning_options,
             current_binning=current_binning,
+            sensor_modes=sensor_modes,
+            current_sensor_mode=current_sensor_mode,
             include_gain_exposure_time=False,
             include_camera_temperature_setting=True,
             include_camera_auto_wb_setting=False,
@@ -116,6 +126,8 @@ def create_hardware_widgets(gui: "HighContentScreeningGui") -> None:
             resolution=resolution,
             binning_options=binning_options,
             current_binning=current_binning,
+            sensor_modes=sensor_modes,
+            current_sensor_mode=current_sensor_mode,
             include_gain_exposure_time=False,
             include_camera_temperature_setting=False,
             include_camera_auto_wb_setting=True,

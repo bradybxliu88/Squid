@@ -38,3 +38,20 @@ def test_acquisition_context_can_skip_live_resume() -> None:
     context.restore(resume_live=False)
 
     live.start_live.assert_not_called()
+
+
+def test_acquisition_context_can_skip_position_restore() -> None:
+    # Used when the start aborts on a busy MCU: the stage never moved, and a move would only time out.
+    live = MagicMock()
+    live.is_live = False
+    camera = MagicMock()
+    camera.get_callbacks_enabled.return_value = False
+    stage = MagicMock()
+    stage.get_position.return_value = SimpleNamespace(x_mm=1.0, y_mm=2.0, z_mm=3.0)
+
+    context = acquisition_context(live, camera, stage)
+    context.restore(resume_live=False, restore_position=False)
+
+    stage.move_x_to.assert_not_called()
+    stage.move_y_to.assert_not_called()
+    camera.enable_callbacks.assert_called_with(False)

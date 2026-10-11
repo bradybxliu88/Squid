@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 import _def
+from squid.backend.controllers.multipoint.job_processing import SaveSettings
 from squid.backend.controllers.multipoint.multi_point_controller import MultiPointController
 from squid.backend.controllers.multipoint.multi_point_utils import (
     AcquisitionParameters,
@@ -223,5 +224,39 @@ def test_publish_ndviewer_start_emits_push_event_for_individual_images(
         assert event.fov_labels == ["1:0", "1:1", "2:0"]
         assert event.experiment_id == "exp_push"
         assert controller._ndviewer_mode == "tiff"
+    finally:
+        bus.stop()
+
+
+@pytest.mark.parametrize(
+    "running_format, snapshot_format, expect_push",
+    [
+        # Preferences switched the format after the worker took its snapshot: follow what the worker writes.
+        (_def.FileSavingOption.OME_TIFF, _def.FileSavingOption.INDIVIDUAL_IMAGES, True),
+        (_def.FileSavingOption.INDIVIDUAL_IMAGES, _def.FileSavingOption.OME_TIFF, False),
+    ],
+)
+def test_publish_ndviewer_start_follows_the_acquisition_snapshot(
+    monkeypatch: pytest.MonkeyPatch, running_format, snapshot_format, expect_push
+) -> None:
+    """The push-mode decision must match the format the acquisition's worker saves with (aa9107d9)."""
+    bus = EventBus()
+    bus.start()
+    try:
+        published: list[NDViewerStartAcquisition] = []
+        bus.subscribe(NDViewerStartAcquisition, published.append)
+
+        controller = _create_controller(bus)
+        controller.experiment_ID = "exp_snapshot"
+        controller.selected_configurations = [_FakeChannelConfig("BF")]
+
+        monkeypatch.setattr(_def, "FILE_SAVING_OPTION", running_format)
+        controller._publish_ndviewer_start(
+            _build_acquisition_params("exp_snapshot"), SaveSettings(file_saving_option=snapshot_format)
+        )
+        bus.drain(timeout_s=1.0)
+
+        assert (len(published) == 1) is expect_push
+        assert controller._ndviewer_mode == ("tiff" if expect_push else "inactive")
     finally:
         bus.stop()

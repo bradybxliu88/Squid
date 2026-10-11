@@ -204,6 +204,10 @@ class AxisConfig(pydantic.BaseModel):
             )
         )
 
+    def clamp_position(self, value: float) -> float:
+        """Clamp a position (native units) into this axis's [MIN_POSITION, MAX_POSITION] range."""
+        return min(max(value, self.MIN_POSITION), self.MAX_POSITION)
+
 
 class StageConfig(pydantic.BaseModel):
     X_AXIS: AxisConfig
@@ -502,6 +506,10 @@ class CameraConfig(pydantic.BaseModel):
     # The default readout data bit depth of the camera. Note that this may depend on the gain mode being used.
     default_pixel_format: CameraPixelFormat
 
+    # The default sensor mode to apply at camera init. Driver-defined name from
+    # get_available_sensor_modes(); None leaves the camera at its power-on mode.
+    default_sensor_mode: Optional[str] = None
+
     # The binning factor of the camera.  If None, the camera is not using binning, or use 1x1 as default.
     default_binning: Optional[Tuple[int, int]] = None
 
@@ -572,6 +580,13 @@ def _old_camera_variant_to_enum(old_string) -> CameraVariant:
     raise ValueError(f"Unknown old camera type {old_string=}")
 
 
+def _sensor_mode_default_from_def() -> Optional[str]:
+    # The INI reader parses bare numbers (e.g. "sensor_mode_default = 2") into ints, but sensor
+    # mode names are always strings; an empty value means "leave the camera's power-on mode".
+    value = getattr(_def.CAMERA_CONFIG, "SENSOR_MODE_DEFAULT", None)
+    return str(value) if value not in (None, "") else None
+
+
 def _get_camera_model_enum(
     model: str, cam_type: CameraVariant
 ) -> Optional[
@@ -612,6 +627,7 @@ _camera_config = CameraConfig(
     )
     if isinstance(_def.CAMERA_CONFIG.PIXEL_FORMAT_DEFAULT, str)
     else _def.CAMERA_CONFIG.PIXEL_FORMAT_DEFAULT,
+    default_sensor_mode=_sensor_mode_default_from_def(),
     default_binning=(
         _def.CAMERA_CONFIG.BINNING_FACTOR_DEFAULT,
         _def.CAMERA_CONFIG.BINNING_FACTOR_DEFAULT,

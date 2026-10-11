@@ -1,5 +1,6 @@
 # Confocal microscope control widgets (XLight, Dragonfly)
-from typing import Any, Optional
+from functools import partial
+from typing import Any, Callable, Optional, TypeVar
 
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
@@ -15,6 +16,7 @@ from qtpy.QtWidgets import (
     QSizePolicy,
 )
 
+import squid.core.logging
 from squid.core.events import (
     auto_subscribe,
     auto_unsubscribe,
@@ -26,6 +28,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from squid.ui.ui_event_bus import UIEventBus
+
+_log = squid.core.logging.get_logger(__name__)
+
+_T = TypeVar("_T")
 
 
 class SpinningDiskConfocalWidget(QWidget):
@@ -315,39 +321,30 @@ class DragonflyConfocalWidget(QWidget):
 
         self.init_ui()
 
-        # Initialize current states from hardware
-        try:
-            current_modality = self.dragonfly.get_modality()
-            self.confocal_mode = (
-                current_modality == "CONFOCAL" if current_modality else False
-            )
-
-            current_dichroic = self.dragonfly.get_port_selection_dichroic()
-            if current_dichroic is not None:
-                self.dropdown_dichroic.setCurrentText(str(current_dichroic))
-
-            current_port1_filter = self.dragonfly.get_emission_filter(1)
-            if current_port1_filter is not None:
-                self.dropdown_port1_emission_filter.setCurrentText(
-                    str(current_port1_filter)
-                )
-
-            current_port2_filter = self.dragonfly.get_emission_filter(2)
-            if current_port2_filter is not None:
-                self.dropdown_port2_emission_filter.setCurrentText(
-                    str(current_port2_filter)
-                )
-
-            current_field_aperture = self.dragonfly.get_field_aperture_wheel_position()
-            if current_field_aperture is not None:
-                self.dropdown_field_aperture.setCurrentText(str(current_field_aperture))
-
-            motor_state = self.dragonfly.get_disk_motor_state()
-            if motor_state is not None:
-                self.btn_disk_motor.setChecked(motor_state)
-
-        except Exception as e:
-            print(f"Error initializing widget state: {e}")
+        # Show the unit's current state. Nothing is connected yet, so selecting a dropdown
+        # entry here does not move anything. Each query stands alone: a wheel the unit does
+        # not have (e.g. no port 2 emission filter) must not hide the rest of the state.
+        self.confocal_mode = self._read("modality", self.dragonfly.get_modality, "") == "CONFOCAL"
+        self.btn_disk_motor.setChecked(bool(self._read("disk motor state", self.dragonfly.get_disk_motor_state, False)))
+        for dropdown, what, query in (
+            (self.dropdown_dichroic, "dichroic", self.dragonfly.get_port_selection_dichroic),
+            (
+                self.dropdown_port1_emission_filter,
+                "port 1 emission filter",
+                partial(self.dragonfly.get_emission_filter, 1),
+            ),
+            (
+                self.dropdown_port2_emission_filter,
+                "port 2 emission filter",
+                partial(self.dragonfly.get_emission_filter, 2),
+            ),
+            (self.dropdown_field_aperture, "field aperture", self.dragonfly.get_field_aperture_wheel_position),
+        ):
+            # Dropdown entries are the unit's component names in position order, so select by
+            # index (1-based position); matching on the text only ever worked for numeric names.
+            position = self._read(what, query, None)
+            in_range = isinstance(position, int) and 1 <= position <= dropdown.count()
+            dropdown.setCurrentIndex(position - 1 if in_range else -1)  # unknown position: no entry selected
 
         # Set initial button text
         if self.confocal_mode:
@@ -378,6 +375,14 @@ class DragonflyConfocalWidget(QWidget):
                 )
             )
             self._subscriptions = auto_subscribe(self, self._event_bus)
+
+    def _read(self, what: str, query: Callable[[], _T], default: _T) -> _T:
+        """Query the unit; on failure log it and return default so the rest of the state still loads."""
+        try:
+            return query()
+        except Exception as e:
+            _log.error(f"Could not read the Dragonfly {what}: {e}")
+            return default
 
     @handles(ObjectiveChanged)
     def _on_objective_changed(self, event: ObjectiveChanged) -> None:
@@ -471,7 +476,7 @@ class DragonflyConfocalWidget(QWidget):
                     )
                 )
         except Exception as e:
-            print(f"Error toggling confocal mode: {e}")
+            _log.error(f"Error toggling confocal mode: {e}")
         finally:
             self.enable_all_buttons(True)
 
@@ -484,7 +489,7 @@ class DragonflyConfocalWidget(QWidget):
             else:
                 self.dragonfly.set_disk_motor_state(False)
         except Exception as e:
-            print(f"Error toggling disk motor: {e}")
+            _log.error(f"Error toggling disk motor: {e}")
         finally:
             self.enable_all_buttons(True)
 
@@ -495,7 +500,7 @@ class DragonflyConfocalWidget(QWidget):
             selected_pos = self.dropdown_dichroic.currentIndex()
             self.dragonfly.set_port_selection_dichroic(selected_pos + 1)
         except Exception as e:
-            print(f"Error setting dichroic: {e}")
+            _log.error(f"Error setting dichroic: {e}")
         finally:
             self.enable_all_buttons(True)
 
@@ -506,7 +511,7 @@ class DragonflyConfocalWidget(QWidget):
             selected_pos = self.dropdown_port1_emission_filter.currentIndex()
             self.dragonfly.set_emission_filter(1, selected_pos + 1)
         except Exception as e:
-            print(f"Error setting port 1 emission filter: {e}")
+            _log.error(f"Error setting port 1 emission filter: {e}")
         finally:
             self.enable_all_buttons(True)
 
@@ -517,18 +522,18 @@ class DragonflyConfocalWidget(QWidget):
             selected_pos = self.dropdown_port2_emission_filter.currentIndex()
             self.dragonfly.set_emission_filter(2, selected_pos + 1)
         except Exception as e:
-            print(f"Error setting port 2 emission filter: {e}")
+            _log.error(f"Error setting port 2 emission filter: {e}")
         finally:
             self.enable_all_buttons(True)
 
     def set_field_aperture(self, index: int) -> None:
-        """Set port 1 field aperture position"""
+        """Set field aperture position"""
         self.enable_all_buttons(False)
         try:
             selected_pos = self.dropdown_field_aperture.currentIndex()
             self.dragonfly.set_field_aperture_wheel_position(selected_pos + 1)
         except Exception as e:
-            print(f"Error setting port 1 field aperture: {e}")
+            _log.error(f"Error setting field aperture: {e}")
         finally:
             self.enable_all_buttons(True)
 

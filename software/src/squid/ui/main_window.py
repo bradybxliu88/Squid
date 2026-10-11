@@ -7,6 +7,7 @@ from squid.backend.controllers.autofocus import LaserAutofocusController
 from squid.backend.drivers.cameras.settings_cache import (
     save_camera_settings,
     load_camera_settings,
+    restore_sensor_mode,
 )
 from squid.backend.services import ServiceRegistry
 
@@ -1616,7 +1617,7 @@ class HighContentScreeningGui(QMainWindow):
         self._ui_event_bus.publish(MoveStageToCommand(x_mm=x_mm, y_mm=y_mm))
 
     def _restore_cached_camera_settings(self) -> None:
-        """Restore cached camera settings (binning, pixel format) from previous session.
+        """Restore cached camera settings (binning, pixel format, sensor mode) from previous session.
 
         Silently returns if no cached settings exist. Errors are logged but do not
         prevent application startup.
@@ -1645,6 +1646,18 @@ class HighContentScreeningGui(QMainWindow):
                 self.log.warning(f"Cannot restore pixel format '{cached_settings.pixel_format}': {e}")
             except Exception as e:
                 self.log.error(f"Error restoring camera pixel format: {e}")
+
+        # Apply sensor mode via CameraService (serialized with other camera access, publishes
+        # SensorModeChanged). The cached mode overrides the INI's sensor_mode_default applied at
+        # camera init - the same precedence as binning and pixel format.
+        if cached_settings.sensor_mode:
+            camera_service = self._services.get("camera")
+            if camera_service is None:
+                self.log.warning(
+                    f"Cannot restore sensor mode '{cached_settings.sensor_mode}' - no camera service available"
+                )
+            elif restore_sensor_mode(camera_service, cached_settings.sensor_mode):
+                self.log.info(f"Restored camera sensor mode: {cached_settings.sensor_mode}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Alignment Widget Setup

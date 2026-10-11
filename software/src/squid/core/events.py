@@ -1473,6 +1473,9 @@ class SetAcquisitionParametersCommand(Event):
     use_manual_focus_map: Optional[bool] = None
     z_range: Optional[Tuple[float, float]] = None
     focus_map: Optional[Any] = None
+    # Explicit focus-map selection: True uses `focus_map`, False clears any focus map set by an earlier command
+    # (focus_map=None on its own means "leave unchanged"). None leaves the current focus map as is.
+    use_focus_map: Optional[bool] = None
     use_fluidics: Optional[bool] = None
     skip_saving: Optional[bool] = None
     z_stacking_config: Optional[int] = None  # 0=FROM BOTTOM, 1=FROM CENTER, 2=FROM TOP
@@ -1925,6 +1928,17 @@ class SetPixelFormatCommand(Event):
 
 
 @dataclass
+class SetSensorModeCommand(Event):
+    """Command to set the camera sensor mode.
+
+    The mode is a driver-defined name from AbstractCamera.get_available_sensor_modes()
+    (e.g. "Ultra Quiet" / "Standard" / "Fast" for the Hamamatsu READOUTSPEED property).
+    """
+
+    sensor_mode: str
+
+
+@dataclass
 class SetCameraTemperatureCommand(Event):
     """Command to set camera temperature."""
 
@@ -1970,6 +1984,20 @@ class AutoWhiteBalanceChanged(Event):
     """Notification that auto white balance mode changed."""
 
     enabled: bool
+
+
+@dataclass
+class SensorModeChanged(Event):
+    """Notification of the camera's current sensor mode after a sensor mode change attempt.
+
+    Published on failure too (with the mode the camera actually remained in), so the UI can
+    revert a rejected selection. A sensor mode (e.g. readout speed) change can shift the valid
+    exposure range, so the new exposure limits are included for listeners to refresh their
+    exposure controls.
+    """
+
+    sensor_mode: Optional[str]
+    exposure_limits_ms: Optional[Tuple[float, float]] = None
 
 
 # ============================================================================

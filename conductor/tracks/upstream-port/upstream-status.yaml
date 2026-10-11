@@ -1055,3 +1055,358 @@ commits:
     ported_date: '2026-06-10'
     analysis_file: commits/41-236ef801-unified-mosaic-part2a.md
     notes: 'PARTIAL (steps 1 + 2a done; 2b pending GUI QA). Step 1 (f000bee3): mosaic_utils.py + UnifiedMosaicWidget (flag USE_UNIFIED_MOSAIC_VIEW, default off) + MosaicTileUpdate + serialize_for_yaml + tests. Step 2a (236ef801): wire the unified widget in-GUI under the flag — main_window builds MosaicTileUpdate per tile + setPlateLayout from PlateViewInit (extended with well_ids + per-well origins); worker skips DownsampledViewJob when flag on; controller emits PlateViewInit for unified mode. IPC plate pipeline BYPASSED (flag on) but NOT deleted — physical removal + manual-ROI/click-to-move wiring deferred to step 2b after on-hardware GUI QA (removing the working fallback before the in-GUI path is hardware-verified would leave no plate view if broken). flag-off default fully intact (regression verified identical). Plan 2026-06-10-unified-mosaic.md.'
+  0a10ad1e:
+    title: 'fix: populate region_shapes for flexible/single/template regions (#554)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Fork's scan coordinates already register shapes for flexible/single/template regions.
+    skip_date: '2026-10-11'
+  8779ced6:
+    title: 'feat: reorderable channel acquisition sequence in multipoint widgets (#557)'
+    status: skipped
+    skip_reason: superseded
+    skip_justification: Fork already supports ordering channels in its acquisition widgets; upstream's reorder UI adds little.
+    skip_date: '2026-10-11'
+  6919470e:
+    title: 'feat: per-channel z-offset for laser autofocus (#551)'
+    status: ported
+    ported_in: fc84e31e
+    ported_date: '2026-10-11'
+    notes: 'Parts 1+2 only: AF-failure bool (fc84e31e) and z-offset worker robustness (b2c39ae9), keeping fork''s piezo-only
+      ungated semantics. Capture UI / Apply-in-Live / objective-sourced z_offset_um deferred.'
+  72bdd2fc:
+    title: 'fix(filter-wheel): recover from CMD_EXECUTION_ERROR on post-home offset move (#559)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Emission filter wheel not in use on this machine. Startup try/except around home() is the only cheap
+      part if a wheel is added; the resend half needs deferred f2a2cef0.
+    skip_date: '2026-10-11'
+  90cc5dd0:
+    title: Change upload protocol from teensy-cli to teensy-gui (#553)
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Firmware upload tooling only (teensy-gui needs a desktop session); no runtime effect.
+    skip_date: '2026-10-11'
+  06a91af4:
+    title: 'feat: hide Continuous Acquisition trigger mode unless ENABLE_RECORDING (#561)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: UI hiding of Continuous Acquisition trigger mode; low value.
+    skip_date: '2026-10-11'
+  0306f194:
+    title: 'fix(navigation): keep planned-coordinate grid fixed during acquisition (#563)'
+    status: skipped
+    skip_reason: already-fixed
+    skip_justification: Planned-coordinate grid already stays fixed during acquisition (wellplate_multipoint _acquisition_in_progress
+      guard).
+    skip_date: '2026-10-11'
+  dd0c4cd2:
+    title: 'fix(mosaic): keep Full View tiles across magnification changes (#566)'
+    status: pending
+  8c62827a:
+    title: 'fix(turret): prevent Z-restore timeout at startup; de-energize when idle (#567)'
+    status: in-progress
+    started_date: '2026-10-11'
+    notes: 'Z clamp (AxisConfig.clamp_position + CephlaStage.move_z_to) ported in ccff0b3c. Turret de-energize / restore_z parts
+      pending: on hold until the user confirms whether the machine has a NiMotion turret.'
+  7dfd75ca:
+    title: 'feat: acquisition watchdog — Slack alert on prematurely-ended acquisitions (#565)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Slack-only acquisition watchdog; Slack integration (0346d508) deliberately deferred. Native shutdown
+      abort/join is a separate fork follow-up.
+    skip_date: '2026-10-11'
+  ecd84920:
+    title: 'feat(worker): log actual z after each per-channel z-offset move (#573)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Logging-only follow-up to per-channel z-offset; low value.
+    skip_date: '2026-10-11'
+  5faaad47:
+    title: 'fix(filter-wheel): reset W/W2 range to full after home (rotary axis) — fixes intermittent post-home CMD_EXECUTION_ERROR
+      (#560)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: 'Firmware-only filter wheel fix; no filter wheel in use and fork firmware/ is a stale snapshot of upstream
+      #401.'
+    skip_date: '2026-10-11'
+  ee7897c9:
+    title: 'fix: skip focus-map interpolation for single-FOV snap acquisitions (#577)'
+    status: ported
+    ported_in: a9ec2ff4
+    ported_date: '2026-10-11'
+    notes: Fork-only stale focus-map clear in b085d67c.
+  780d80e3:
+    title: 'fix: AttributeError when selecting Simple Recording/Tracking tab (#584)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Simple Recording/Tracking tab code path does not exist in the fork.
+    skip_date: '2026-10-11'
+  1f4130f2:
+    title: 'fix(laser-engine): bound serial write_timeout so a stuck engine can''t hang startup (#576)'
+    status: ported
+    ported_in: ffe5c16a
+    ported_date: '2026-10-11'
+  '24276973':
+    title: 'fix(channel-config): persist settings for channels added via the channel configurator (#589)'
+    status: ported
+    ported_in: f9ec7fff
+    ported_date: '2026-10-11'
+  d83cdabf:
+    title: Add PI V-308 / C-414 voice-coil focus stage (USE_PI_FOCUS_STAGE) (#569)
+    status: skipped
+    skip_reason: deferred
+    skip_justification: PI V-308 / C-414 focus stage not in use on this machine.
+    skip_date: '2026-10-11'
+  a518249e:
+    title: 'feat(turret): per-machine objective turret pulse offset (#575)'
+    status: pending
+  d5fc5abd:
+    title: 'feat: per-region laser-AF offset (focus-map constant-z + laser AF) (#562)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Per-region laser-AF offset builds on the 6919470e capture UI, which is deferred.
+    skip_date: '2026-10-11'
+  52c6f586:
+    title: 'fix(acquisition): default per-channel Z-offset to OFF (#598)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Default for upstream's apply_channel_offset checkbox, which the fork does not have (fork applies z_offset
+      ungated).
+    skip_date: '2026-10-11'
+  f8fe36d9:
+    title: 'fix(camera): don''t reuse a pre-trigger frame in DefaultCamera.read_camera_frame (#599)'
+    status: ported
+    ported_in: 479bcf35
+    ported_date: '2026-10-11'
+    notes: Ported together with e34dec3d.
+  df83fe32:
+    title: 'fix(scan-coordinates): sort 1536-well rows AA-AF after Z, not interleaved with A-F (#600)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: 1536-well plates not in use on this machine.
+    skip_date: '2026-10-11'
+  2092c2ee:
+    title: 'perf(xlight): skip emission filter wheel command when already at position (#602)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Fork's X-Light driver path differs; optimization does not apply.
+    skip_date: '2026-10-11'
+  e34dec3d:
+    title: 'refactor(camera): snapshot cached frame in reuse guard, document post-trigger contract (#603)'
+    status: ported
+    ported_in: 479bcf35
+    ported_date: '2026-10-11'
+    notes: Ported together with f8fe36d9.
+  30a193e7:
+    title: 'fix(tests): close leaked Microscope/MPC instances to stop flaky CI segfaults (#604)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Upstream CI/test-leak cleanup; fork test infrastructure differs.
+    skip_date: '2026-10-11'
+  875eda71:
+    title: 'feat(camera): add sensor mode selection (Hamamatsu READOUTSPEED) (#605)'
+    status: ported
+    ported_in: 42beae54
+    ported_date: '2026-10-11'
+    notes: 'Trigger-lock ABC template refactor skipped: CameraService RLock already serializes triggers vs settings changes.'
+  856bc0ee:
+    title: 'feat(wellplate): save/load z coordinates in multipoint coordinate CSVs (#608)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Z-coordinate CSV save/load depends on upstream's Xeryon parfocal math and coordinate CSV format the
+      fork does not share.
+    skip_date: '2026-10-11'
+  edc13253:
+    title: 'fix(illumination): apply config edits without restart; add per-channel max output cap (#610)'
+    status: ported
+    ported_in: be74739b
+    ported_date: '2026-10-11'
+    notes: Staleness fix ported; per-channel max_output cap not ported (fork sets illumination in several places, no single
+      clamp point). Configurator dialog still edits the cached general config in place on Cancel.
+  56db6965:
+    title: 'feat(camera): persist sensor mode in the camera settings cache (#612)'
+    status: ported
+    ported_in: 9e5e48a0
+    ported_date: '2026-10-11'
+    notes: Empty/non-mapping cache guard in ccd86c13.
+  e86a608f:
+    title: 'fix(camera): prevent intermittent all-zero ToupCam frames from read-buffer realloc race (#585)'
+    status: ported
+    ported_in: 869a4cda
+    ported_date: '2026-10-11'
+  752c9bb8:
+    title: 'feat(live): add a Snap button for single-frame capture (#616)'
+    status: pending
+  5be72178:
+    title: 'fix: focus map KeyError on loaded coordinates, stage move timeouts 38-300x too long, focus-map double move (#618)'
+    status: ported
+    ported_in: 7ed480d2
+    ported_date: '2026-10-11'
+    notes: Timeout min->max, MCU stall diagnostics, get_region_shape fallback, focus-map single move. CSV-loader shape part
+      was already present.
+  f9305f9f:
+    title: 'fix(live): don''t widen the panel for the Snap button; rename live button to Live/Stop (#620)'
+    status: pending
+  0f789a45:
+    title: 'fix(stage): tolerate a corrupted cache/last_coords.txt at startup (#621)'
+    status: ported
+    ported_in: 787061da
+    ported_date: '2026-10-11'
+  4baf7135:
+    title: 'feat(fluidics): protocol engine phases 0–1 — plumbing, demolition, engine seams, headless ProtocolRunner (#625)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Upstream fluidics protocol engine on the Squid-Fluidics library competes with the fork's orchestrator,
+      which uses the fluidics_v2 MERFISH API.
+    skip_date: '2026-10-11'
+  1cceeacc:
+    title: 'feat(fluidics): protocol GUI phase 2 — Fluidics display tab, Protocol record tab, Qt imaging port (#626)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Fluidics protocol GUI for the upstream engine (see 4baf7135).
+    skip_date: '2026-10-11'
+  a7cc89be:
+    title: 'fix(fluidics-gui): default imaging folder, live progress bar, TEC output-enable re-pin (#637)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Fluidics GUI fixes for the upstream engine (see 4baf7135).
+    skip_date: '2026-10-11'
+  b8f508c4:
+    title: 'fix(celesta): add HTTP timeout so an unreachable laser engine cannot hang startup (#643)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Lumencor Celesta not in use on this machine.
+    skip_date: '2026-10-11'
+  da109c5a:
+    title: 'feat(fw): TMC2240 stepper-driver support behind a per-axis driver seam (firmware 1.5) (#644)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: TMC2240 stepper-driver firmware support; only relevant for new Squid+ controller boards.
+    skip_date: '2026-10-11'
+  c05bef3a:
+    title: 'test: clean up simulated-acquisition output instead of littering /tmp (#640)'
+    status: pending
+  091bf4e8:
+    title: Pr turret (#609)
+    status: pending
+  46a139b9:
+    title: Remove napari live view; port overexposure indicator and alignment (with auto-align) to the pyqtgraph viewer (#627)
+    status: pending
+  7385a179:
+    title: 'fix(live): hold live triggers during stage motion and camera settings changes; survive a busy MCU at acquisition
+      start (#639)'
+    status: ported
+    ported_in: 3bb578e6
+    ported_date: '2026-10-11'
+    notes: Parts 1, 3, 5 ported (3bb578e6, e6c077df, 6acd35a0, review fixes abb49ee2). Parts 2 and 4 already covered by CameraService
+      RLock / event-driven live buttons.
+  12ebfebd:
+    title: 'feat(wheel): shortest-path slot changes, position across restarts, completion window setting, Preferences rows (#657)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Filter wheel feature stack (#657/#662/#664/#672); no filter wheel in use. Port together or not at all.
+    skip_date: '2026-10-11'
+  17dc0444:
+    title: 'feat(fw): firmware 1.6 - filter wheel ramp profile, completion window, encoder reporting (#662)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Firmware 1.6 filter wheel ramp/encoder; part of the filter wheel stack; no filter wheel in use.
+    skip_date: '2026-10-11'
+  334487d9:
+    title: 'feat(wheel): filter wheel tuner, tuning dialog, and a restart-safe motor profile (#664)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Filter wheel tuner; part of the filter wheel stack; no filter wheel in use.
+    skip_date: '2026-10-11'
+  '74824168':
+    title: 'fix(prefs): read ini values with inline comments the way the running software does (#665)'
+    status: ported
+    ported_in: ef9b5df5
+    ported_date: '2026-10-11'
+    notes: Review fixes 9a22857f. Prefs Save crash fix (fork-only) in 64aed6fb.
+  8bf3c7d0:
+    title: 'fix(hamamatsu): frame ids follow the camera''s frame stamp, so a skipped or repeated frame is visible (#661)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Hamamatsu frame-stamp ids are diagnostic only; no fork consumer checks frame-id continuity. Revisit
+      with burst acquisition.
+    skip_date: '2026-10-11'
+  2a550c86:
+    title: 'fix(laser-af): use the saved Min Peak settings and the .ini crop sizes (#674)'
+    status: ported
+    ported_in: ad0b2bb5
+    ported_date: '2026-10-11'
+    notes: Part 1 (min_peak_* keys) was already present.
+  5d992336:
+    title: 'fix(xlight): positions and disk motor state from the device; default iris for channels without one (#675)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: CrestOptics X-Light not in use on this machine.
+    skip_date: '2026-10-11'
+  aa9107d9:
+    title: fix file format menu and enable TIFF compression (#652)
+    status: ported
+    ported_in: 84611f4c
+    ported_date: '2026-10-11'
+    notes: SaveSettings snapshot (84611f4c), file-format default (fb505550), TIFF compression (5a997b67), review fixes 1f120718.
+  d25a1b73:
+    title: 'test(laser-af): crop-size test frames honour the camera ROI (#676)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Upstream test-only change for code the fork implements differently.
+    skip_date: '2026-10-11'
+  49d1ef74:
+    title: 'fix(tests): wait for the second fluidics hold without reading a cleared hold (#677)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Test fix for the upstream fluidics engine.
+    skip_date: '2026-10-11'
+  81b6c5aa:
+    title: 'fix(tests): the PI focus stage test passes on machines with an objective changer (#678)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Test fix for the PI focus stage, which the fork does not have.
+    skip_date: '2026-10-11'
+  f3bca2cb:
+    title: 'fix(af): compute the LAPE focus measure without int16 overflow on 8-bit images (#679)'
+    status: ported
+    ported_in: dd470622
+    ported_date: '2026-10-11'
+    notes: Dead duplicate in image_processing.py removed.
+  e1ad4cc6:
+    title: 'fix(gui): stray "Per-channel Z-offset" window on machines without laser AF (#686)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Upstream widget wiring differs; the fork's analogous parentless focus-lock frame is a separate fork
+      bug.
+    skip_date: '2026-10-11'
+  432772be:
+    title: 'fix(dragonfly): make the Andor Dragonfly work on current master (#688)'
+    status: ported
+    ported_in: 6ac93846
+    ported_date: '2026-10-11'
+    notes: Applicable parts only; GUI-startup crash wiring and LiveController None emission position not applicable.
+  594440a3:
+    title: 'fix(dragonfly): confocal wheels in the channel configurator; Refresh button on the confocal tab (#690)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: 'Dragonfly configurator wheels / Refresh: the fork never applies confocal wheel positions per channel,
+      so listing them would let users set values nothing uses. Revisit with per-channel confocal switching.'
+    skip_date: '2026-10-11'
+  37d2e005:
+    title: 'fix(wheel): review findings on the merged firmware 1.6 - two ungated commands, theta corruption, merge slip, nits
+      (#672)'
+    status: skipped
+    skip_reason: not-applicable
+    skip_justification: Review fixes for firmware 1.6 filter wheel code that the fork does not have.
+    skip_date: '2026-10-11'
+  f453dc18:
+    title: 'fix(stage): save and restore the last X/Y position on a Cephla stage without Z (#692)'
+    status: skipped
+    skip_reason: deferred
+    skip_justification: Only for a Cephla XY stage without a homed Cephla Z; no fork configuration uses that.
+    skip_date: '2026-10-11'
+  a77cbac3:
+    title: 'fix(turret): a turret only homes with Z retracted (#702)'
+    status: pending

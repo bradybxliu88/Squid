@@ -900,3 +900,19 @@ class TestRegionManagement:
         scan_coords.remove_region("R1")
         event_bus.drain()
         assert len(collected) == 1
+
+    def test_region_registered_without_a_shape_is_a_bounding_box(self, scan_coords):
+        """Code that writes the region dicts directly may leave no shape; get_region_shape (and so
+        region_contains_coordinate) used to raise KeyError on it."""
+        scan_coords.region_centers["loaded"] = [20.75, 20.75]
+        scan_coords.region_fov_coordinates["loaded"] = [
+            (20.0 + 0.5 * i, 20.0 + 0.5 * j) for i in range(4) for j in range(4)
+        ]
+        assert "loaded" not in scan_coords.region_shapes
+
+        assert scan_coords.get_region_shape("loaded") == "Square"
+        assert scan_coords.region_contains_coordinate("loaded", 20.75, 20.75)
+        assert not scan_coords.region_contains_coordinate("loaded", 30.0, 30.0)
+
+    def test_get_region_shape_of_unknown_region_is_none(self, scan_coords):
+        assert scan_coords.get_region_shape("no-such-region") is None

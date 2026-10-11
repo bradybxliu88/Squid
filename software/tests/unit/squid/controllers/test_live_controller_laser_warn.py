@@ -15,7 +15,7 @@ def _controller(service, *, wavelength=488, ready=False):
     c.currentConfiguration = MagicMock()
     c.currentConfiguration.get_illumination_wavelength.return_value = wavelength
     ccm = MagicMock()
-    ccm._illumination_config = MagicMock() if wavelength is not None else None
+    ccm.get_illumination_config.return_value = MagicMock() if wavelength is not None else None
     c._channel_config_service = ccm
     if service is not None:
         service.channel_keys_for_wavelengths.return_value = ["470"] if wavelength else []

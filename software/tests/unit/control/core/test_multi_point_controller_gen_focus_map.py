@@ -11,11 +11,13 @@ from squid.core.events import (
     EventBus,
     AcquisitionWorkerFinished,
     AutofocusMode,
+    SetAcquisitionParametersCommand,
 )
 from squid.core.mode_gate import GlobalModeGate, GlobalMode
 from squid.backend.controllers.multipoint import multi_point_controller
 from squid.backend.controllers.multipoint.multi_point_controller import MultiPointController
 from squid.backend.controllers.multipoint.focus_operations import AutofocusExecutor
+from squid.backend.managers.focus_map import FocusMap
 
 
 @dataclass
@@ -58,9 +60,13 @@ class _FakeCameraService:
     def get_pixel_size_binned_um(self) -> float:
         return 1.0
 
+    def get_crop_size(self) -> tuple[int, int]:
+        return (64, 64)
+
 
 class _FakePeripheralService:
-    pass
+    def wait_for_idle(self, timeout_s: float) -> None:
+        return None  # the MCU is idle
 
 
 class _FakeLaserAFController:
@@ -302,58 +308,73 @@ def test_focus_lock_allows_locked_run_without_laser_reference() -> None:
         bus.stop()
 
 
-def test_acquire_current_fov_focus_map_does_not_mutate_global_scan_coordinates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class _LocalScanCoordinates:
-        last_instance: Optional["_LocalScanCoordinates"] = None
+class _LocalScanCoordinates:
+    """Stands in for the temporary ScanCoordinates that run_acquisition builds for a current-FOV snap."""
 
-        def __init__(self, objectiveStore, stage, camera, event_bus=None) -> None:
-            self.objectiveStore = objectiveStore
-            self.stage = stage
-            self.camera = camera
-            self.update_calls: list[tuple[str, int, float]] = []
-            type(self).last_instance = self
+    last_instance: Optional["_LocalScanCoordinates"] = None
 
-        def add_single_fov_region(self, *_args, **_kwargs) -> None:
-            return None
+    def __init__(self, objectiveStore, stage, camera, event_bus=None) -> None:
+        self.objectiveStore = objectiveStore
+        self.stage = stage
+        self.camera = camera
+        self.region_centers: dict = {}
+        self.region_fov_coordinates: dict = {}
+        self.update_calls: list[tuple[str, int, float]] = []
+        type(self).last_instance = self
 
-        def update_fov_z_level(self, region_id: str, index: int, z_mm: float) -> None:
-            self.update_calls.append((region_id, index, z_mm))
+    def add_single_fov_region(self, region_id: str, center_x: float, center_y: float, center_z: float) -> None:
+        self.region_centers[region_id] = [center_x, center_y, center_z]
+        self.region_fov_coordinates[region_id] = [(center_x, center_y)]
 
-    class _FakeScanPositionInformation:
-        def __init__(self) -> None:
-            self.scan_region_names = ["region"]
-            self.scan_region_coords_mm = [(0.0, 0.0, 0.0)]
-            self.scan_region_fov_coords_mm = {"region": [(1.0, 2.0, 0.0)]}
+    def update_fov_z_level(self, region_id: str, index: int, z_mm: float) -> None:
+        self.update_calls.append((region_id, index, z_mm))
 
-    class _NoOpWorker:
-        def __init__(self, *, acquisition_parameters, event_bus, **_kwargs) -> None:
-            self._event_bus = event_bus
-            self._experiment_id = acquisition_parameters.experiment_ID
 
-        def run(self) -> None:
-            if self._event_bus:
-                self._event_bus.publish(
-                    AcquisitionWorkerFinished(
-                        experiment_id=self._experiment_id,
-                        success=True,
-                        final_fov_count=0,
-                    )
+class _NoOpWorker:
+    def __init__(self, *, acquisition_parameters, event_bus, **_kwargs) -> None:
+        self._event_bus = event_bus
+        self._experiment_id = acquisition_parameters.experiment_ID
+
+    def set_current_round_index(self, _index: int) -> None:
+        return None
+
+    def run(self) -> None:
+        if self._event_bus:
+            self._event_bus.publish(
+                AcquisitionWorkerFinished(
+                    experiment_id=self._experiment_id,
+                    success=True,
+                    final_fov_count=0,
                 )
+            )
 
+
+class _RecordingFocusMap(FocusMap):
+    """A real fit-by-region FocusMap (one constant-plane region, "A1") that records interpolate() calls."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_method("constant")
+        self.set_fit_by_region(True)
+        self.fit({"A1": [(1.0, 2.0, 1.23)]})
+        self.calls: list[str] = []
+
+    def interpolate(self, x, y, region_id=None):
+        self.calls.append(region_id)
+        return super().interpolate(x, y, region_id)
+
+
+def _run_with_focus_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, acquire_current_fov: bool):
     monkeypatch.setattr(multi_point_controller, "ScanCoordinates", _LocalScanCoordinates)
     monkeypatch.setattr(multi_point_controller, "MultiPointWorker", _NoOpWorker)
-    monkeypatch.setattr(
-        multi_point_controller.ScanPositionInformation,
-        "from_scan_coordinates",
-        lambda _scan: _FakeScanPositionInformation(),
-    )
+    _LocalScanCoordinates.last_instance = None
 
     bus = EventBus()
     bus.start()
     try:
         global_scan = _FakeGlobalScanCoordinates()
+        global_scan.region_centers = {"A1": [1.0, 2.0, 0.0]}
+        global_scan.region_fov_coordinates = {"A1": [(1.0, 2.0)]}
         controller = MultiPointController(
             live_controller=_FakeLiveController(),
             autofocus_controller=_FakeAutoFocusController(),
@@ -367,16 +388,72 @@ def test_acquire_current_fov_focus_map_does_not_mutate_global_scan_coordinates(
         )
         controller.set_base_path(str(tmp_path))
         controller.start_new_experiment("unit_test")
-        controller.set_focus_map(_FakeFocusMap())
+        focus_map = _RecordingFocusMap()
+        controller.set_focus_map(focus_map)
 
-        controller.run_acquisition(acquire_current_fov=True)
+        started = controller.run_acquisition(acquire_current_fov=acquire_current_fov)
         bus.drain(timeout_s=1.0)
         if controller.thread:
             controller.thread.join(timeout=1.0)
+        return started, focus_map, global_scan
+    finally:
+        bus.stop()
 
-        assert global_scan.update_calls == []
-        local_scan = _LocalScanCoordinates.last_instance
-        assert local_scan is not None
-        assert local_scan.update_calls != []
+
+def test_acquire_current_fov_skips_focus_map_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A snap must not interpolate a fit-by-region focus map: its "current" region has no fit (upstream ee7897c9)."""
+    started, focus_map, global_scan = _run_with_focus_map(tmp_path, monkeypatch, acquire_current_fov=True)
+
+    assert started is True
+    assert focus_map.calls == []
+    assert global_scan.update_calls == []
+    local_scan = _LocalScanCoordinates.last_instance
+    assert local_scan is not None
+    assert local_scan.update_calls == []
+
+
+def test_regular_acquisition_still_interpolates_focus_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    started, focus_map, global_scan = _run_with_focus_map(tmp_path, monkeypatch, acquire_current_fov=False)
+
+    assert started is True
+    assert focus_map.calls == ["A1"]
+    assert global_scan.update_calls == [("A1", 0, pytest.approx(1.23))]
+
+
+def test_unchecked_use_focus_map_clears_a_stale_focus_map() -> None:
+    """The widgets send use_focus_map=False when "Use Focus Map" is unchecked; that must drop an earlier map."""
+    bus = EventBus()
+    bus.start()
+    try:
+        controller = MultiPointController(
+            live_controller=_FakeLiveController(),
+            autofocus_controller=_FakeAutoFocusController(),
+            objective_store=_FakeObjectiveStore(),
+            channel_configuration_manager=_FakeChannelConfigurationManager(),
+            camera_service=_FakeCameraService(),
+            stage_service=_FakeStageService(),
+            peripheral_service=_FakePeripheralService(),
+            event_bus=bus,
+            scan_coordinates=_FakeScanCoordinates(),
+        )
+        focus_map = _FakeFocusMap()
+
+        bus.publish(SetAcquisitionParametersCommand(focus_map=focus_map, use_focus_map=True))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is focus_map
+
+        # Commands that do not mention the focus map leave it alone.
+        bus.publish(SetAcquisitionParametersCommand(n_x=2))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is focus_map
+
+        bus.publish(SetAcquisitionParametersCommand(focus_map=None, use_focus_map=False))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is None
+
+        # Without use_focus_map, a focus_map alone still sets it (TCP / MCP / older callers).
+        bus.publish(SetAcquisitionParametersCommand(focus_map=focus_map))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is focus_map
     finally:
         bus.stop()

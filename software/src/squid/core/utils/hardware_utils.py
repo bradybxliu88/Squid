@@ -57,11 +57,10 @@ def calculate_focus_measure(
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)  # optional
     if method == FocusMeasureOperator.LAPE:
-        if image.dtype == np.uint16:
-            lap = cv2.Laplacian(image, cv2.CV_32F)
-        else:
-            lap = cv2.Laplacian(image, cv2.CV_16S)
-        focus_measure = mean(square(lap))
+        # Float Laplacian for every dtype, and square in float64: a CV_16S Laplacian squared in int16 wraps around
+        # (|lap| >= 182), which made sharp 8-bit images score low (even negative) and contrast AF pick a blurred z.
+        lap = cv2.Laplacian(image, cv2.CV_32F)
+        focus_measure = mean(square(lap, dtype=np.float64))
     elif method == FocusMeasureOperator.GLVA:
         focus_measure = np.std(image, axis=None)  # GLVA
     elif method == FocusMeasureOperator.TENENGRAD:
@@ -244,6 +243,10 @@ def serialize_for_yaml(obj):
     return obj
 
 
+class SpotDetectionParamsError(ValueError):
+    """find_spot_location() was given a params key it does not read (a caller bug, not a missing spot)."""
+
+
 def find_spot_location(
     image: np.ndarray,
     mode: SpotDetectionMode = SpotDetectionMode.SINGLE,
@@ -260,17 +263,19 @@ def find_spot_location(
             Supported parameters:
             - y_window (int): Half-height of y-axis crop (default: 96)
             - x_window (int): Half-width of centroid window (default: 20)
-            - peak_width (int): Minimum width of peaks (default: 10)
-            - peak_distance (int): Minimum distance between peaks (default: 10)
-            - peak_prominence (float): Minimum peak prominence (default: 100)
+            - min_peak_width (int): Minimum width of peaks (default: 10)
+            - min_peak_distance (int): Minimum distance between peaks (default: 10)
+            - min_peak_prominence (float): Minimum peak prominence, on the normalized 0-1 profile (default: 0.2)
             - intensity_threshold (float): Threshold for intensity filtering (default: 0.1)
             - spot_spacing (int): Expected spacing between spots for multi-spot modes (default: 100)
+            Any other key raises SpotDetectionParamsError (a ValueError).
 
     Returns:
         Optional[Tuple[float, float]]: (x,y) coordinates of selected spot, or None if detection fails
 
     Raises:
-        ValueError: If image is invalid or mode is incompatible with detected spots
+        ValueError: If image is invalid, params has an unsupported key (SpotDetectionParamsError), or mode is
+            incompatible with detected spots
     """
     # Input validation
     if image is None or not isinstance(image, np.ndarray):
@@ -288,6 +293,10 @@ def find_spot_location(
     }
 
     if params is not None:
+        # A misspelled key would otherwise be ignored and its default used instead.
+        unknown_keys = set(params) - set(default_params)
+        if unknown_keys:
+            raise SpotDetectionParamsError(f"Unknown spot detection parameters: {sorted(unknown_keys)}")
         default_params.update(params)
     p = default_params
 

@@ -3,6 +3,7 @@
 
 import threading
 
+from squid.backend.microcontroller import CommandAborted
 from squid.backend.services.base import BaseService, gated_command
 from squid.core.events import (
     EventBus,
@@ -129,6 +130,31 @@ class PeripheralService(BaseService):
         with self._lock:
             if self._microcontroller is not None:
                 self._microcontroller.wait_till_operation_is_completed(timeout_s)
+
+    def is_busy(self) -> bool:
+        """Return True while the microcontroller is executing a command (usually a stage move).
+
+        Deliberately lock-free: wait_till_operation_is_completed() holds self._lock for up to its
+        whole timeout, and the live trigger timer polls this once per frame, so taking the lock
+        here would stall live view behind any wait. The driver's busy flag is a single attribute
+        read and needs no lock.
+        """
+        if self._microcontroller is None:
+            return False
+        return bool(self._microcontroller.is_busy())
+
+    def wait_for_idle(self, timeout_s: float) -> None:
+        """Block until the microcontroller is not executing a command.
+
+        Raises TimeoutError if it is still busy after ``timeout_s``. Unlike
+        wait_till_operation_is_completed(), an earlier command that was aborted (and is still
+        latched as CommandAborted until the next command is sent) does not raise: the MCU is no
+        longer executing it, which is all a caller about to send a trigger or a move needs.
+        """
+        try:
+            self.wait_till_operation_is_completed(timeout_s)
+        except CommandAborted as exc:
+            self._log.warning(f"Previous microcontroller command was aborted ({exc}); treating the MCU as idle")
 
     def send_hardware_trigger(
         self,

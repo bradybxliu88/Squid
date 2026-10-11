@@ -503,6 +503,7 @@ class ApplicationContext:
             live_controller=live_controller,
             channel_config_service=self._microscope.channel_configuration_manager,
             event_bus=event_bus,
+            peripheral_service=self._services.get("peripheral"),
         )
         self._controllers.snap = snap_controller
 

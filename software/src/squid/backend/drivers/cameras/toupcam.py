@@ -321,10 +321,18 @@ class ToupcamCamera(AbstractCamera):
             self._trigger_sent = False
 
             # get the image from the camera
+            #
+            # Read the buffer and pixel size into locals once: _update_internal_settings() can swap
+            # the buffer (it does so under this lock, but only when the size changes), and
+            # _get_pixel_size_in_bytes() is an SDK round trip. One read each keeps the PullImageV2
+            # fill and the np.frombuffer view on the same object (and keeps that buffer alive for
+            # the SDK's C-level write).
+            read_buffer = self._internal_read_buffer
+            pixel_size_bytes = self._get_pixel_size_in_bytes()
             try:
                 self._camera.PullImageV2(
-                    self._internal_read_buffer,
-                    self._get_pixel_size_in_bytes() * 8,
+                    read_buffer,
+                    pixel_size_bytes * 8,
                     None,
                 )  # the second camera is number of bits per pixel - ignored in RAW mode
             except toupcam.HRESULTException as ex:
@@ -345,10 +353,10 @@ class ToupcamCamera(AbstractCamera):
                 return
 
             (x_offset, y_offset, width, height) = self.get_region_of_interest()
-            if self._get_pixel_size_in_bytes() == 1:
-                raw_image = np.frombuffer(self._internal_read_buffer, dtype="uint8")
-            elif self._get_pixel_size_in_bytes() == 2:
-                raw_image = np.frombuffer(self._internal_read_buffer, dtype="uint16")
+            if pixel_size_bytes == 1:
+                raw_image = np.frombuffer(read_buffer, dtype="uint8")
+            elif pixel_size_bytes == 2:
+                raw_image = np.frombuffer(read_buffer, dtype="uint16")
             current_raw_image = raw_image.reshape(height, width)
 
             current_frame = CameraFrame(
@@ -388,7 +396,17 @@ class ToupcamCamera(AbstractCamera):
         else:
             buffer_size = width * pixel_size * height
         # create the buffer
-        self._internal_read_buffer = bytes(buffer_size)
+        #
+        # Only reallocate when the size actually changes. set_exposure_time() lands here on every
+        # channel switch with the size unchanged, where a fresh bytes() is both a needless multi-MB
+        # zero-fill and the reassignment that races _on_frame_callback (an all-zero saved frame).
+        # When the size does change, swap under the frame callback lock so an in-flight callback
+        # can't have its buffer replaced mid-frame. The strobe work below stays outside the lock:
+        # it issues SDK queries and an MCU round trip. (getattr because the first call into here
+        # comes from __init__, before the attribute exists.)
+        if len(getattr(self, "_internal_read_buffer", b"")) != buffer_size:
+            with self._raw_frame_callback_lock:
+                self._internal_read_buffer = bytes(buffer_size)
 
         image_exposure_time_ms = self.get_exposure_time()
         camera_exposure_time_ms = self._calculate_camera_exposure_time(
@@ -492,6 +510,8 @@ class ToupcamCamera(AbstractCamera):
     def stop_streaming(self):
         self._camera.Stop()
         self._raw_camera_stream_started = False
+        # A frame in flight is lost with the stream: don't make the next trigger wait out its timeout.
+        self._trigger_sent = False
 
     def get_is_streaming(self):
         return self._raw_camera_stream_started

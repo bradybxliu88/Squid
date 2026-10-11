@@ -448,6 +448,10 @@ class AbstractStage(metaclass=abc.ABCMeta):
     def config(self) -> StageConfig:
         return self._config
 
+    def get_config(self) -> StageConfig:
+        """Method form of ``config``: stage drivers, StageService and stage_utils call ``get_config()``."""
+        return self._config
+
     def wait_for_idle(self, timeout_s: float) -> None:
         start_time = time.time()
         while time.time() < start_time + timeout_s:
@@ -909,8 +913,14 @@ class AbstractCamera(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def read_camera_frame(self) -> Optional[CameraFrame]:
         """
-        This calls read_frame, but also fills in all the information such that you get a CameraFrame.  The
-        frame in the CameraFrame will have had _process_raw_frame called on it already.
+        Returns the latest frame as a full CameraFrame (read_frame delegates to this and returns
+        just the image data).  The frame in the CameraFrame will have had _process_raw_frame
+        called on it already.
+
+        In SOFTWARE/HARDWARE trigger modes, the returned frame must have been captured at or after
+        the most recent send_trigger() - implementations must never return a pre-trigger frame
+        (e.g. from a cached-frame fast path), since trigger->read callers rely on seeing the
+        post-trigger state.
 
         Might return None if getting a frame timed out, or another error occurred.
         """
@@ -960,6 +970,27 @@ class AbstractCamera(metaclass=abc.ABCMeta):
         Gets the black level set on the camera.
         """
         pass
+
+    def get_available_sensor_modes(self) -> Sequence[str]:
+        """
+        Driver-defined sensor mode names (e.g. readout speeds, gain modes). An empty
+        list means sensor mode selection is not supported by this camera.
+        """
+        return []
+
+    def get_sensor_mode(self) -> Optional[str]:
+        """
+        The currently active sensor mode, or None if mode selection is not supported.
+        """
+        return None
+
+    def set_sensor_mode(self, mode: str) -> None:
+        """
+        Switch the camera to the given sensor mode. The mode must be one of
+        get_available_sensor_modes(). Implementations must refresh exposure/strobe
+        timing afterwards if the mode change affects it.
+        """
+        raise NotImplementedError("Sensor mode selection is not implemented for this camera.")
 
     def set_acquisition_mode(self, acquisition_mode: CameraAcquisitionMode) -> None:
         """

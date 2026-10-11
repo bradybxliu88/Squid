@@ -5,6 +5,7 @@ images, etc.
 
 import os
 import re
+from typing import Any, Dict
 
 import numpy as np
 import cv2
@@ -41,13 +42,40 @@ def get_image_filepath(save_directory: str, file_id: str, config_name: str, dtyp
     return os.path.join(save_directory, f"{file_id}_{channel_name_safe}.{extension}")
 
 
+def tiff_compression_kwargs(level: int) -> Dict[str, Any]:
+    """Write keyword arguments for a TIFF compression level (see _def.TIFF_COMPRESSION_LEVEL).
+
+    Accepted by both tifffile's writers and imageio's tiff plugin.  Zlib (deflate) with the
+    horizontal predictor is lossless and widely readable; the predictor is what makes it worthwhile
+    on 16 bit camera frames.
+    """
+    if level <= 0:
+        return {}
+    return {"compression": "zlib", "compressionargs": {"level": level}, "predictor": True}
+
+
+def tiff_compression_level_for_format(file_saving_option: "_def.FileSavingOption", level: int) -> int:
+    """The compression level TIFFs are actually written with when saving in the given format.
+
+    Only the formats in _def.TIFF_COMPRESSION_FILE_SAVING_OPTIONS compress; OME-TIFF stacks are written
+    through a memory map and zarr has its own codecs, so for those the level does not apply.
+    """
+    return level if file_saving_option in _def.TIFF_COMPRESSION_FILE_SAVING_OPTIONS else 0
+
+
 def save_image(
     image: np.ndarray,
     file_id: str,
     save_directory: str,
     config: AcquisitionChannel,
     is_color: bool,
+    tiff_compression_level: int,
 ) -> np.ndarray:
+    """Save one image as an individual file.
+
+    tiff_compression_level: 0 for uncompressed, 1-9 for lossless zlib (see tiff_compression_kwargs()). It is
+    required so that every caller decides; it only applies when the file is a TIFF.
+    """
     saving_path = get_image_filepath(save_directory, file_id, config.name, image.dtype)
 
     if is_color:
@@ -60,7 +88,10 @@ def save_image(
     if _def.SAVE_IN_PSEUDO_COLOR:
         image = return_pseudo_colored_image(image, config)
 
-    imageio.imwrite(saving_path, image)
+    # Compression only applies to TIFFs; get_image_filepath() uses Acquisition.IMAGE_FORMAT for anything
+    # that isn't 16 bit, and non-TIFF plugins (bmp, png, ...) reject these arguments.
+    is_tiff = os.path.splitext(saving_path)[1].lower() in (".tif", ".tiff")
+    imageio.imwrite(saving_path, image, **(tiff_compression_kwargs(tiff_compression_level) if is_tiff else {}))
 
     return image
 

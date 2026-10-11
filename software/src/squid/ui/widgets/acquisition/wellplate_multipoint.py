@@ -90,7 +90,6 @@ from _def import (
     MULTIPOINT_USE_PIEZO_FOR_ZSTACKS,
     SOFTWARE_POS_LIMIT,
     WELLPLATE_FORMAT,
-    f,
 )
 from squid.core.config.feature_flags import get_feature_flags
 from squid.core.utils import get_last_used_saving_path, save_last_used_saving_path
@@ -2247,6 +2246,8 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
                 skip_saving=self.checkbox_skipSaving.isChecked(),
                 z_range=z_range,
                 focus_map=focus_map,
+                # Explicit so an unchecked "Use Focus Map" clears a map left from an earlier run
+                use_focus_map=focus_map is not None,
                 # Widget context for YAML saving
                 widget_type="wellplate",
                 scan_size_mm=self.entry_scan_size.value(),

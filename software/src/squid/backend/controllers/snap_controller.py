@@ -7,7 +7,7 @@ camera, reads one frame, then saves all frames as a single (C, Y, X) OME-TIFF.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import squid.core.logging
 from squid.backend.controllers.base import BaseController
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from squid.core.events import EventBus
     from squid.backend.services import CameraService
     from squid.backend.services.illumination_service import IlluminationService
+    from squid.backend.services.peripheral_service import PeripheralService
     from squid.backend.controllers.live_controller import LiveController
     from squid.backend.controllers.microscope_mode_controller import (
         MicroscopeModeController,
@@ -43,6 +44,9 @@ class SnapController(BaseController):
     Publishes: CaptureCompleted, CaptureFailed
     """
 
+    # A stage move finishes well within this; a longer wait means the MCU is wedged.
+    _MCU_IDLE_WAIT_S: float = 5.0
+
     def __init__(
         self,
         camera_service: "CameraService",
@@ -51,6 +55,7 @@ class SnapController(BaseController):
         live_controller: "LiveController",
         channel_config_service,
         event_bus: "EventBus" = _global_event_bus,
+        peripheral_service: Optional["PeripheralService"] = None,
     ) -> None:
         super().__init__(event_bus)
         self._camera = camera_service
@@ -58,6 +63,7 @@ class SnapController(BaseController):
         self._mode_controller = mode_controller
         self._live_controller = live_controller
         self._channel_configs = channel_config_service
+        self._peripheral = peripheral_service
 
     def snap_multichannel(
         self, channel_names: List[str], objective: str
@@ -68,6 +74,7 @@ class SnapController(BaseController):
 
         captured: List[Tuple[str, object]] = []
         try:
+            self._wait_for_mcu_idle()
             for name in channel_names:
                 self._mode_controller.apply_mode_for_acquisition(name)
 
@@ -92,6 +99,18 @@ class SnapController(BaseController):
                 self._live_controller.start_live()
 
         return captured
+
+    def _wait_for_mcu_idle(self) -> None:
+        """Never fire a snap trigger into a running MCU command (see LiveController.trigger_acquisition).
+
+        Raises TimeoutError, so nothing is triggered, if the MCU stays busy.
+        """
+        if self._peripheral is None:
+            return
+        try:
+            self._peripheral.wait_for_idle(timeout_s=self._MCU_IDLE_WAIT_S)
+        except TimeoutError as exc:
+            raise TimeoutError(f"Microcontroller still busy after {self._MCU_IDLE_WAIT_S:g} s; not snapping") from exc
 
     @handles(CaptureMultichannelCommand)
     def _on_capture(self, cmd: CaptureMultichannelCommand) -> None:

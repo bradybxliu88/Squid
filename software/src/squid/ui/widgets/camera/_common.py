@@ -57,6 +57,7 @@ from squid.core.events import (
     SetCameraTemperatureCommand,
     SetBlackLevelCommand,
     SetAutoWhiteBalanceCommand,
+    SetSensorModeCommand,
     # State events
     ROIChanged,
     BinningChanged,
@@ -64,6 +65,7 @@ from squid.core.events import (
     CameraTemperatureChanged,
     BlackLevelChanged,
     AutoWhiteBalanceChanged,
+    SensorModeChanged,
     # Objective and channel config events
     ObjectiveChanged,
     ChannelConfigurationsChanged,
