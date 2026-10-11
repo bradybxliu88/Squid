@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union
 
 from squid.backend.managers.base import BaseManager
 from squid.core.config.models.acquisition_config import AcquisitionChannel
+from squid.core.config.models.illumination_config import IlluminationChannelConfig
 from squid.core.config.repository import ConfigRepository
 from squid.core.events import (
     ChannelConfigurationsChanged,
@@ -54,9 +55,18 @@ class ChannelConfigService(BaseManager):
         self.config_repo = config_repo
         self.confocal_mode = False
         self._current_objective = None
-        self._illumination_config = config_repo.get_illumination_config()
 
     # ── Public API ──────────────────────────────────────────────────────
+
+    def get_illumination_config(self) -> Optional[IlluminationChannelConfig]:
+        """Current machine illumination config, read through the repository on each call.
+
+        Never snapshot this: the illumination configurator dialogs save through the
+        shared ConfigRepository (and the main window clears its cache after a save),
+        so a snapshot taken at startup would keep resolving channels to stale
+        controller ports, or to nothing for renamed/added channels, until restart.
+        """
+        return self.config_repo.get_illumination_config()
 
     def get_configurations(
         self, objective: str, enabled_only: bool = False
@@ -251,14 +261,15 @@ class ChannelConfigService(BaseManager):
         inject via __dict__ for backward compatibility with code that reads
         channel.illumination_source (an integer hardware code).
         """
-        if not self._illumination_config:
-            return
+        illumination_config = self.get_illumination_config()
 
         for ch in channels:
             ill_name = ch.illumination_settings.illumination_channel
-            if ill_name is None:
+            ill_ch = illumination_config.get_channel_by_name(ill_name) if illumination_config and ill_name else None
+            if ill_ch is None:
+                # Merged lists can hand back cached general.yaml channel objects, so drop
+                # a source injected by an earlier call: a renamed or removed illumination
+                # channel must not keep firing its old port.
+                ch.__dict__.pop("illumination_source", None)
                 continue
-            ill_ch = self._illumination_config.get_channel_by_name(ill_name)
-            if ill_ch is not None:
-                source_code = self._illumination_config.get_source_code(ill_ch)
-                ch.__dict__["illumination_source"] = source_code
+            ch.__dict__["illumination_source"] = illumination_config.get_source_code(ill_ch)

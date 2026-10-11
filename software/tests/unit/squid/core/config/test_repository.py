@@ -85,6 +85,56 @@ class TestConfigRepositoryBasics:
         assert len(loaded.channels) == 2
         assert loaded.channels[0].name == "405nm Laser"
 
+    def test_illumination_for_edit_returns_isolated_copy(self, repo, illumination_config):
+        """Editors get a deep copy; mutating it must not leak into the shared cache."""
+        repo.save_illumination_config(illumination_config)
+        shared = repo.get_illumination_config()
+
+        working = repo.get_illumination_config(for_edit=True)
+        assert working is not shared
+        working.channels.pop()
+        working.channels[0].controller_port = "D2"
+        working.controller_port_mapping["D1"] = 99
+
+        assert repo.get_illumination_config() is shared
+        assert len(shared.channels) == 2
+        assert shared.channels[0].controller_port == "D1"
+        assert shared.controller_port_mapping["D1"] == 11
+
+    def test_illumination_for_edit_none_when_missing(self, repo):
+        assert repo.get_illumination_config(for_edit=True) is None
+
+    def test_update_port_mapping_replaces_only_mapping(self, repo, illumination_config):
+        repo.save_illumination_config(illumination_config)
+
+        assert repo.update_port_mapping({"D1": 16, "USB1": 0}) is True
+
+        shared = repo.get_illumination_config()
+        assert shared.controller_port_mapping == {"D1": 16, "USB1": 0}
+        assert [ch.name for ch in shared.channels] == ["405nm Laser", "BF Full"]
+        reloaded = ConfigRepository(base_path=repo.base_path).get_illumination_config()
+        assert reloaded.controller_port_mapping == {"D1": 16, "USB1": 0}
+
+    def test_update_port_mapping_keeps_channel_edits_saved_since_snapshot(self, repo, illumination_config):
+        """A mapping save is read-modify-write on the current cache, not on a stale snapshot."""
+        repo.save_illumination_config(illumination_config)
+        stale_snapshot = repo.get_illumination_config(for_edit=True)
+
+        concurrent = repo.get_illumination_config(for_edit=True)
+        del concurrent.channels[0]
+        repo.save_illumination_config(concurrent)
+
+        new_mapping = dict(stale_snapshot.controller_port_mapping, D1=16)
+        assert repo.update_port_mapping(new_mapping) is True
+
+        saved = repo.get_illumination_config()
+        assert saved.controller_port_mapping["D1"] == 16
+        assert [ch.name for ch in saved.channels] == ["BF Full"]
+
+    def test_update_port_mapping_without_config(self, repo):
+        assert repo.update_port_mapping({"D1": 11}) is False
+        assert repo.get_illumination_config() is None
+
     def test_illumination_not_found(self, repo):
         assert repo.get_illumination_config() is None
 

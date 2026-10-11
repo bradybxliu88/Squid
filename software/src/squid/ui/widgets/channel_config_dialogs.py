@@ -343,8 +343,17 @@ class IlluminationChannelConfiguratorDialog(QDialog):
         return str(calib_dir / filename)
 
     def _load_channels(self):
-        """Load illumination channels from YAML config into the table."""
-        self.illumination_config = self.config_repo.get_illumination_config()
+        """Load illumination channels from the repository into the table.
+
+        Edits a deep copy: table edits and add/remove/move must not touch the
+        shared cached config (read by the running app) until Save publishes
+        them through the repository. Cancel therefore leaves runtime state as is.
+        """
+        self.illumination_config = self.config_repo.get_illumination_config(for_edit=True)
+        self._refresh_table()
+
+    def _refresh_table(self):
+        """Render the table from the working copy in self.illumination_config."""
         if not self.illumination_config:
             return
 
@@ -417,7 +426,7 @@ class IlluminationChannelConfiguratorDialog(QDialog):
 
             new_channel = IlluminationChannel(**channel_data)
             self.illumination_config.channels.append(new_channel)
-            self._load_channels()
+            self._refresh_table()
 
     def _remove_channel(self):
         """Remove selected channel."""
@@ -432,7 +441,7 @@ class IlluminationChannelConfiguratorDialog(QDialog):
             )
             if reply == QMessageBox.Yes:
                 del self.illumination_config.channels[current_row]
-                self._load_channels()
+                self._refresh_table()
 
     def _move_up(self):
         """Move selected channel up."""
@@ -442,7 +451,7 @@ class IlluminationChannelConfiguratorDialog(QDialog):
 
         channels = self.illumination_config.channels
         channels[current_row], channels[current_row - 1] = channels[current_row - 1], channels[current_row]
-        self._load_channels()
+        self._refresh_table()
         self.table.selectRow(current_row - 1)
 
     def _move_down(self):
@@ -453,14 +462,24 @@ class IlluminationChannelConfiguratorDialog(QDialog):
 
         channels = self.illumination_config.channels
         channels[current_row], channels[current_row + 1] = channels[current_row + 1], channels[current_row]
-        self._load_channels()
+        self._refresh_table()
         self.table.selectRow(current_row + 1)
 
     def _open_port_mapping(self):
         """Open the controller port mapping dialog."""
         dialog = ControllerPortMappingDialog(self.config_repo, self)
-        dialog.signal_mappings_updated.connect(self._load_channels)
+        dialog.signal_mappings_updated.connect(self._on_port_mappings_updated)
         dialog.exec_()
+
+    def _on_port_mappings_updated(self):
+        """Pull the freshly saved port mapping into the working copy.
+
+        Keeps unsaved channel edits while updating the available ports.
+        """
+        saved = self.config_repo.get_illumination_config()
+        if saved and self.illumination_config:
+            self.illumination_config.controller_port_mapping = dict(saved.controller_port_mapping)
+        self._refresh_table()
 
     def _save_changes(self):
         """Save all changes to illumination channel config."""
@@ -712,7 +731,8 @@ class ControllerPortMappingDialog(QDialog):
         """Load current port mappings into the table."""
         from squid.core.config.models.illumination_config import IlluminationChannelConfig
 
-        self.illumination_config = self.config_repo.get_illumination_config()
+        # Private copy for display; Save publishes only the mapping via update_port_mapping().
+        self.illumination_config = self.config_repo.get_illumination_config(for_edit=True)
         if not self.illumination_config:
             return
 
@@ -766,8 +786,9 @@ class ControllerPortMappingDialog(QDialog):
                 if source_code is not None:
                     new_mapping[port] = source_code
 
-        self.illumination_config.controller_port_mapping = new_mapping
-        self.config_repo.save_illumination_config(self.illumination_config)
+        # Partial update: only the mapping is replaced, so channel edits saved
+        # elsewhere since this dialog opened are not clobbered.
+        self.config_repo.update_port_mapping(new_mapping)
         self.signal_mappings_updated.emit()
         self.accept()
 

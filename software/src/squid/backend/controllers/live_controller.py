@@ -312,10 +312,10 @@ class LiveController(StateMachine[LiveControllerState]):
         """Wavelength of the current channel (None for LED matrix / unavailable)."""
         if self.currentConfiguration is None or self._channel_config_service is None:
             return None
-        ill_config = getattr(self._channel_config_service, "_illumination_config", None)
-        if not ill_config:
-            return None
         try:
+            ill_config = self._channel_config_service.get_illumination_config()
+            if not ill_config:
+                return None
             return self.currentConfiguration.get_illumination_wavelength(ill_config)
         except Exception:
             return None

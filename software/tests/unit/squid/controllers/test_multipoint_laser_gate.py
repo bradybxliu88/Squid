@@ -91,7 +91,7 @@ def test_compute_channels_maps_wavelengths():
     w = MultiPointWorker.__new__(MultiPointWorker)
     w._laser_engine_service = svc
     ccm = MagicMock()
-    ccm._illumination_config = MagicMock()  # present
+    ccm.get_illumination_config.return_value = MagicMock()  # present
     w.channelConfigurationManager = ccm
     cfg1, cfg2 = MagicMock(), MagicMock()
     cfg1.get_illumination_wavelength.return_value = 488

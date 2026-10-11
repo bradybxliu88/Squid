@@ -1,7 +1,9 @@
 """Tests for the channel configuration dialogs (Settings menu configurators).
 
 Covers the acquisition-channel configurator's save path, which must propagate
-added/removed channels to the per-objective configs (ports upstream 24276973).
+added/removed channels to the per-objective configs (ports upstream 24276973),
+and the illumination dialogs, which must edit private copies and publish to the
+shared ConfigRepository only on Save (ports upstream edc13253).
 """
 
 import pytest
@@ -125,3 +127,127 @@ class TestAcquisitionChannelConfiguratorSave:
 
         assert [args[1] for kind, args in message_boxes if kind == "critical"] == ["Save Failed"]
         assert emitted == []
+
+
+ILLUMINATION_YAML = """\
+version: 1
+controller_port_mapping:
+  D1: 11
+  D2: 12
+  USB1: 0
+channels:
+  - name: BF LED matrix full
+    type: transillumination
+    controller_port: USB1
+    wavelength_nm: null
+  - name: Fluorescence 405 nm Ex
+    type: epi_illumination
+    controller_port: D1
+    wavelength_nm: 405
+"""
+
+
+@pytest.fixture
+def illum_repo(tmp_path):
+    (tmp_path / "machine_configs").mkdir()
+    (tmp_path / "machine_configs" / "illumination_channel_config.yaml").write_text(ILLUMINATION_YAML)
+    return ConfigRepository(base_path=tmp_path)
+
+
+def _set_port_mapping_in_dialog(dialog, port, source_code):
+    for row in range(dialog.table.rowCount()):
+        if dialog.table.item(row, 0).text() == port:
+            widget = dialog.table.cellWidget(row, 1)
+            assert isinstance(widget, dialogs.SourceCodeWidget)
+            widget.set_source_code(source_code)
+            return
+    raise AssertionError(f"Port {port} not found in dialog table")
+
+
+class TestIlluminationDialogsEditCopies:
+    def test_port_mapping_dialog_save_updates_shared_repo_cache(self, qtbot, illum_repo, message_boxes):
+        """Saving the port mapping dialog must update the repo other readers share."""
+        dialog = dialogs.ControllerPortMappingDialog(illum_repo)
+        qtbot.addWidget(dialog)
+        _set_port_mapping_in_dialog(dialog, "D1", 16)
+
+        dialog._save_changes()
+
+        assert illum_repo.get_illumination_config().controller_port_mapping["D1"] == 16
+        fresh = ConfigRepository(base_path=illum_repo.base_path).get_illumination_config()
+        assert fresh.controller_port_mapping["D1"] == 16
+
+    def test_port_mapping_save_keeps_channels_saved_since_dialog_opened(self, qtbot, illum_repo, message_boxes):
+        """The mapping save is partial: it must not clobber channel edits saved after the dialog loaded."""
+        dialog = dialogs.ControllerPortMappingDialog(illum_repo)
+        qtbot.addWidget(dialog)
+        _set_port_mapping_in_dialog(dialog, "D1", 16)
+
+        # Another editor saves a channel change while the port dialog is open
+        concurrent = illum_repo.get_illumination_config(for_edit=True)
+        del concurrent.channels[0]
+        illum_repo.save_illumination_config(concurrent)
+
+        dialog._save_changes()
+
+        saved = illum_repo.get_illumination_config()
+        assert saved.controller_port_mapping["D1"] == 16
+        assert len(saved.channels) == 1, "Port-mapping save must not restore the removed channel"
+
+    def test_port_mapping_cancel_leaves_shared_config_unchanged(self, qtbot, illum_repo, message_boxes):
+        dialog = dialogs.ControllerPortMappingDialog(illum_repo)
+        qtbot.addWidget(dialog)
+        _set_port_mapping_in_dialog(dialog, "D1", 16)
+        dialog.reject()
+
+        assert illum_repo.get_illumination_config().controller_port_mapping["D1"] == 11
+
+    def test_configurator_cancel_leaves_shared_config_unchanged(self, qtbot, illum_repo, message_boxes):
+        """Remove/move then Cancel must not mutate the shared cached config."""
+        shared_before = illum_repo.get_illumination_config()
+        assert [ch.name for ch in shared_before.channels] == ["BF LED matrix full", "Fluorescence 405 nm Ex"]
+
+        dialog = dialogs.IlluminationChannelConfiguratorDialog(illum_repo)
+        qtbot.addWidget(dialog)
+        dialog.table.selectRow(1)
+        dialog._move_up()
+        dialog.table.selectRow(0)
+        dialog._remove_channel()
+        dialog.reject()
+
+        shared_after = illum_repo.get_illumination_config()
+        assert shared_after is shared_before
+        assert [ch.name for ch in shared_after.channels] == ["BF LED matrix full", "Fluorescence 405 nm Ex"]
+
+    def test_configurator_save_publishes_edits_to_shared_repo(self, qtbot, illum_repo, message_boxes):
+        """Removing a channel and saving must update the shared cache and the YAML."""
+        dialog = dialogs.IlluminationChannelConfiguratorDialog(illum_repo)
+        qtbot.addWidget(dialog)
+        dialog.table.selectRow(0)
+        dialog._remove_channel()
+
+        with qtbot.waitSignal(dialog.signal_channels_updated, timeout=1000):
+            dialog._save_changes()
+
+        shared = illum_repo.get_illumination_config()
+        assert [ch.name for ch in shared.channels] == ["Fluorescence 405 nm Ex"]
+        fresh = ConfigRepository(base_path=illum_repo.base_path).get_illumination_config()
+        assert [ch.name for ch in fresh.channels] == ["Fluorescence 405 nm Ex"]
+
+    def test_configurator_port_mapping_update_keeps_unsaved_channel_edits(self, qtbot, illum_repo, message_boxes):
+        """A port-mapping save from inside the configurator refreshes the available ports
+        without discarding the configurator's unsaved add/remove/move edits."""
+        dialog = dialogs.IlluminationChannelConfiguratorDialog(illum_repo)
+        qtbot.addWidget(dialog)
+        dialog.table.selectRow(0)
+        dialog._remove_channel()
+
+        illum_repo.update_port_mapping({"D1": 11, "D2": 12, "D3": 13, "USB1": 0})
+        dialog._on_port_mappings_updated()
+
+        assert [ch.name for ch in dialog.illumination_config.channels] == ["Fluorescence 405 nm Ex"]
+        assert dialog.illumination_config.controller_port_mapping["D3"] == 13
+        port_combo = dialog.table.cellWidget(0, dialog.COL_PORT)
+        assert "D3" in [port_combo.itemText(i) for i in range(port_combo.count())]
+        # Shared config has the new mapping but still both channels (nothing saved yet)
+        assert len(illum_repo.get_illumination_config().channels) == 2

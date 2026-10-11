@@ -431,7 +431,7 @@ class MultiPointWorker:
 
             # Get wavelengths from illumination config
             channel_wavelengths = []
-            illumination_config = self.channelConfigurationManager._illumination_config
+            illumination_config = self.channelConfigurationManager.get_illumination_config()
             for cfg in self.selected_configurations:
                 wavelength = cfg.get_illumination_wavelength(illumination_config) if illumination_config else None
                 channel_wavelengths.append(wavelength)
@@ -1088,7 +1088,7 @@ class MultiPointWorker:
         """Laser-engine channel keys for the wavelengths this acquisition fires."""
         if self._laser_engine_service is None:
             return []
-        illumination_config = self.channelConfigurationManager._illumination_config
+        illumination_config = self.channelConfigurationManager.get_illumination_config()
         if illumination_config is None:
             return []
         wavelengths = []

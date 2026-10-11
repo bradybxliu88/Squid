@@ -161,6 +161,71 @@ class TestIlluminationSourceResolution:
         assert gfp.__dict__.get("illumination_source") == 12
 
 
+def _source(service, objective, name):
+    ch = next(ch for ch in service.get_configurations(objective) if ch.name == name)
+    return ch.__dict__.get("illumination_source")
+
+
+class TestIlluminationConfigNotSnapshotted:
+    """Illumination config edits saved while the app runs must apply without a restart
+    (ports the core staleness fix of upstream edc13253)."""
+
+    def test_get_illumination_config_reads_through_repo(self, config_repo, service):
+        assert service.get_illumination_config() is config_repo.get_illumination_config()
+        config_repo.clear_all_cache()
+        assert service.get_illumination_config() is config_repo.get_illumination_config()
+
+    def test_port_mapping_saved_after_init_is_applied(self, config_repo, service):
+        assert _source(service, "10x", "DAPI") == 11
+
+        assert config_repo.update_port_mapping({"D1": 16, "D2": 12}) is True
+
+        assert _source(service, "10x", "DAPI") == 16
+
+    def test_port_mapping_applied_after_cache_clear(self, config_repo, service):
+        """main_window clears the repository cache after a config dialog saves; the service
+        must then read the reloaded config instead of a startup snapshot."""
+        config_repo.update_port_mapping({"D1": 16, "D2": 12})
+        config_repo.clear_all_cache()
+
+        assert _source(service, "10x", "DAPI") == 16
+
+    def test_channel_controller_port_change_is_applied(self, config_repo, service):
+        edit = config_repo.get_illumination_config(for_edit=True)
+        edit.get_channel_by_name("405nm").controller_port = "D2"
+        config_repo.save_illumination_config(edit)
+
+        assert _source(service, "10x", "DAPI") == 12
+
+    def test_added_illumination_channel_resolves(self, config_repo, service):
+        edit = config_repo.get_illumination_config(for_edit=True)
+        edit.controller_port_mapping["D3"] = 13
+        edit.channels.append(
+            IlluminationChannel(
+                name="561nm", type=IlluminationType.EPI_ILLUMINATION, controller_port="D3", wavelength_nm=561
+            )
+        )
+        config_repo.save_illumination_config(edit)
+        general = config_repo.get_general_config()
+        general.channels.append(_make_channel("RFP", ill_channel="561nm"))
+        config_repo.save_general_config("default", general)
+
+        assert _source(service, "10x", "RFP") == 13
+
+    def test_renamed_illumination_channel_drops_stale_source(self, config_repo, service):
+        """With no objective file, merged channels are the cached general.yaml objects; a
+        source injected before the rename must not survive on them."""
+        assert _source(service, "100x", "DAPI") == 11
+
+        edit = config_repo.get_illumination_config(for_edit=True)
+        edit.get_channel_by_name("405nm").name = "405nm renamed"
+        config_repo.save_illumination_config(edit)
+
+        assert _source(service, "100x", "DAPI") is None
+        # The other channel still resolves
+        assert _source(service, "100x", "GFP") == 12
+
+
 class TestUpdateConfiguration:
     def test_update_exposure(self, service):
         service.update_configuration("10x", "DAPI", "ExposureTime", 200.0)
