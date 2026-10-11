@@ -1,7 +1,10 @@
 # tests/squid/services/test_peripheral_service.py
 """Tests for PeripheralService."""
 
+import threading
 from unittest.mock import Mock
+
+import pytest
 
 
 class TestPeripheralService:
@@ -172,3 +175,74 @@ class TestPeripheralService:
         service.add_joystick_button_listener(listener)
 
         mock_mcu.add_joystick_button_listener.assert_called_once_with(listener)
+
+
+class TestPeripheralServiceBusy:
+    """is_busy() feeds the live trigger hold; wait_for_idle() guards snap and acquisition start."""
+
+    @staticmethod
+    def _service(mcu):
+        from squid.backend.services.peripheral_service import PeripheralService
+        from squid.core.events import EventBus
+
+        return PeripheralService(mcu, EventBus())
+
+    def test_is_busy_passes_through_the_microcontroller_flag(self):
+        mock_mcu = Mock()
+        service = self._service(mock_mcu)
+
+        mock_mcu.is_busy.return_value = True
+        assert service.is_busy() is True
+        mock_mcu.is_busy.return_value = False
+        assert service.is_busy() is False
+
+    def test_is_busy_without_microcontroller_is_false(self):
+        assert self._service(None).is_busy() is False
+
+    def test_is_busy_does_not_wait_for_the_service_lock(self):
+        # wait_till_operation_is_completed() holds the service lock for up to its whole timeout;
+        # the live trigger timer polls is_busy() every frame and must not stall behind it.
+        mock_mcu = Mock()
+        mock_mcu.is_busy.return_value = True
+        service = self._service(mock_mcu)
+
+        lock_held = threading.Event()
+        release = threading.Event()
+
+        def hold_lock():
+            with service._lock:
+                lock_held.set()
+                release.wait(5)
+
+        holder = threading.Thread(target=hold_lock, daemon=True)
+        holder.start()
+        try:
+            assert lock_held.wait(5)
+            answer = []
+            reader = threading.Thread(target=lambda: answer.append(service.is_busy()), daemon=True)
+            reader.start()
+            reader.join(1)
+            assert answer == [True], "is_busy() blocked on the service lock"
+        finally:
+            release.set()
+            holder.join(5)
+
+    def test_wait_for_idle_raises_when_microcontroller_stays_busy(self):
+        mock_mcu = Mock()
+        mock_mcu.wait_till_operation_is_completed.side_effect = TimeoutError("busy")
+        service = self._service(mock_mcu)
+
+        with pytest.raises(TimeoutError):
+            service.wait_for_idle(timeout_s=1.5)
+        mock_mcu.wait_till_operation_is_completed.assert_called_once_with(1.5)
+
+    def test_wait_for_idle_treats_a_latched_aborted_command_as_idle(self):
+        # An earlier aborted command stays latched until the next send; the MCU is not executing
+        # it, so it must not block a snap or an acquisition start.
+        from squid.backend.microcontroller import CommandAborted
+
+        mock_mcu = Mock()
+        mock_mcu.wait_till_operation_is_completed.side_effect = CommandAborted(command_id=7, reason="no ack")
+        service = self._service(mock_mcu)
+
+        service.wait_for_idle(timeout_s=1.0)  # must not raise

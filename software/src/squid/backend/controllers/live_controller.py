@@ -473,18 +473,30 @@ class LiveController(StateMachine[LiveControllerState]):
             self._mode_gate.set_mode(GlobalMode.IDLE, reason="live stop")
 
     def _trigger_acquisition_timer_fn(self) -> None:
-        if self.trigger_acquisition():
-            if self.is_live:
-                self._start_new_timer()
+        triggered = self.trigger_acquisition()
+        if not self.is_live:
+            return
+        if triggered or self._mcu_is_busy():
+            # A busy MCU (a stage move) clears on a 100 ms-to-seconds scale, and every re-check
+            # spins up a fresh Timer thread: re-check at frame cadence, not every 10 ms.
+            self._start_new_timer()
         else:
-            if self.is_live:
-                # It failed, try again real soon
-                # Use a short period so we get back here fast and check again.
-                re_check_period_ms = 10
-                self._start_new_timer(maybe_custom_interval_ms=re_check_period_ms)
+            # Camera not ready yet: try again real soon.
+            self._start_new_timer(maybe_custom_interval_ms=10)
+
+    def _mcu_is_busy(self) -> bool:
+        """Lock-free check whether the microcontroller is mid-command (see trigger_acquisition)."""
+        return self._peripheral_service is not None and self._peripheral_service.is_busy()
 
     # software trigger related
     def trigger_acquisition(self) -> bool:
+        if self._mcu_is_busy():
+            # Don't trigger while the MCU executes a command (usually a stage move): a trigger
+            # sent mid-command corrupts the firmware's single command-status slot and wedges it -
+            # the firmware keeps executing commands but reports IN_PROGRESS for everything until
+            # the trigger stream stops for a few seconds. False means "not triggered"; the live
+            # trigger timer re-checks at frame cadence, so live resumes by itself after the move.
+            return False
         with self._lock:
             ready = self._camera_service.get_ready_for_trigger()
             if not ready:
