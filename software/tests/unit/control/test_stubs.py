@@ -41,8 +41,9 @@ class FakeLaserAutofocusController:
         # Provide a deterministic image payload for any logging/save paths
         self.image = np.zeros((10, 10), dtype=np.uint8)
 
-    def move_to_target(self, displacement_um: float) -> None:  # noqa: ARG002
-        return None
+    def move_to_target(self, displacement_um: float) -> bool:  # noqa: ARG002
+        # Same contract as LaserAutofocusController.move_to_target: True means the target was reached.
+        return True
 
     def get_image(self):
         return self.image
