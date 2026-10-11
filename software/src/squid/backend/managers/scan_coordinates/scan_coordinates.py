@@ -1131,7 +1131,8 @@ class ScanCoordinates:
     def get_region_shape(self, region_id: str) -> Optional[str]:
         if not self.validate_region(region_id):
             return None
-        return self.region_shapes[region_id]
+        # Regions registered without a shape (code that writes the region dicts directly) are bounding boxes
+        return self.region_shapes.get(region_id, "Square")
 
     def get_scan_bounds(self) -> Optional[Dict[str, Tuple[float, float]]]:
         """Get bounds of all scan regions with margin"""

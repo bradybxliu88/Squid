@@ -50,6 +50,30 @@ def _make_stage(config: StageConfig | None = None) -> tuple[CephlaStage, MagicMo
     return CephlaStage(microcontroller=micro, stage_config=config or _stage_config()), micro
 
 
+# --- _calc_move_timeout() ---------------------------------------------------------------------------
+
+
+def test_calc_move_timeout_scales_with_axis_speed():
+    """Regression: the divisor was min(0.1, speed) instead of max(0.1, speed), which pinned it at 0.1 mm/s
+    and made every timeout far longer than the intended 3x naive move time (250x for X/Y and 20x for Z at
+    the default 25 mm/s and 2 mm/s max speeds)."""
+    timeout = CephlaStage._calc_move_timeout
+
+    assert timeout(60.0, 30.0) == pytest.approx(6.0)  # 3 * 60 mm / 30 mm/s
+    assert timeout(-60.0, 30.0) == pytest.approx(6.0)  # direction does not matter
+    assert timeout(60.0, -30.0) == pytest.approx(6.0)  # nor does the sign of the speed
+    assert timeout(0.5, 2.0) == 3.0  # short moves get the 3 s floor
+    assert timeout(1.0, 0.0) == pytest.approx(30.0)  # zero speed falls back to 0.1 mm/s instead of dividing by zero
+
+
+def test_blocking_move_x_to_timeout_uses_the_axis_max_speed():
+    stage, micro = _make_stage(_stage_config(X_AXIS=_axis(max_speed=25.0)))
+
+    stage.move_x_to(60.0)  # the mocked microcontroller reports x=0
+
+    micro.wait_till_operation_is_completed.assert_called_once_with(pytest.approx(3 * 60.0 / 25.0))
+
+
 # --- get_config() / blocking moves ------------------------------------------------------------------
 
 
