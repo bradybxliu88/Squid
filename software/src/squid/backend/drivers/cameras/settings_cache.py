@@ -1,10 +1,10 @@
 """Camera settings persistence for session continuity.
 
-This module provides save/load functionality for camera settings (binning, pixel format)
-to maintain user preferences across application restarts. Settings are stored as YAML
-in the cache directory.
+This module provides save/load functionality for camera settings (binning, pixel format,
+sensor mode) to maintain user preferences across application restarts. Settings are stored
+as YAML in the cache directory.
 
-Ported from upstream commit 98c7fbd6.
+Ported from upstream commits 98c7fbd6 and 56db6965.
 
 Typical usage:
     # On application close
@@ -14,13 +14,14 @@ Typical usage:
     settings = load_camera_settings()
     if settings:
         camera.set_binning(*settings.binning)
+        restore_sensor_mode(camera_service, settings.sensor_mode)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Optional, Protocol, Sequence, Tuple, TYPE_CHECKING
 
 import yaml
 
@@ -30,6 +31,16 @@ if TYPE_CHECKING:
     from squid.core.abc import AbstractCamera
 
 _log = squid.core.logging.get_logger(__name__)
+
+
+class SensorModeControl(Protocol):
+    """The sensor mode API shared by AbstractCamera and CameraService."""
+
+    def get_available_sensor_modes(self) -> Sequence[str]: ...
+
+    def get_sensor_mode(self) -> Optional[str]: ...
+
+    def set_sensor_mode(self, mode: str) -> None: ...
 
 
 def _get_cache_path() -> Path:
@@ -50,10 +61,13 @@ class CachedCameraSettings:
         binning: Tuple of (x, y) binning factors. Must be positive integers.
         pixel_format: String representation of CameraPixelFormat enum value,
             or None if not cached.
+        sensor_mode: Driver-defined sensor mode name, or None if not cached
+            or the camera does not support sensor mode selection.
     """
 
     binning: Tuple[int, int]
     pixel_format: Optional[str]
+    sensor_mode: Optional[str] = None
 
     def __post_init__(self) -> None:
         if len(self.binning) != 2:
@@ -63,7 +77,7 @@ class CachedCameraSettings:
 
 
 def save_camera_settings(camera: AbstractCamera, cache_path: Optional[Path] = None) -> None:
-    """Save current camera settings (binning and pixel format) to a YAML cache file.
+    """Save current camera settings (binning, pixel format, sensor mode) to a YAML cache file.
 
     Creates parent directories if they do not exist. This function is fail-safe -
     errors are logged but do not raise exceptions, allowing application shutdown
@@ -79,6 +93,7 @@ def save_camera_settings(camera: AbstractCamera, cache_path: Optional[Path] = No
     try:
         binning = camera.get_binning()
         pixel_format = camera.get_pixel_format()
+        sensor_mode = camera.get_sensor_mode()
     except (AttributeError, RuntimeError) as e:
         _log.error(f"Cannot read camera settings - camera may be disconnected: {e}")
         return
@@ -86,13 +101,14 @@ def save_camera_settings(camera: AbstractCamera, cache_path: Optional[Path] = No
     settings = {
         "binning": list(binning),
         "pixel_format": pixel_format.value if pixel_format else None,
+        "sensor_mode": sensor_mode,
     }
 
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         with open(cache_path, "w") as f:
             yaml.safe_dump(settings, f, default_flow_style=False)
-        _log.info(f"Camera settings saved: binning={binning}, pixel_format={pixel_format}")
+        _log.info(f"Camera settings saved: binning={binning}, pixel_format={pixel_format}, sensor_mode={sensor_mode}")
     except PermissionError as e:
         _log.error(f"Cannot save camera settings - permission denied for {cache_path}: {e}")
     except OSError as e:
@@ -154,7 +170,45 @@ def load_camera_settings(cache_path: Optional[Path] = None) -> Optional[CachedCa
         return CachedCameraSettings(
             binning=(int(binning_raw[0]), int(binning_raw[1])),
             pixel_format=settings.get("pixel_format"),
+            sensor_mode=settings.get("sensor_mode"),
         )
     except (TypeError, ValueError) as e:
         _log.error(f"Camera settings cache contains invalid data: {e}")
         return None
+
+
+def restore_sensor_mode(camera: SensorModeControl, sensor_mode: Optional[str]) -> bool:
+    """Apply a cached sensor mode to a camera (or CameraService).
+
+    This function is fail-safe: a mode the camera does not offer (camera swapped, or mode
+    renamed since the cache was written) logs a warning, and camera errors are logged; neither
+    raises, so startup continues.
+
+    Args:
+        camera: Anything exposing the sensor mode API (AbstractCamera, CameraService).
+        sensor_mode: Cached sensor mode name; None/empty means nothing to restore.
+
+    Returns:
+        True if the camera ends up in the cached sensor mode, False otherwise.
+    """
+    if not sensor_mode:
+        return False
+
+    try:
+        available_modes = list(camera.get_available_sensor_modes())
+        if sensor_mode not in available_modes:
+            _log.warning(
+                f"Cannot restore sensor mode '{sensor_mode}' - camera does not support it or the mode name is "
+                f"unknown (available: {available_modes})"
+            )
+            return False
+        # A mode change pauses streaming on real hardware; skip it when the mode is already active.
+        if camera.get_sensor_mode() != sensor_mode:
+            camera.set_sensor_mode(sensor_mode)
+    except (NotImplementedError, ValueError) as e:
+        _log.warning(f"Cannot restore sensor mode '{sensor_mode}': {e}")
+        return False
+    except Exception as e:
+        _log.error(f"Error restoring camera sensor mode '{sensor_mode}': {e}")
+        return False
+    return True
