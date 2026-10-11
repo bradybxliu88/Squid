@@ -1,6 +1,6 @@
 # October 2026 Upstream Batch (61 commits since 2026-06-13)
 
-**Status:** IN-PROGRESS
+**Status:** COMPLETED (batch ported; turret series and feature ports remain pending)
 **Started:** 2026-10-11
 **Branch:** claude/eager-wozniak-u7wjyf (from master `9e1ddfb7`)
 
@@ -14,30 +14,34 @@ whether their machine has one. No 1536-well plates, no emission filter wheel.
 ## Upstream Commits
 
 ### Port (general)
-- [ ] `5be72178` - fix: focus map KeyError on loaded coordinates, stage move timeouts 38-300x too long, focus-map double move
-- [ ] `8c62827a` - fix(turret): prevent Z-restore timeout at startup (**Z clamp part only**; turret de-energize deferred with turret series)
-- [ ] `0f789a45` - fix(stage): tolerate a corrupted cache/last_coords.txt at startup
-- [ ] `f8fe36d9` - fix(camera): don't reuse a pre-trigger frame in DefaultCamera.read_camera_frame
-- [ ] `e34dec3d` - refactor(camera): snapshot cached frame in reuse guard
-- [ ] `e86a608f` - fix(camera): prevent intermittent all-zero ToupCam frames
-- [ ] `7385a179` - fix(live): hold live triggers during stage motion (parts 1, 3, 5)
-- [ ] `f3bca2cb` - fix(af): LAPE focus measure without int16 overflow
-- [ ] `ee7897c9` - fix: skip focus-map interpolation for single-FOV snap acquisitions
-- [ ] `24276973` - fix(channel-config): persist settings for configurator-added channels
-- [ ] `edc13253` - fix(illumination): apply config edits without restart; per-channel max output cap
-- [ ] `74824168` - fix(prefs): read ini values with inline comments
-- [ ] `aa9107d9` - fix file format menu and enable TIFF compression
+- [x] `5be72178` - fix: focus map KeyError on loaded coordinates, stage move timeouts 38-300x too long, focus-map double move
+- [x] `8c62827a` - fix(turret): prevent Z-restore timeout at startup (**Z clamp part only**; turret de-energize deferred with turret series)
+- [x] `0f789a45` - fix(stage): tolerate a corrupted cache/last_coords.txt at startup
+- [x] `f8fe36d9` - fix(camera): don't reuse a pre-trigger frame in DefaultCamera.read_camera_frame
+- [x] `e34dec3d` - refactor(camera): snapshot cached frame in reuse guard
+- [x] `e86a608f` - fix(camera): prevent intermittent all-zero ToupCam frames
+- [x] `7385a179` - fix(live): hold live triggers during stage motion (parts 1, 3, 5)
+- [x] `f3bca2cb` - fix(af): LAPE focus measure without int16 overflow
+- [x] `ee7897c9` - fix: skip focus-map interpolation for single-FOV snap acquisitions
+- [x] `24276973` - fix(channel-config): persist settings for configurator-added channels
+- [x] `edc13253` - fix(illumination): apply config edits without restart; per-channel max output cap
+- [x] `74824168` - fix(prefs): read ini values with inline comments
+- [x] `aa9107d9` - fix file format menu and enable TIFF compression
 
 ### Port (user hardware)
-- [ ] `6919470e` - feat: per-channel z-offset for laser AF (**parts 1+2**: AF-failure bool + worker robustness; capture UI deferred)
-- [ ] `2a550c86` - fix(laser-af): .ini crop sizes + unknown-key check (part 1 already present)
-- [ ] `1f4130f2` - fix(laser-engine): bound serial write_timeout
-- [ ] `432772be` - fix(dragonfly): make the Andor Dragonfly work (applicable parts)
-- [ ] `875eda71` - feat(camera): Hamamatsu sensor mode (READOUTSPEED)
-- [ ] `56db6965` - feat(camera): persist sensor mode in camera settings cache (+ empty-cache guard)
+- [x] `6919470e` - feat: per-channel z-offset for laser AF (**parts 1+2**: AF-failure bool + worker robustness; capture UI deferred)
+- [x] `2a550c86` - fix(laser-af): .ini crop sizes + unknown-key check (part 1 already present)
+- [x] `1f4130f2` - fix(laser-engine): bound serial write_timeout
+- [x] `432772be` - fix(dragonfly): make the Andor Dragonfly work (applicable parts)
+- [x] `875eda71` - feat(camera): Hamamatsu sensor mode (READOUTSPEED)
+- [x] `56db6965` - feat(camera): persist sensor mode in camera settings cache (+ empty-cache guard)
 
-### Fork-only fix (no upstream commit)
-- [ ] `CephlaStage.home()` NameError: `squid` never bound in `backend/drivers/stages/cephla.py`
+### Fork-only fixes (no upstream commit)
+- [x] `CephlaStage.home()` NameError: `squid` never bound in `backend/drivers/stages/cephla.py` (fbf5a424)
+- [x] `AbstractStage.get_config()` missing → every blocking Cephla stage move raised AttributeError (a4679733)
+- [x] Stray `f` import from `_def` in `wellplate_multipoint` → ImportError on fresh install (d8f9a209)
+- [x] Preferences Save crashed on a nonexistent simulation checkbox (64aed6fb)
+- [x] Controller kept a stale by-region focus map after "Use Focus Map" unchecked (b085d67c)
 
 ### On hold (turret — awaiting user)
 `8c62827a` (turret parts), `a518249e`, `091bf4e8`, `a77cbac3`
@@ -49,23 +53,23 @@ whether their machine has one. No 1536-well plates, no emission filter wheel.
 
 Each unit is ported on its own branch, reviewed adversarially, then cherry-picked here.
 
-- [ ] U1 stage: fork NameError fix; `5be72178`; Z clamp from `8c62827a`; `0f789a45`
-- [ ] U2 camera frames: `f8fe36d9` + `e34dec3d`; `e86a608f`
-- [ ] U3 Hamamatsu sensor mode: `875eda71` + `56db6965`
-- [ ] U4 live/MCU busy: `7385a179` parts 1, 3, 5
-- [ ] U5 autofocus: `f3bca2cb`; `2a550c86`; `6919470e` parts 1+2; `ee7897c9`
-- [ ] U6 preferences/saving: `74824168`; `aa9107d9`
-- [ ] U7 channel/illumination config: `24276973`; `edc13253`
-- [ ] U8 peripherals: `1f4130f2`; `432772be`
+- [x] U1 stage: fork NameError fix; `5be72178`; Z clamp from `8c62827a`; `0f789a45`
+- [x] U2 camera frames: `f8fe36d9` + `e34dec3d`; `e86a608f`
+- [x] U3 Hamamatsu sensor mode: `875eda71` + `56db6965`
+- [x] U4 live/MCU busy: `7385a179` parts 1, 3, 5
+- [x] U5 autofocus: `f3bca2cb`; `2a550c86`; `6919470e` parts 1+2; `ee7897c9`
+- [x] U6 preferences/saving: `74824168`; `aa9107d9`
+- [x] U7 channel/illumination config: `24276973`; `edc13253`
+- [x] U8 peripherals: `1f4130f2`; `432772be`
 
 ### Tests
-- [ ] Each unit adds unit tests mirroring upstream's where they adapt
+- [x] Each unit adds unit tests mirroring upstream's where they adapt
 - [ ] Full `pytest tests/unit` after integration; compare against baseline failures
 
 ### Tracking
-- [ ] Record all 61 commits in `upstream-status.yaml` (ported / skipped with justification / pending)
-- [ ] `commits/42-*` tracking record(s)
-- [ ] `python tools/upstream_tracking.py verify`
+- [x] Record all 61 commits in `upstream-status.yaml` (ported / skipped with justification / pending)
+- [x] `commits/42-a4679733-oct-2026-upstream-batch.md`
+- [x] Trailers checked for all 18 new ported entries (`tools/upstream_tracking.py verify` itself compares 7-char git hashes against 8-char status keys, so it flags every ported entry — pre-existing tool bug)
 
 ## Notes
 

@@ -6,25 +6,30 @@ Port commits from `upstream/master` (Cephla-Lab/Squid) to the current architectu
 
 | Metric | Count |
 |--------|-------|
-| **Total tracked** | 86 |
-| **Ported** | 52 |
-| **Skipped** | 11 |
-| **Pending** | 23 |
+| **Total tracked** | 210 |
+| **Ported** | 136 |
+| **Skipped** | 64 |
+| **Pending** | 8 |
+| **In-progress** | 2 |
 
-*Last updated: 2026-01-24*
+*Last updated: 2026-10-11*
 
-### Pending Commits (2026-01-24)
+### October 2026 batch
 
-23 new upstream commits discovered. See `plans/2026-01-24-upstream-analysis.md` for detailed plan.
+61 upstream commits (2026-06-13 → 2026-10-10) triaged; 18 ported plus the Z-clamp part of `8c62827a`.
+See `plans/2026-10-11-oct-upstream-batch.md` and `commits/42-a4679733-oct-2026-upstream-batch.md`.
 
-**Priority Breakdown:**
-- Critical bug fixes: 4 commits
-- NDViewer enhancements: 4 commits
-- Preferences/simulation: 3 commits
-- New features: 3 commits
-- Hardware drivers: 2 commits
-- Misc fixes: 4 commits
-- Skip candidates: 3 commits
+**Still open:**
+- `3bcdca38` - feat: unify Mosaic + Plate View into single UnifiedMosaicWidget (#530)
+- `dd0c4cd2` - fix(mosaic): keep Full View tiles across magnification changes (#566)
+- `8c62827a` - fix(turret): prevent Z-restore timeout at startup; de-energize when idle (#567)
+- `a518249e` - feat(turret): per-machine objective turret pulse offset (#575)
+- `752c9bb8` - feat(live): add a Snap button for single-frame capture (#616)
+- `f9305f9f` - fix(live): don't widen the panel for the Snap button; rename live button to Live/Stop (#620)
+- `c05bef3a` - test: clean up simulated-acquisition output instead of littering /tmp (#640)
+- `091bf4e8` - Pr turret (#609)
+- `46a139b9` - Remove napari live view; port overexposure indicator and alignment (with auto-align) to the pyqtgraph viewer (#627)
+- `a77cbac3` - fix(turret): a turret only homes with Z retracted (#702)
 
 ## CRITICAL: Semantic Ports Only
 
