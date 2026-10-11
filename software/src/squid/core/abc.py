@@ -448,6 +448,10 @@ class AbstractStage(metaclass=abc.ABCMeta):
     def config(self) -> StageConfig:
         return self._config
 
+    def get_config(self) -> StageConfig:
+        """Method form of ``config``: stage drivers, StageService and stage_utils call ``get_config()``."""
+        return self._config
+
     def wait_for_idle(self, timeout_s: float) -> None:
         start_time = time.time()
         while time.time() < start_time + timeout_s:
