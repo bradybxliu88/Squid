@@ -40,6 +40,29 @@ def test_trigger_is_held_while_the_microcontroller_is_busy(busy, expected_trigge
     assert turn_on_illumination.call_count == expected_triggers
 
 
+def test_move_started_while_waiting_on_the_camera_holds_the_trigger():
+    # CameraService.get_ready_for_trigger() blocks behind a camera settings change; a stage move
+    # sent meanwhile must still hold the trigger instead of firing it mid-move.
+    controller, camera_service, peripheral_service = _controller(peripheral_busy=False)
+    controller.is_live = True
+
+    def ready_after_a_move_started():
+        peripheral_service.is_busy.return_value = True
+        return True
+
+    camera_service.get_ready_for_trigger.side_effect = ready_after_a_move_started
+
+    with (
+        patch.object(controller, "_start_new_timer") as start_new_timer,
+        patch.object(controller, "turn_on_illumination") as turn_on_illumination,
+    ):
+        controller._trigger_acquisition_timer_fn()
+
+    camera_service.send_trigger.assert_not_called()
+    turn_on_illumination.assert_not_called()
+    start_new_timer.assert_called_once_with()  # held for the move: frame cadence, not the 10 ms retry
+
+
 def test_trigger_without_peripheral_service_is_not_held():
     controller, camera_service, _ = _controller(with_peripheral=False)
 

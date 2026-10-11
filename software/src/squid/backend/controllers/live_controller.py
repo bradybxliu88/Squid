@@ -508,6 +508,12 @@ class LiveController(StateMachine[LiveControllerState]):
                     )
                 return False
 
+            # get_ready_for_trigger() takes the CameraService lock and can block behind a camera settings
+            # change (binning, pixel format, ROI) for hundreds of ms; a stage move may have started meanwhile.
+            # Re-check so the busy check stays right next to the trigger send, as it is upstream.
+            if self._mcu_is_busy():
+                return False
+
             self._trigger_skip_count = 0
             if self.trigger_mode == TriggerMode.SOFTWARE and self.control_illumination:
                 if not self.illumination_on:
