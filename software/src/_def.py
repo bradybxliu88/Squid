@@ -1356,7 +1356,7 @@ def tiff_compression_level_from_config(value) -> int:
     """
     try:
         level = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: the loader reads "1e999"/"Infinity" as inf
         log.warning(f"tiff_compression_level = {value!r} is not a number, TIFFs will be saved uncompressed")
         return 0
     return min(max(level, 0), 9)

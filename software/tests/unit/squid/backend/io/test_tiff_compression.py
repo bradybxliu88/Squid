@@ -96,6 +96,11 @@ class TestTiffCompressionLevelFromConfig:
         """A bad value in the machine config must not keep the software from starting."""
         assert tiff_compression_level_from_config(value) == 0
 
+    @pytest.mark.parametrize("ini_text", ["1e999", "Infinity", "-Infinity", "inf", "nan"])
+    def test_a_value_the_loader_reads_as_infinite_or_nan_means_uncompressed(self, ini_text):
+        """int() raises OverflowError (not ValueError) for an infinite float, which would fail the _def import."""
+        assert tiff_compression_level_from_config(_def.conf_attribute_reader(ini_text)) == 0
+
     def test_a_commented_ini_value_is_read(self):
         """The loader strips the comment first, as for every [GENERAL] value."""
         assert tiff_compression_level_from_config(_def.conf_attribute_reader("6  # smaller files")) == 6
