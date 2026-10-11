@@ -282,16 +282,17 @@ class TestSaveAndCloseWorkflow:
         assert saved_config.get("GENERAL", "file_saving_option") == "MULTI_PAGE_TIFF"
 
     def test_save_and_close_single_change_requires_restart(self, qtbot, preferences_dialog, temp_config_file):
-        """Single change requiring restart should show restart message."""
+        """Single change requiring restart should offer a restart."""
         preferences_dialog.binning_spinbox.setValue(4)
 
-        with patch.object(QMessageBox, "information") as mock_info:
+        # The restart prompt is modal: answer it "No" so the test neither blocks nor restarts.
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.No) as mock_question:
             preferences_dialog.accept = MagicMock()
             preferences_dialog._save_and_close()
 
-            # Should show restart message
-            mock_info.assert_called_once()
-            assert "restart" in str(mock_info.call_args)
+            # Should offer a restart
+            mock_question.assert_called_once()
+            assert "restart" in str(mock_question.call_args)
             preferences_dialog.accept.assert_called_once()
 
     def test_save_and_close_multiple_changes_accepted(self, qtbot, preferences_dialog, temp_config_file):
@@ -299,8 +300,11 @@ class TestSaveAndCloseWorkflow:
         preferences_dialog.file_saving_combo.setCurrentText("MULTI_PAGE_TIFF")
         preferences_dialog.binning_spinbox.setValue(4)
 
-        # Mock the confirmation dialog to return Accepted
-        with patch("qtpy.QtWidgets.QDialog.exec_", return_value=True):
+        # Mock the confirmation dialog to return Accepted, and decline the (modal) restart prompt
+        with (
+            patch("qtpy.QtWidgets.QDialog.exec_", return_value=True),
+            patch.object(QMessageBox, "question", return_value=QMessageBox.No),
+        ):
             preferences_dialog.accept = MagicMock()
             preferences_dialog._save_and_close()
 

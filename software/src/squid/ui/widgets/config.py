@@ -1595,7 +1595,7 @@ class PreferencesDialog(QDialog):
             changes.append(("Simulate Camera *", str(old_val_bool), str(new_val_bool), True))
 
         old_val_bool = self._get_config_bool("SIMULATION", "simulate_microcontroller", False)
-        new_val_bool = self.sim_microcontroller_checkbox.isChecked()
+        new_val_bool = self.sim_mcu_checkbox.isChecked()
         if old_val_bool != new_val_bool:
             changes.append(("Simulate Microcontroller *", str(old_val_bool), str(new_val_bool), True))
 
