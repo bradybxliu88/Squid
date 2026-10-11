@@ -431,6 +431,13 @@ class Microscope:
                 self.addons.squid_laser_engine.close()
             except Exception as e:
                 self._log.warning(f"Error closing squid laser engine: {e}")
+        # Release the Dragonfly serial port so a restarted process can open it.
+        # ApplicationContext.shutdown() reaches hardware teardown through here.
+        if self.addons.dragonfly is not None:
+            try:
+                self.addons.dragonfly.close()
+            except Exception as e:
+                self._log.warning(f"Error closing Dragonfly: {e}")
         self.camera.close()
 
     def move_to_position(self, x: float, y: float, z: float) -> None:
