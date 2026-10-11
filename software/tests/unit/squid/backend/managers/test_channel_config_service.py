@@ -172,6 +172,21 @@ class TestUpdateConfiguration:
         ch = service.get_channel_configuration_by_name("10x", "DAPI")
         assert ch.analog_gain == 5.0
 
+    def test_update_channel_missing_from_objective_config_takes_effect(self, config_repo, service):
+        """A channel added to general.yaml after the objective file existed (e.g. via the
+        channel configurator) must not silently fall back to general.yaml values."""
+        general = config_repo.get_general_config()
+        general.channels.append(_make_channel("Cy5", exposure=40.0, intensity=25.0, ill_channel="488nm"))
+        config_repo.save_general_config("default", general)
+
+        service.update_configuration("10x", "Cy5", "ExposureTime", 123.0)
+        service.update_configuration("10x", "Cy5", "IlluminationIntensity", 60.0)
+
+        ch = service.get_channel_configuration_by_name("10x", "Cy5")
+        assert ch.exposure_time == 123.0
+        assert ch.illumination_intensity == 60.0
+        assert ch.illumination_settings.illumination_channel == "488nm"
+
 
 class TestConfocalMode:
     def test_default_is_widefield(self, service):
