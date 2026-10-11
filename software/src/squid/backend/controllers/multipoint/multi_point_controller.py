@@ -739,7 +739,14 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             test_config = first_config
             size_before = utils.get_directory_disk_usage(pathlib.Path(temp_save_dir))
             utils_acquisition.save_image(
-                test_image, file_id, temp_save_dir, test_config, is_color
+                test_image,
+                file_id,
+                temp_save_dir,
+                test_config,
+                is_color,
+                tiff_compression_level=utils_acquisition.tiff_compression_level_for_format(
+                    _def.FILE_SAVING_OPTION, _def.TIFF_COMPRESSION_LEVEL
+                ),
             )
             size_after = utils.get_directory_disk_usage(pathlib.Path(temp_save_dir))
 

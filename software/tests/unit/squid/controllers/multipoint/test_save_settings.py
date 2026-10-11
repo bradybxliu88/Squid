@@ -12,6 +12,7 @@ import time
 
 import numpy as np
 import pytest
+import tifffile
 
 import _def
 import squid.core.abc
@@ -78,6 +79,7 @@ def test_save_job_classes_for_format(file_saving_option, expected):
 class TestSaveSettings:
     def test_reads_the_settings_in_effect_when_created(self, monkeypatch):
         monkeypatch.setattr(_def, "FILE_SAVING_OPTION", FileSavingOption.ZARR_V3)
+        monkeypatch.setattr(_def, "TIFF_COMPRESSION_LEVEL", 7)
         monkeypatch.setattr(_def, "ZARR_CHUNK_MODE", ZarrChunkMode.TILED_512)
         monkeypatch.setattr(_def, "ZARR_COMPRESSION", ZarrCompression.BEST)
         monkeypatch.setattr(_def, "ZARR_USE_6D_FOV_DIMENSION", True)
@@ -85,6 +87,7 @@ class TestSaveSettings:
         settings = SaveSettings()
 
         assert settings.file_saving_option == FileSavingOption.ZARR_V3
+        assert settings.tiff_compression_level == 7
         assert settings.zarr_chunk_mode == ZarrChunkMode.TILED_512
         assert settings.zarr_compression == ZarrCompression.BEST
         assert settings.zarr_use_6d_fov_dimension is True
@@ -140,6 +143,7 @@ class TestSaveImageJobUsesTheFormatItCarries:
 def test_settings_changed_after_the_saving_subprocess_started_reach_it(tmp_path, monkeypatch):
     """The JobRunner subprocess keeps the _def it started with; the settings have to arrive with the job."""
     monkeypatch.setattr(_def, "FILE_SAVING_OPTION", FileSavingOption.INDIVIDUAL_IMAGES)
+    monkeypatch.setattr(_def, "TIFF_COMPRESSION_LEVEL", 0)
     runner = JobRunner()
     runner.daemon = True
     runner.start()
@@ -148,6 +152,7 @@ def test_settings_changed_after_the_saving_subprocess_started_reach_it(tmp_path,
 
         # What saving the Preferences dialog does, after the subprocess exists.
         monkeypatch.setattr(_def, "FILE_SAVING_OPTION", FileSavingOption.MULTI_PAGE_TIFF)
+        monkeypatch.setattr(_def, "TIFF_COMPRESSION_LEVEL", 6)
         info = _capture_info(tmp_path)
         assert runner.dispatch(
             SaveImageJob(capture_info=info, capture_image=JobImage(image_array=_image()), save_settings=SaveSettings())
@@ -163,3 +168,5 @@ def test_settings_changed_after_the_saving_subprocess_started_reach_it(tmp_path,
         runner.shutdown(timeout_s=5)
 
     assert _stack_path(tmp_path, info).exists(), "Nothing was saved as MULTI_PAGE_TIFF"
+    with tifffile.TiffFile(_stack_path(tmp_path, info)) as tif:
+        assert tif.pages[0].compression == tifffile.COMPRESSION.ADOBE_DEFLATE

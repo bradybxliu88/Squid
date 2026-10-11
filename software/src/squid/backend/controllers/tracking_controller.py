@@ -412,6 +412,9 @@ class _TrackingWorker(threading.Thread):
                         save_directory=self._experiment_dir,
                         config=self._cfg.configuration,
                         is_color=is_color,
+                        # TIFF_COMPRESSION_LEVEL is an acquisition (multipoint) setting; tracking frames stay
+                        # uncompressed so the tracking loop's write time is unchanged.
+                        tiff_compression_level=0,
                     )
 
                 if self._csv_file is not None:

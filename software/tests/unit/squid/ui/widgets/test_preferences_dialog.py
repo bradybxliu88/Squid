@@ -535,3 +535,95 @@ class TestFileSavingOptionFallback:
         qtbot.addWidget(dialog)
 
         assert dialog.file_saving_combo.currentText() == "OME_TIFF"
+
+
+class TestTiffCompressionSetting:
+    """Tests for the TIFF Compression Level control on the General tab (ported from upstream aa9107d9)."""
+
+    @pytest.fixture(autouse=True)
+    def _running_level(self, monkeypatch):
+        # _apply_settings() pushes the level into _def; keep that from leaking into other tests.
+        monkeypatch.setattr(_def, "TIFF_COMPRESSION_LEVEL", 0)
+        monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FILE_SAVING_OPTION)
+
+    def test_defaults_to_off(self, preferences_dialog):
+        assert preferences_dialog.tiff_compression_spinbox.value() == 0
+
+    def test_initialized_from_config(self, qtbot, sample_config, temp_config_file):
+        sample_config.set("GENERAL", "tiff_compression_level", "6")
+
+        dialog = PreferencesDialog(sample_config, temp_config_file)
+        qtbot.addWidget(dialog)
+
+        assert dialog.tiff_compression_spinbox.value() == 6
+
+    def test_initialized_from_a_commented_config_value(self, qtbot, sample_config, temp_config_file):
+        sample_config.set("GENERAL", "tiff_compression_level", "6  # smaller files")
+
+        dialog = PreferencesDialog(sample_config, temp_config_file)
+        qtbot.addWidget(dialog)
+
+        assert dialog.tiff_compression_spinbox.value() == 6
+        assert not [c for c in dialog._get_changes() if c[0] == "TIFF Compression Level"]
+
+    def test_falls_back_to_the_level_in_effect(self, qtbot, monkeypatch, sample_config, temp_config_file):
+        """With no key in the config, show the running value rather than assuming a default."""
+        monkeypatch.setattr(_def, "TIFF_COMPRESSION_LEVEL", 3)
+
+        dialog = PreferencesDialog(sample_config, temp_config_file)
+        qtbot.addWidget(dialog)
+
+        assert dialog.tiff_compression_spinbox.value() == 3
+        assert not [c for c in dialog._get_changes() if c[0] == "TIFF Compression Level"]
+
+    def test_out_of_range_config_value_is_not_a_change(self, qtbot, sample_config, temp_config_file):
+        """The spin box shows the nearest level it has, which is also the one in effect."""
+        sample_config.set("GENERAL", "tiff_compression_level", "12")
+
+        dialog = PreferencesDialog(sample_config, temp_config_file)
+        qtbot.addWidget(dialog)
+
+        assert dialog.tiff_compression_spinbox.value() == 9
+        assert not [c for c in dialog._get_changes() if c[0] == "TIFF Compression Level"]
+
+    def test_only_shown_for_the_formats_that_support_it(self, preferences_dialog):
+        for file_saving_option, visible in (
+            ("INDIVIDUAL_IMAGES", True),
+            ("MULTI_PAGE_TIFF", True),
+            ("OME_TIFF", False),  # written through a memmap, which can't be compressed
+            ("ZARR_V3", False),
+        ):
+            preferences_dialog.file_saving_combo.setCurrentText(file_saving_option)
+            assert preferences_dialog.tiff_compression_spinbox.isVisibleTo(preferences_dialog) is visible
+            assert preferences_dialog.tiff_compression_label.isVisibleTo(preferences_dialog) is visible
+            # The zarr rows keep their own rule.
+            assert preferences_dialog.zarr_compression_combo.isVisibleTo(preferences_dialog) is (
+                file_saving_option == "ZARR_V3"
+            )
+
+    def test_change_is_detected_and_needs_no_restart(self, preferences_dialog):
+        preferences_dialog.tiff_compression_spinbox.setValue(6)
+
+        changes = {c[0]: c for c in preferences_dialog._get_changes()}
+        assert changes["TIFF Compression Level"][1:] == ("0", "6", False)
+
+    def test_saved_on_its_own(self, qtbot, preferences_dialog, temp_config_file):
+        """A setting missing from _get_changes() is silently dropped when it is the only change."""
+        preferences_dialog.tiff_compression_spinbox.setValue(9)
+
+        with patch("qtpy.QtWidgets.QDialog.exec_", return_value=True):
+            preferences_dialog.accept = MagicMock()
+            preferences_dialog._save_and_close()
+
+        saved = ConfigParser()
+        saved.read(temp_config_file)
+        assert saved.getint("GENERAL", "tiff_compression_level") == 9
+
+    def test_save_pushes_level_to_def_module(self, qtbot, preferences_dialog):
+        preferences_dialog.tiff_compression_spinbox.setValue(4)
+
+        with patch("qtpy.QtWidgets.QDialog.exec_", return_value=True):
+            preferences_dialog.accept = MagicMock()
+            preferences_dialog._save_and_close()
+
+        assert _def.TIFF_COMPRESSION_LEVEL == 4

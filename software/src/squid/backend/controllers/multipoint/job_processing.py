@@ -107,6 +107,7 @@ class SaveSettings:
     """
 
     file_saving_option: _def.FileSavingOption = field(default_factory=lambda: _def.FILE_SAVING_OPTION)
+    tiff_compression_level: int = field(default_factory=lambda: _def.TIFF_COMPRESSION_LEVEL)
     zarr_chunk_mode: _def.ZarrChunkMode = field(default_factory=lambda: _def.ZARR_CHUNK_MODE)
     zarr_compression: _def.ZarrCompression = field(default_factory=lambda: _def.ZARR_COMPRESSION)
     zarr_use_6d_fov_dimension: bool = field(default_factory=lambda: bool(_def.ZARR_USE_6D_FOV_DIMENSION))
@@ -268,6 +269,7 @@ class SaveImageJob(Job):
                     metadata=metadata,
                     description=description,
                     extratags=extratags,
+                    **utils_acquisition.tiff_compression_kwargs(self.save_settings.tiff_compression_level),
                 )
         else:
             # OME-TIFF is handled by SaveOMETiffJob, which requires AcquisitionInfo
@@ -277,6 +279,7 @@ class SaveImageJob(Job):
                 save_directory=info.save_directory,
                 config=info.configuration,
                 is_color=is_color,
+                tiff_compression_level=self.save_settings.tiff_compression_level,
             )
 
             if _feature_flags.is_enabled("MERGE_CHANNELS"):
