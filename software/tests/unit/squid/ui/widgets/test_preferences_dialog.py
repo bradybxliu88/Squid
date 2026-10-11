@@ -471,3 +471,67 @@ class TestUIInitialization:
 
     def test_af_threshold_initialized(self, preferences_dialog):
         assert preferences_dialog.af_stop_threshold.value() == 0.85
+
+
+class TestFileSavingOptionFallback:
+    """The file saving format shown must be the one in effect, even with no key in the config.
+
+    Most machine configs don't set file_saving_option, so the fallback has to come from _def. With a hardcoded
+    OME_TIFF fallback the dialog showed a format that wasn't in use, and since _apply_settings() always writes
+    file_saving_option (and applies it live), saving any unrelated preference switched the machine to OME-TIFF.
+
+    Ported from upstream aa9107d9 (tests/control/test_preferences_dialog.py).
+    """
+
+    @pytest.fixture
+    def config_without_file_saving_option(self, sample_config):
+        sample_config.remove_option("GENERAL", "file_saving_option")
+        return sample_config
+
+    def test_combo_falls_back_to_value_in_effect(
+        self, qtbot, monkeypatch, config_without_file_saving_option, temp_config_file
+    ):
+        monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.MULTI_PAGE_TIFF)
+
+        dialog = PreferencesDialog(config_without_file_saving_option, temp_config_file)
+        qtbot.addWidget(dialog)
+
+        assert dialog.file_saving_combo.currentText() == "MULTI_PAGE_TIFF"
+        assert not dialog._get_changes(), "Untouched dialog must not report a format change"
+
+    def test_saving_unrelated_setting_does_not_rewrite_format(
+        self, qtbot, monkeypatch, config_without_file_saving_option, temp_config_file
+    ):
+        monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.INDIVIDUAL_IMAGES)
+
+        dialog = PreferencesDialog(config_without_file_saving_option, temp_config_file)
+        qtbot.addWidget(dialog)
+        dialog.saving_path_edit.setText("/some/other/path")
+        dialog._apply_settings()
+
+        saved = ConfigParser()
+        saved.read(temp_config_file)
+        assert saved.get("GENERAL", "file_saving_option") == "INDIVIDUAL_IMAGES"
+        # ... and the format applied live is still the one that was running.
+        assert _def.FILE_SAVING_OPTION == _def.FileSavingOption.INDIVIDUAL_IMAGES
+
+    def test_format_change_away_from_value_in_effect_is_listed(
+        self, qtbot, monkeypatch, config_without_file_saving_option, temp_config_file
+    ):
+        monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.INDIVIDUAL_IMAGES)
+
+        dialog = PreferencesDialog(config_without_file_saving_option, temp_config_file)
+        qtbot.addWidget(dialog)
+        dialog.file_saving_combo.setCurrentText("OME_TIFF")
+
+        changes = {c[0]: c for c in dialog._get_changes()}
+        assert changes["File Saving Format"][1:3] == ("INDIVIDUAL_IMAGES", "OME_TIFF")
+
+    def test_config_value_still_wins_over_value_in_effect(self, qtbot, monkeypatch, sample_config, temp_config_file):
+        monkeypatch.setattr(_def, "FILE_SAVING_OPTION", _def.FileSavingOption.ZARR_V3)
+
+        # sample_config sets file_saving_option = OME_TIFF, which must win over the fallback.
+        dialog = PreferencesDialog(sample_config, temp_config_file)
+        qtbot.addWidget(dialog)
+
+        assert dialog.file_saving_combo.currentText() == "OME_TIFF"
