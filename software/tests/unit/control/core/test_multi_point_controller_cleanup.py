@@ -58,6 +58,14 @@ class _FakeCameraService:
     def get_binning(self) -> tuple[int, int]:
         return (1, 1)
 
+    # Read by _publish_ndviewer_start() for the default INDIVIDUAL_IMAGES format. Without them this test only passed
+    # when an earlier test had left _def.FILE_SAVING_OPTION at a format that skips NDViewer push mode.
+    def get_crop_size(self) -> tuple[int, int]:
+        return (64, 64)
+
+    def get_resolution(self) -> tuple[int, int]:
+        return (64, 64)
+
 
 class _FakePeripheralService:
     def wait_for_idle(self, timeout_s: float) -> None:

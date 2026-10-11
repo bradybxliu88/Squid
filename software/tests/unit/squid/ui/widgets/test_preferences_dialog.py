@@ -15,6 +15,28 @@ import _def
 from squid.ui.widgets.config import PreferencesDialog
 
 
+@pytest.fixture(autouse=True)
+def _restore_def_module():
+    """Undo what _apply_settings() applies live to _def, so these tests cannot change what later tests run with.
+
+    _apply_live_settings() assigns _def module globals (FILE_SAVING_OPTION, DEFAULT_SAVING_PATH, ...) and class
+    attributes of _def.AF, _def.SOFTWARE_POS_LIMIT and _def.Tracking.
+    """
+    classes = (_def.AF, _def.SOFTWARE_POS_LIMIT, _def.Tracking)
+    module_before = dict(vars(_def))
+    classes_before = {cls: {k: v for k, v in vars(cls).items() if not k.startswith("__")} for cls in classes}
+    yield
+    for name in set(vars(_def)) - set(module_before):
+        delattr(_def, name)
+    for name, value in module_before.items():
+        if vars(_def).get(name) is not value:
+            setattr(_def, name, value)
+    for cls, before in classes_before.items():
+        for name, value in before.items():
+            if vars(cls).get(name) is not value:
+                setattr(cls, name, value)
+
+
 @pytest.fixture
 def sample_config():
     """Create a sample config with test values."""
