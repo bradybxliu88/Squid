@@ -510,6 +510,8 @@ class ToupcamCamera(AbstractCamera):
     def stop_streaming(self):
         self._camera.Stop()
         self._raw_camera_stream_started = False
+        # A frame in flight is lost with the stream: don't make the next trigger wait out its timeout.
+        self._trigger_sent = False
 
     def get_is_streaming(self):
         return self._raw_camera_stream_started
