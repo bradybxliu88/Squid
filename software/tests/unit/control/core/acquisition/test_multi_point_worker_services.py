@@ -272,15 +272,21 @@ def test_failed_job_does_not_abort_when_disabled() -> None:
     assert not worker._abort_requested.is_set()
 
 
-def test_handle_z_offset_moves_relative() -> None:
-    """handle_z_offset applies per-channel offsets via position controller."""
+def test_channel_z_offset_moves_piezo_not_stage() -> None:
+    """Per-channel z-offsets are applied and undone on the piezo, never on stage z (piezo-only since 209c8b6e)."""
     worker = _make_worker()
     worker._position_controller = MagicMock()
-    config = SimpleNamespace(z_offset=50.0)
+    piezo = MagicMock()
+    piezo.get_position.side_effect = [100.0, 150.0]
+    piezo.move_relative.side_effect = [150.0, 100.0]  # PiezoService returns the position after the move
+    worker._piezo_service = piezo
+    config = SimpleNamespace(name="ch", z_offset=50.0)
 
-    worker.handle_z_offset(config, True)
-    worker._position_controller.move_z_relative.assert_called_once_with(0.05)
+    worker._apply_channel_z_offset(config)
+    piezo.move_relative.assert_called_once_with(50.0)
 
-    worker._position_controller.move_z_relative.reset_mock()
-    worker.handle_z_offset(config, False)
-    worker._position_controller.move_z_relative.assert_called_once_with(-0.05)
+    piezo.move_relative.reset_mock()
+    worker._reset_channel_z_offset()
+    piezo.move_relative.assert_called_once_with(-50.0)
+    assert worker._current_z_offset_um == 0.0
+    worker._position_controller.move_z_relative.assert_not_called()

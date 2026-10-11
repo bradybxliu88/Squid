@@ -123,22 +123,6 @@ def test_move_to_coordinate_does_not_move_stage_z() -> None:
     worker._position_controller.move_to_z.assert_not_called()
 
 
-def test_handle_z_offset_uses_piezo() -> None:
-    """handle_z_offset should route through piezo, not stage."""
-    worker = MultiPointWorker.__new__(MultiPointWorker)
-    worker._log = MagicMock()
-    worker._piezo_service = MagicMock()
-    worker._position_controller = MagicMock()
-
-    config = SimpleNamespace(z_offset=5.0)
-    worker.handle_z_offset(config, not_offset=True)
-
-    # Should use piezo
-    worker._piezo_service.move_relative.assert_called_once_with(5.0)
-    # Should NOT use stage
-    worker._position_controller.move_z_relative.assert_not_called()
-
-
 def test_acquire_at_position_aborts_when_focus_lock_mode_cannot_lock() -> None:
     """Focus-lock AF mode must fail fast when lock verification fails."""
     worker = _build_worker_for_acquire_test(

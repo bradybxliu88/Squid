@@ -1,5 +1,6 @@
 import ast
 import hashlib
+import math
 import os
 import queue
 import time
@@ -21,6 +22,7 @@ from _def import (
     FILE_ID_PADDING,
     FILE_SAVING_OPTION,
     FileSavingOption,
+    MULTIPOINT_PIEZO_DELAY_MS,
     SCAN_STABILIZATION_TIME_MS_X,
     SCAN_STABILIZATION_TIME_MS_Y,
     SCAN_STABILIZATION_TIME_MS_Z,
@@ -138,6 +140,10 @@ class SummarizeResult(NamedTuple):
 
 
 class MultiPointWorker:
+    # Tolerance for per-channel z-offset deltas, well below piezo step resolution: float residue from
+    # delta tracking must never trigger a move.
+    _Z_OFFSET_EPS_UM: float = 1e-4
+
     def __init__(
         self,
         auto_focus_controller: Optional[AutoFocusController],
@@ -193,6 +199,8 @@ class MultiPointWorker:
         self._nl5_service = nl5_service
         self._laser_engine_service = laser_engine_service
         self._laser_channels_needed: List[str] = []
+        # Per-channel z-offset currently applied on the piezo, relative to the un-offset (AF / focus-lock) z.
+        self._current_z_offset_um: float = 0.0
         self._event_bus = event_bus
         self._stream_handler = stream_handler
         self._trigger_mode = trigger_mode
@@ -956,6 +964,9 @@ class MultiPointWorker:
 
             # Laser-engine channels this acquisition will fire (empty when the flag is off).
             self._laser_channels_needed = self._compute_laser_channels_needed()
+
+            # Say once which per-channel z-offsets this run applies (or cannot apply: no piezo).
+            self._log_channel_z_offsets()
 
             while self.time_point < self.Nt:
                 # check if abort acquisition has been requested
@@ -2022,39 +2033,46 @@ class MultiPointWorker:
 
             self._save_laser_af_characterization(current_path, file_ID)
 
-            for config_idx, config in enumerate(self.selected_configurations):
-                self.handle_z_offset(config, True)
+            try:
+                for config_idx, config in enumerate(self.selected_configurations):
+                    # Delta-tracked: only the change from the previous channel's offset is moved.
+                    self._apply_channel_z_offset(config)
 
-                with self._timing.get_timer("acquire_camera_image"):
-                    if self._is_rgb_config(config):
-                        self.acquire_rgb_image(
-                            config, file_ID, current_path, z_level, region_id, fov,
-                            fov_id=fov_id,
-                        )
-                    else:
-                        self.acquire_camera_image(
-                            config, file_ID, current_path, z_level,
-                            region_id=region_id, fov=fov,
-                            config_idx=config_idx, fov_id=fov_id,
-                        )
+                    with self._timing.get_timer("acquire_camera_image"):
+                        if self._is_rgb_config(config):
+                            self.acquire_rgb_image(
+                                config, file_ID, current_path, z_level, region_id, fov, fov_id=fov_id
+                            )
+                        else:
+                            self.acquire_camera_image(
+                                config,
+                                file_ID,
+                                current_path,
+                                z_level,
+                                region_id=region_id,
+                                fov=fov,
+                                config_idx=config_idx,
+                                fov_id=fov_id,
+                            )
 
-                self.handle_z_offset(config, False)
-
-                current_image = (
-                    fov * self.NZ * len(self.selected_configurations)
-                    + z_level * len(self.selected_configurations)
-                    + config_idx
-                    + 1
-                )
-                self._progress_tracker.update(
-                    current_fov=current_image,
-                    total_fovs=self.total_scans,
-                    current_region=getattr(self, "_current_region", 1),
-                    total_regions=getattr(self, "_total_regions", 1),
-                    current_timepoint=self.time_point + 1,
-                    total_timepoints=self.Nt,
-                    current_channel=config.name,
-                )
+                    current_image = (
+                        fov * self.NZ * len(self.selected_configurations)
+                        + z_level * len(self.selected_configurations)
+                        + config_idx
+                        + 1
+                    )
+                    self._progress_tracker.update(
+                        current_fov=current_image,
+                        total_fovs=self.total_scans,
+                        current_region=getattr(self, "_current_region", 1),
+                        total_regions=getattr(self, "_total_regions", 1),
+                        current_timepoint=self.time_point + 1,
+                        total_timepoints=self.Nt,
+                        current_channel=config.name,
+                    )
+            finally:
+                # Back to the un-offset z before the next z step, AF or focus-lock resume (even on error).
+                self._reset_channel_z_offset()
 
             self.update_coordinates_dataframe(
                 region_id, z_level, acquire_pos, fov, fov_id=fov_id
@@ -2077,73 +2095,71 @@ class MultiPointWorker:
         """Acquire all z-levels for each channel before moving to the next channel."""
         num_configs = len(self.selected_configurations)
 
-        for config_idx, config in enumerate(self.selected_configurations):
-            # Prepare z-stack position at the start of each channel
-            if self.NZ > 1 and config_idx > 0:
-                # Return to starting z for this channel's z-stack
-                self.move_z_back_after_stack()
-                self.prepare_z_stack()
+        try:
+            for config_idx, config in enumerate(self.selected_configurations):
+                # Prepare z-stack position at the start of each channel
+                if self.NZ > 1 and config_idx > 0:
+                    # The stack return/prepare are absolute piezo moves from the un-offset z: undo the offset first.
+                    self._reset_channel_z_offset()
+                    # Return to starting z for this channel's z-stack
+                    self.move_z_back_after_stack()
+                    self.prepare_z_stack()
 
-            for z_level in range(self.NZ):
-                file_ID = self._make_file_id(region_id, fov, z_level, fov_id, attempt)
+                for z_level in range(self.NZ):
+                    file_ID = self._make_file_id(region_id, fov, z_level, fov_id, attempt)
 
-                acquire_pos: squid.core.abc.Pos = self._stage_service.get_position()
-                self._log.info(
-                    f"Acquiring image: ID={file_ID}, "
-                    f"Metadata={{x: {acquire_pos.x_mm}, y: {acquire_pos.y_mm}, z: {acquire_pos.z_mm}}}"
-                )
+                    acquire_pos: squid.core.abc.Pos = self._stage_service.get_position()
+                    self._log.info(
+                        f"Acquiring image: ID={file_ID}, "
+                        f"Metadata={{x: {acquire_pos.x_mm}, y: {acquire_pos.y_mm}, z: {acquire_pos.z_mm}}}"
+                    )
 
-                if (
-                    z_level == 0
-                    and config_idx == 0
-                    and self.autofocus_mode != AutofocusMode.NONE
-                    and self.Nt > 1
-                ):
-                    self._last_time_point_z_pos[(region_id, fov)] = acquire_pos.z_mm
+                    if z_level == 0 and config_idx == 0 and self.autofocus_mode != AutofocusMode.NONE and self.Nt > 1:
+                        self._last_time_point_z_pos[(region_id, fov)] = acquire_pos.z_mm
 
-                self._save_laser_af_characterization(current_path, file_ID)
-                self.handle_z_offset(config, True)
+                    self._save_laser_af_characterization(current_path, file_ID)
+                    self._apply_channel_z_offset(config)
 
-                with self._timing.get_timer("acquire_camera_image"):
-                    if self._is_rgb_config(config):
-                        self.acquire_rgb_image(
-                            config, file_ID, current_path, z_level, region_id, fov,
-                            fov_id=fov_id,
-                        )
-                    else:
-                        self.acquire_camera_image(
-                            config, file_ID, current_path, z_level,
-                            region_id=region_id, fov=fov,
-                            config_idx=config_idx, fov_id=fov_id,
-                        )
+                    with self._timing.get_timer("acquire_camera_image"):
+                        if self._is_rgb_config(config):
+                            self.acquire_rgb_image(
+                                config, file_ID, current_path, z_level, region_id, fov, fov_id=fov_id
+                            )
+                        else:
+                            self.acquire_camera_image(
+                                config,
+                                file_ID,
+                                current_path,
+                                z_level,
+                                region_id=region_id,
+                                fov=fov,
+                                config_idx=config_idx,
+                                fov_id=fov_id,
+                            )
 
-                self.handle_z_offset(config, False)
+                    current_image = fov * self.NZ * num_configs + config_idx * self.NZ + z_level + 1
+                    self._progress_tracker.update(
+                        current_fov=current_image,
+                        total_fovs=self.total_scans,
+                        current_region=getattr(self, "_current_region", 1),
+                        total_regions=getattr(self, "_total_regions", 1),
+                        current_timepoint=self.time_point + 1,
+                        total_timepoints=self.Nt,
+                        current_channel=config.name,
+                    )
 
-                current_image = (
-                    fov * self.NZ * num_configs
-                    + config_idx * self.NZ
-                    + z_level
-                    + 1
-                )
-                self._progress_tracker.update(
-                    current_fov=current_image,
-                    total_fovs=self.total_scans,
-                    current_region=getattr(self, "_current_region", 1),
-                    total_regions=getattr(self, "_total_regions", 1),
-                    current_timepoint=self.time_point + 1,
-                    total_timepoints=self.Nt,
-                    current_channel=config.name,
-                )
+                    self.update_coordinates_dataframe(region_id, z_level, acquire_pos, fov, fov_id=fov_id)
 
-                self.update_coordinates_dataframe(
-                    region_id, z_level, acquire_pos, fov, fov_id=fov_id
-                )
+                    if self._abort_requested.is_set():
+                        self.handle_acquisition_abort(current_path)
 
-                if self._abort_requested.is_set():
-                    self.handle_acquisition_abort(current_path)
-
-                if z_level < self.NZ - 1:
-                    self.move_z_for_stack()
+                    if z_level < self.NZ - 1:
+                        # The z step is an absolute piezo move from the un-offset z: undo the offset first.
+                        self._reset_channel_z_offset()
+                        self.move_z_for_stack()
+        finally:
+            # Back to the un-offset z before the stack return, AF or focus-lock resume (even on error).
+            self._reset_channel_z_offset()
 
     def _make_file_id(
         self,
@@ -2302,13 +2318,95 @@ class MultiPointWorker:
                 self.z_piezo_um,
             )
 
-    def handle_z_offset(self, config: AcquisitionChannel, not_offset: bool) -> None:
-        if config.z_offset is not None and config.z_offset != 0.0:
-            direction: int = 1 if not_offset else -1
-            z_delta_um = config.z_offset * direction
-            self._log.info(f"Moving Z offset {z_delta_um} um via piezo")
-            if self._piezo_service is not None:
-                self._piezo_service.move_relative(z_delta_um)
+    # ------------------------------------------------------------------
+    # Per-channel z-offset
+    #
+    # A channel's z_offset is applied on the piezo, relative to the z the FOV was focused at (AF / focus lock), and
+    # always undone before anything else moves z. It is applied whenever it is non-zero (no AF-method or UI gate):
+    # orchestrator protocol z_offset_um overrides rely on that, including under focus lock, which is paused around
+    # captures. It is piezo-only; stage z is never moved for an offset.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _channel_z_offset_um(config: AcquisitionChannel) -> float:
+        """The channel's z-offset in um; None and non-finite values count as 0."""
+        offset = config.z_offset
+        if offset is None or not math.isfinite(offset):
+            return 0.0
+        return float(offset)
+
+    def _log_channel_z_offsets(self) -> None:
+        """Log once per acquisition which per-channel z-offsets will be applied, or why they cannot be."""
+        non_finite: List[str] = []
+        non_zero: List[str] = []
+        for config in self.selected_configurations:
+            offset = config.z_offset
+            if offset is None:
+                continue
+            if not math.isfinite(offset):
+                non_finite.append(config.name)
+            elif offset != 0.0:
+                non_zero.append(f"{config.name}: {float(offset):+.2f} um")
+        if non_finite:
+            self._log.warning(f"Channels with a non-finite z_offset_um (treated as 0): [{', '.join(non_finite)}]")
+        if not non_zero:
+            return
+        summary = ", ".join(non_zero)
+        if self._piezo_service is None:
+            self._log.warning(f"No piezo: per-channel z-offsets are piezo-only and will NOT be applied: [{summary}]")
+        else:
+            self._log.info(f"Per-channel z-offsets will be applied via piezo: [{summary}]")
+
+    def _apply_channel_z_offset(self, config: AcquisitionChannel) -> None:
+        """Move the piezo by the delta from the currently applied offset to this channel's z-offset."""
+        target_um = self._channel_z_offset_um(config)
+        delta_um = target_um - self._current_z_offset_um
+        if abs(delta_um) < self._Z_OFFSET_EPS_UM:
+            return
+        if self._piezo_service is None:
+            # Not applied (piezo-only); _log_channel_z_offsets warned once at acquisition start.
+            self._log.debug(f"No piezo: skipping z-offset {target_um:+.2f} um for channel '{config.name}'")
+            return
+        self._log.info(f"Channel '{config.name}': z-offset {target_um:+.2f} um (piezo move {delta_um:+.2f} um)")
+        self._current_z_offset_um += self._move_piezo_for_z_offset(delta_um)
+
+    def _reset_channel_z_offset(self) -> None:
+        """Undo any applied per-channel z-offset, returning the piezo to the un-offset z.
+
+        Never raises: a failed undo is logged and the tracker keeps the outstanding offset, so the next apply or
+        reset still computes its delta from the right baseline.
+        """
+        outstanding_um = self._current_z_offset_um
+        if abs(outstanding_um) < self._Z_OFFSET_EPS_UM:
+            self._current_z_offset_um = 0.0  # drop float residue
+            return
+        if self._piezo_service is None:
+            self._current_z_offset_um = 0.0
+            return
+        try:
+            self._current_z_offset_um += self._move_piezo_for_z_offset(-outstanding_um)
+        except Exception:
+            self._log.exception(
+                f"Failed to undo channel z-offset of {outstanding_um:+.2f} um; piezo may not be at the un-offset z"
+            )
+
+    def _move_piezo_for_z_offset(self, delta_um: float) -> float:
+        """Relative piezo move for a channel z-offset. Returns the delta actually moved.
+
+        PiezoService clamps to its range and returns the resulting position; tracking that (rather than the
+        requested delta) lets the reset return exactly to the un-offset z after a clamped apply.
+        """
+        before_um = self._piezo_service.get_position()
+        after_um = self._piezo_service.move_relative(delta_um)
+        actual_delta_um = after_um - before_um
+        if abs(actual_delta_um - delta_um) >= self._Z_OFFSET_EPS_UM:
+            self._log.warning(
+                f"Channel z-offset move of {delta_um:+.2f} um was clamped by the piezo range to {actual_delta_um:+.2f} um"
+            )
+        if self._trigger_mode == TriggerMode.SOFTWARE:
+            # Let the piezo settle before the next exposure (same rule as ZStackExecutor steps).
+            self._sleep(MULTIPOINT_PIEZO_DELAY_MS / 1000)
+        return actual_delta_um
 
     def _image_callback(self, camera_frame: CameraFrame) -> None:
         """
@@ -2848,6 +2946,8 @@ class MultiPointWorker:
         return rgb_image
 
     def handle_acquisition_abort(self, current_path: str) -> None:
+        # Undo any stranded per-channel z-offset (normally already undone by the acquisition loops)
+        self._reset_channel_z_offset()
         # Save coordinates.csv
         self.coordinates_pd.to_csv(
             os.path.join(current_path, "coordinates.csv"), index=False, header=True
