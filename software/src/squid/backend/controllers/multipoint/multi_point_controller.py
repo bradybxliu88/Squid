@@ -1477,7 +1477,11 @@ class MultiPointController(StateMachine[AcquisitionControllerState]):
             self.set_manual_focus_map_flag(cmd.use_manual_focus_map)
         if cmd.z_range is not None:
             self.set_z_range(cmd.z_range[0], cmd.z_range[1])
-        if cmd.focus_map is not None:
+        if cmd.use_focus_map is not None:
+            # "Use Focus Map" unchecked must clear a map left over from an earlier run; otherwise later runs
+            # (and snaps) would keep interpolating a stale, possibly by-region, map.
+            self.set_focus_map(cmd.focus_map if cmd.use_focus_map else None)
+        elif cmd.focus_map is not None:
             self.set_focus_map(cmd.focus_map)
         if cmd.use_fluidics is not None:
             self.set_use_fluidics(cmd.use_fluidics)

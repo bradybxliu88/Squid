@@ -2246,6 +2246,8 @@ class WellplateMultiPointWidget(AcquisitionYAMLDropMixin, EventBusFrame):
                 skip_saving=self.checkbox_skipSaving.isChecked(),
                 z_range=z_range,
                 focus_map=focus_map,
+                # Explicit so an unchecked "Use Focus Map" clears a map left from an earlier run
+                use_focus_map=focus_map is not None,
                 # Widget context for YAML saving
                 widget_type="wellplate",
                 scan_size_mm=self.entry_scan_size.value(),

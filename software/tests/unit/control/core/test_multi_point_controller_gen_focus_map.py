@@ -11,6 +11,7 @@ from squid.core.events import (
     EventBus,
     AcquisitionWorkerFinished,
     AutofocusMode,
+    SetAcquisitionParametersCommand,
 )
 from squid.core.mode_gate import GlobalModeGate, GlobalMode
 from squid.backend.controllers.multipoint import multi_point_controller
@@ -417,3 +418,42 @@ def test_regular_acquisition_still_interpolates_focus_map(tmp_path: Path, monkey
     assert started is True
     assert focus_map.calls == ["A1"]
     assert global_scan.update_calls == [("A1", 0, pytest.approx(1.23))]
+
+
+def test_unchecked_use_focus_map_clears_a_stale_focus_map() -> None:
+    """The widgets send use_focus_map=False when "Use Focus Map" is unchecked; that must drop an earlier map."""
+    bus = EventBus()
+    bus.start()
+    try:
+        controller = MultiPointController(
+            live_controller=_FakeLiveController(),
+            autofocus_controller=_FakeAutoFocusController(),
+            objective_store=_FakeObjectiveStore(),
+            channel_configuration_manager=_FakeChannelConfigurationManager(),
+            camera_service=_FakeCameraService(),
+            stage_service=_FakeStageService(),
+            peripheral_service=_FakePeripheralService(),
+            event_bus=bus,
+            scan_coordinates=_FakeScanCoordinates(),
+        )
+        focus_map = _FakeFocusMap()
+
+        bus.publish(SetAcquisitionParametersCommand(focus_map=focus_map, use_focus_map=True))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is focus_map
+
+        # Commands that do not mention the focus map leave it alone.
+        bus.publish(SetAcquisitionParametersCommand(n_x=2))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is focus_map
+
+        bus.publish(SetAcquisitionParametersCommand(focus_map=None, use_focus_map=False))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is None
+
+        # Without use_focus_map, a focus_map alone still sets it (TCP / MCP / older callers).
+        bus.publish(SetAcquisitionParametersCommand(focus_map=focus_map))
+        bus.drain(timeout_s=1.0)
+        assert controller.focus_map is focus_map
+    finally:
+        bus.stop()
