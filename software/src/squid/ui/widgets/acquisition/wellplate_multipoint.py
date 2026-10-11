@@ -90,7 +90,6 @@ from _def import (
     MULTIPOINT_USE_PIEZO_FOR_ZSTACKS,
     SOFTWARE_POS_LIMIT,
     WELLPLATE_FORMAT,
-    f,
 )
 from squid.core.config.feature_flags import get_feature_flags
 from squid.core.utils import get_last_used_saving_path, save_last_used_saving_path
